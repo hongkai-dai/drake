@@ -215,12 +215,10 @@ void ReplaceCosAndSinWithRationalFunction(
     *e_rational = RationalFunction(Polynomial(e, t));
     return;
   }
-  symbolic::ExpressionMulFactory denominator_factory{};
+  symbolic::Expression denominator{1};
   for (int angle_index : angle_indices) {
-    denominator_factory.AddExpression(
-        1 + t_angle(angle_index) * t_angle(angle_index));
+    denominator *= 1 + t_angle(angle_index) * t_angle(angle_index);
   }
-  const Expression denominator{denominator_factory.GetExpression()};
   symbolic::ExpressionAddFactory numerator_fac;
   for (const auto& pair : e_poly.monomial_to_coefficient_map()) {
     // If the monomial contains cos_delta(i), then replace cos_delta(i) with
@@ -228,20 +226,16 @@ void ReplaceCosAndSinWithRationalFunction(
     // If the monomial contains sin_delta(i), then replace sin_delta(i) with
     // 2 * t_angle(i).
     // Otherwise, multiplies with 1 + t_angle(i) * t_angle(i)
-    symbolic::ExpressionMulFactory numerator_monomial_fac;
-    numerator_monomial_fac.AddExpression(pair.second);
+    symbolic::Expression numerator_monomial{pair.second};
     for (int angle_index : angle_indices) {
       if (pair.first.degree(cos_delta(angle_index)) > 0) {
-        numerator_monomial_fac.AddExpression(
-            1 - t_angle(angle_index) * t_angle(angle_index));
+        numerator_monomial *= 1 - t_angle(angle_index) * t_angle(angle_index);
       } else if (pair.first.degree(sin_delta(angle_index)) > 0) {
-        numerator_monomial_fac.AddExpression(2 * t_angle(angle_index));
+        numerator_monomial *= 2 * t_angle(angle_index);
       } else {
-        numerator_monomial_fac.AddExpression(
-            1 + t_angle(angle_index) * t_angle(angle_index));
+        numerator_monomial *= 1 + t_angle(angle_index) * t_angle(angle_index);
       }
     }
-    const Expression numerator_monomial(numerator_monomial_fac.GetExpression());
     numerator_fac.AddExpression(numerator_monomial);
   }
   const Expression numerator{numerator_fac.GetExpression()};

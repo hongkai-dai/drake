@@ -1,7 +1,5 @@
 #include "drake/multibody/rational_forward_kinematics/rational_forward_kinematics.h"
 
-#include "drake/common/symbolic_expression_cell.h"
-
 namespace drake {
 namespace multibody {
 using symbolic::Polynomial;
@@ -47,12 +45,6 @@ void CalcChildPose(const Matrix3<Scalar2>& R_WP, const Vector3<Scalar2>& p_WP,
   const Vector3<double> p_MC = X_MC.translation();
   *R_WC = R_WM * R_MC;
   *p_WC = R_WM * p_MC + p_WM;
-  for (int i = 0; i < 3; ++i) {
-    for (int j = 0; j < 3; ++j) {
-      (*R_WC)(i, j) = (*R_WC)(i, j).Expand();
-    }
-    (*p_WC)(i) = (*p_WC)(i).Expand();
-  }
 }
 
 template <typename T>
@@ -88,17 +80,20 @@ void RationalForwardKinematics::
   (*sin_delta)(sin_delta->size() - 1) = sin_delta_i;
   const symbolic::Variable& theta_star =
       q_star_(revolute_mobilizer->get_topology().positions_start);
-  const symbolic::Expression cos_angle(cos(theta_star) * cos_delta_i -
-                                       sin(theta_star) * sin_delta_i);
-  const symbolic::Expression sin_angle(sin(theta_star) * cos_delta_i +
-                                       cos(theta_star) * sin_delta_i);
+  const symbolic::Variables cos_sin_delta_i({cos_delta_i, sin_delta_i});
+  const Polynomial cos_angle(
+      {{symbolic::Monomial(cos_delta_i, 1), cos(theta_star)},
+       {symbolic::Monomial(sin_delta_i, 1), -sin(theta_star)}});
+  const Polynomial sin_angle(
+      {{symbolic::Monomial(cos_delta_i, 1), sin(theta_star)},
+       {symbolic::Monomial(sin_delta_i, 1), cos(theta_star)}});
   // Frame F is the inboard frame (attached to the parent link), and frame
   // M is the outboard frame (attached to the child link).
-  const Matrix3<Expression> R_FM = Eigen::Matrix3d::Identity() +
-                                   sin_angle * A_F +
-                                   (1 - cos_angle) * A_F * A_F;
-  const Expression expr_zero{};
-  const Vector3<Expression> p_FM(expr_zero, expr_zero, expr_zero);
+  const Matrix3<symbolic::Polynomial> R_FM = Eigen::Matrix3d::Identity() +
+                                             sin_angle * A_F +
+                                             (1 - cos_angle) * A_F * A_F;
+  const symbolic::Polynomial poly_zero{};
+  const Vector3<symbolic::Polynomial> p_FM(poly_zero, poly_zero, poly_zero);
   CalcChildPose(R_WP, p_WP, *revolute_mobilizer, R_FM, p_FM, R_WC, p_WC);
 }
 
@@ -124,15 +119,15 @@ void RationalForwardKinematics::CalcLinkPoses() {
   // r(x) is computed as (p1(x) * r(x) + p2(x) * q1(x) * r(x)) / (q1(x) * r(x) *
   // r(x)), without handling the common factor r(x) in the denominator.
   VectorX<symbolic::Variable> cos_delta, sin_delta, t_angles;
-  std::vector<Matrix3<Expression>> R_WB_expr(tree_.num_bodies());
-  std::vector<Vector3<Expression>> p_WB_expr(tree_.num_bodies());
-  const Expression expr_zero{};
-  const Expression expr_one{1};
+  std::vector<Matrix3<Polynomial>> R_WB_poly(tree_.num_bodies());
+  std::vector<Vector3<Polynomial>> p_WB_poly(tree_.num_bodies());
+  const Polynomial poly_zero{};
+  const Polynomial poly_one{1};
   // clang-format off
-  R_WB_expr[0] << expr_one, expr_zero, expr_zero,
-                  expr_zero, expr_one, expr_zero,
-                  expr_zero, expr_zero, expr_one;
-  p_WB_expr[0] << expr_zero, expr_zero, expr_zero;
+  R_WB_poly[0] << poly_one, poly_zero, poly_zero,
+                  poly_zero, poly_one, poly_zero,
+                  poly_zero, poly_zero, poly_one;
+  p_WB_poly[0] << poly_zero, poly_zero, poly_zero;
   // clang-format on
   for (BodyIndex body_index(1); body_index < tree_.num_bodies(); ++body_index) {
     const BodyTopology& body_topology =
@@ -145,9 +140,9 @@ void RationalForwardKinematics::CalcLinkPoses() {
       const RevoluteMobilizer<double>* revolute_mobilizer =
           dynamic_cast<const RevoluteMobilizer<double>*>(mobilizer);
       CalcLinkPoseAsMultilinearPolynomialWithRevoluteJoint(
-          revolute_mobilizer, R_WB_expr[parent_index], p_WB_expr[parent_index],
-          &cos_delta, &sin_delta, &t_angles, &(R_WB_expr[body_index]),
-          &(p_WB_expr[body_index]));
+          revolute_mobilizer, R_WB_poly[parent_index], p_WB_poly[parent_index],
+          &cos_delta, &sin_delta, &t_angles, &(R_WB_poly[body_index]),
+          &(p_WB_poly[body_index]));
     } else if (dynamic_cast<const PrismaticMobilizer<double>*>(mobilizer) !=
                nullptr) {
       throw std::runtime_error("Prismatic joint has not been handled yet.");
@@ -156,8 +151,8 @@ void RationalForwardKinematics::CalcLinkPoses() {
       const WeldMobilizer<double>* weld_mobilizer =
           dynamic_cast<const WeldMobilizer<double>*>(mobilizer);
       CalcLinkPoseWithWeldJoint(
-          weld_mobilizer, R_WB_expr[parent_index], p_WB_expr[parent_index],
-          &(R_WB_expr[body_index]), &(p_WB_expr[body_index]));
+          weld_mobilizer, R_WB_poly[parent_index], p_WB_poly[parent_index],
+          &(R_WB_poly[body_index]), &(p_WB_poly[body_index]));
     } else if (dynamic_cast<const SpaceXYZMobilizer<double>*>(mobilizer) !=
                nullptr) {
       throw std::runtime_error("Gimbal joint has not been handled yet.");
@@ -176,27 +171,38 @@ void RationalForwardKinematics::CalcLinkPoses() {
     for (int i = 0; i < 3; ++i) {
       for (int j = 0; j < 3; ++j) {
         ReplaceCosAndSinWithRationalFunction(
-            R_WB_expr[body_index](i, j), cos_delta, sin_delta, t_angles,
+            R_WB_poly[body_index](i, j), cos_delta, sin_delta, t_angles,
             t_variables, &(R_WB_[body_index](i, j)));
       }
-      ReplaceCosAndSinWithRationalFunction(p_WB_expr[body_index](i), cos_delta,
+      ReplaceCosAndSinWithRationalFunction(p_WB_poly[body_index](i), cos_delta,
                                            sin_delta, t_angles, t_variables,
                                            &(p_WB_[body_index](i)));
     }
   }
 }
 
+bool CheckPolynomialIndeterminatesAreCosSinDelta(
+    const Polynomial& e_poly, const VectorX<symbolic::Variable>& cos_delta,
+    const VectorX<symbolic::Variable>& sin_delta) {
+  VectorX<symbolic::Variable> cos_sin_delta(cos_delta.rows() +
+                                            sin_delta.rows());
+  cos_sin_delta << cos_delta, sin_delta;
+  const symbolic::Variables cos_sin_delta_variables(cos_sin_delta);
+  return e_poly.indeterminates().IsSubsetOf(cos_sin_delta_variables);
+}
+
 void ReplaceCosAndSinWithRationalFunction(
-    const symbolic::Expression& e, const VectorX<symbolic::Variable>& cos_delta,
+    const symbolic::Polynomial& e_poly,
+    const VectorX<symbolic::Variable>& cos_delta,
     const VectorX<symbolic::Variable>& sin_delta,
-    const VectorX<symbolic::Variable>& t_angle, const symbolic::Variables& t,
+    const VectorX<symbolic::Variable>& t_angle, const symbolic::Variables&,
     symbolic::RationalFunction* e_rational) {
   DRAKE_DEMAND(cos_delta.rows() == sin_delta.rows());
   DRAKE_DEMAND(cos_delta.rows() == t_angle.rows());
-  VectorX<symbolic::Variable> cos_sin_delta(2 * cos_delta.rows());
-  cos_sin_delta << cos_delta, sin_delta;
-  const symbolic::Polynomial e_poly(e, symbolic::Variables(cos_sin_delta));
-  // First find the angles whose cos or sin appear in the polynomial. This will
+  DRAKE_DEMAND(CheckPolynomialIndeterminatesAreCosSinDelta(e_poly, cos_delta,
+                                                           sin_delta));
+  // First find the angles whose cos or sin appear in the polynomial. This
+  // will
   // determine the denominator of the rational function.
   std::set<int> angle_indices;
   for (const auto& pair : e_poly.monomial_to_coefficient_map()) {
@@ -212,36 +218,49 @@ void ReplaceCosAndSinWithRationalFunction(
     }
   }
   if (angle_indices.empty()) {
-    *e_rational = RationalFunction(Polynomial(e, t));
+    *e_rational = RationalFunction(e_poly);
     return;
   }
-  symbolic::Expression denominator{1};
+  const symbolic::Monomial monomial_one{};
+  symbolic::Polynomial denominator{1};
   for (int angle_index : angle_indices) {
-    denominator *= 1 + t_angle(angle_index) * t_angle(angle_index);
+    // denominator *= (1 + t_angle(angle_index)^2)
+    const Polynomial one_plus_t_square(
+        {{monomial_one, 1}, {symbolic::Monomial(t_angle(angle_index), 2), 1}});
+    denominator *= one_plus_t_square;
   }
-  symbolic::ExpressionAddFactory numerator_fac;
+  symbolic::Polynomial numerator{};
   for (const auto& pair : e_poly.monomial_to_coefficient_map()) {
     // If the monomial contains cos_delta(i), then replace cos_delta(i) with
     // 1 - t_angle(i) * t_angle(i).
     // If the monomial contains sin_delta(i), then replace sin_delta(i) with
     // 2 * t_angle(i).
     // Otherwise, multiplies with 1 + t_angle(i) * t_angle(i)
-    symbolic::Expression numerator_monomial{pair.second};
+
+    // We assume that t pair.second doesn't contain any indeterminates. So
+    // pair.second is the coefficient.
+    Polynomial numerator_monomial{{{monomial_one, pair.second}}};
     for (int angle_index : angle_indices) {
       if (pair.first.degree(cos_delta(angle_index)) > 0) {
-        numerator_monomial *= 1 - t_angle(angle_index) * t_angle(angle_index);
+        const Polynomial one_minus_t_square(
+            {{monomial_one, 1},
+             {symbolic::Monomial{t_angle(angle_index), 2}, -1}});
+        numerator_monomial *= one_minus_t_square;
       } else if (pair.first.degree(sin_delta(angle_index)) > 0) {
-        numerator_monomial *= 2 * t_angle(angle_index);
+        const Polynomial two_t(
+            {{symbolic::Monomial(t_angle(angle_index), 1), 2}});
+        numerator_monomial *= two_t;
       } else {
-        numerator_monomial *= 1 + t_angle(angle_index) * t_angle(angle_index);
+        const Polynomial one_plus_t_square(
+            {{monomial_one, 1},
+             {symbolic::Monomial(t_angle(angle_index), 2), 1}});
+        numerator_monomial *= one_plus_t_square;
       }
     }
-    numerator_fac.AddExpression(numerator_monomial);
+    numerator += numerator_monomial;
   }
-  const Expression numerator{numerator_fac.GetExpression()};
 
-  *e_rational =
-      RationalFunction(Polynomial(numerator, t), Polynomial(denominator, t));
+  *e_rational = RationalFunction(numerator, denominator);
 }
 }  // namespace multibody
 }  // namespace drake

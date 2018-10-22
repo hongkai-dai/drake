@@ -21,8 +21,13 @@ void CheckReplaceCosAndSinWithRationalFunction(
     const VectorX<symbolic::Variable>& sin_delta,
     const VectorX<symbolic::Variable>& t_angle, const symbolic::Variables& t,
     const symbolic::RationalFunction& e_rational_expected) {
+  VectorX<symbolic::Variable> cos_sin_delta(cos_delta.rows() +
+                                            sin_delta.rows());
+  cos_sin_delta << cos_delta, sin_delta;
+  const symbolic::Variables cos_sin_delta_variables(cos_sin_delta);
+  const Polynomial e_poly(e, cos_sin_delta_variables);
   symbolic::RationalFunction e_rational;
-  ReplaceCosAndSinWithRationalFunction(e, cos_delta, sin_delta, t_angle, t,
+  ReplaceCosAndSinWithRationalFunction(e_poly, cos_delta, sin_delta, t_angle, t,
                                        &e_rational);
   EXPECT_PRED2(PolyEqualAfterExpansion, e_rational.numerator(),
                e_rational_expected.numerator());
@@ -41,6 +46,7 @@ GTEST_TEST(RationalForwardKinematics, ReplaceCosAndSinWithRationalFunction) {
         symbolic::Variable("sin(delta_q(" + std::to_string(i) + "))");
     t_angle(i) = symbolic::Variable("t_angle(" + std::to_string(i) + ")");
   }
+
   symbolic::Variable a("a");
   symbolic::Variable b("b");
 

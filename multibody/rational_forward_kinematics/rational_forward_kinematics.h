@@ -107,7 +107,7 @@ class RationalForwardKinematics {
  * 2t_angle(i)/(1+t_angle(i)^2), and get a rational polynomial of t.
  */
 void ReplaceCosAndSinWithRationalFunction(
-    const symbolic::Expression& e, const VectorX<symbolic::Variable>& cos_delta,
+    const symbolic::Polynomial & e, const VectorX<symbolic::Variable>& cos_delta,
     const VectorX<symbolic::Variable>& sin_delta,
     const VectorX<symbolic::Variable>& t_angle, const symbolic::Variables& t,
     symbolic::RationalFunction* e_rational);

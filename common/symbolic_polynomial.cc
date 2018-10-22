@@ -42,7 +42,7 @@ void DoAddProduct(const Expression& coeff, const Monomial& m,
     // Without expanding the terms, we have `is_zero(c1 + c2) = false` while
     // it's clear that c1 + c2 is a zero polynomial. Using `Expand()` help us
     // identify those cases.
-    if (is_zero(existing_coeff.Expand() + coeff.Expand())) {
+    if (is_zero(existing_coeff + coeff)) {
       map->erase(it);
     } else {
       existing_coeff += coeff;
@@ -340,7 +340,7 @@ class DecomposePolynomialVisitor {
 
 Polynomial::Polynomial(MapType init)
     : monomial_to_coefficient_map_{move(init)} {
-  CheckInvariant();
+  //CheckInvariant();
 };
 
 Polynomial::Polynomial(const Monomial& m)
@@ -517,7 +517,7 @@ Polynomial& Polynomial::operator+=(const Polynomial& p) {
     const Expression& coeff{item.second};
     DoAddProduct(coeff, m, &monomial_to_coefficient_map_);
   }
-  CheckInvariant();
+  //CheckInvariant();
   return *this;
 }
 
@@ -559,7 +559,7 @@ Polynomial& Polynomial::operator*=(const Polynomial& p) {
     }
   }
   monomial_to_coefficient_map_ = std::move(new_map);
-  CheckInvariant();
+  //CheckInvariant();
   return *this;
 }
 
@@ -572,7 +572,7 @@ Polynomial& Polynomial::operator*=(const Monomial& m) {
     new_map.emplace(m * m_i, coeff_i);
   }
   monomial_to_coefficient_map_ = std::move(new_map);
-  CheckInvariant();
+  //CheckInvariant();
   return *this;
 }
 

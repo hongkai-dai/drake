@@ -42,7 +42,7 @@ std::ostream& operator<<(std::ostream& os, const RationalFunction& f) {
 }
 
 void RationalFunction::CheckIndeterminates() const {
-  const Variables vars1{intersect(numerator_.indeterminates(),
+  /*const Variables vars1{intersect(numerator_.indeterminates(),
                                   denominator_.decision_variables())};
   const Variables vars2{intersect(numerator_.decision_variables(),
                                   denominator_.indeterminates())};
@@ -62,7 +62,7 @@ void RationalFunction::CheckIndeterminates() const {
           << vars2 << ".\n";
     }
     throw std::logic_error(oss.str());
-  }
+  }*/
 }
 
 RationalFunction& RationalFunction::operator+=(const RationalFunction& f) {

@@ -64,9 +64,9 @@ class SnoptUserFunInfo {
 
   // Stores an alias to `this` into the SNOPT workspace, by setting the user
   // data `int iu[]` pointer to alias our internal int array.
-  void SetInto(snProblem* snopt_problem) const {
-    snopt_problem->iu = const_cast<int*>(this_pointer_as_int_array_.data());
-    snopt_problem->leniu = kIntCount;
+  void SetInto(int** snopt_problem_iu, int* snopt_problem_leniu) const {
+    *snopt_problem_iu = const_cast<int*>(this_pointer_as_int_array_.data());
+    *snopt_problem_leniu = kIntCount;
   }
 
   // Converts the `int iu[]` data back into a reference to this class.
@@ -371,9 +371,9 @@ void UpdateConstraintBoundsAndGradients(
 
     for (int i = 0; i < n; i++) {
       for (int j = 0; j < static_cast<int>(binding.GetNumElements()); ++j) {
-        (*iGfun)[*grad_index] = *constraint_index + i;  // row order
+        (*iGfun)[*grad_index] = 1 + *constraint_index + i;  // row order
         (*jGvar)[*grad_index] =
-            prog.FindDecisionVariableIndex(binding.variables()(j));
+            1 + prog.FindDecisionVariableIndex(binding.variables()(j));
         (*grad_index)++;
       }
     }
@@ -399,9 +399,9 @@ void UpdateConstraintBoundsAndGradients<LinearComplementarityConstraint>(
     (*Flow)[*constraint_index] = 0;
     (*Fupp)[*constraint_index] = 0;
     for (int j = 0; j < binding.evaluator()->M().rows(); ++j) {
-      (*iGfun)[*grad_index] = *constraint_index;
+      (*iGfun)[*grad_index] = 1 + *constraint_index;
       (*jGvar)[*grad_index] =
-          prog.FindDecisionVariableIndex(binding.variables()(j));
+          1 + prog.FindDecisionVariableIndex(binding.variables()(j));
       (*grad_index)++;
     }
     ++(*constraint_index);
@@ -510,17 +510,38 @@ void SolveWithGivenOptions(
     const std::map<std::string, double>& snopt_options_double,
     int* snopt_status, double* objective, EigenPtr<Eigen::VectorXd> x_val) {
   DRAKE_ASSERT(x_val->rows() == prog.num_vars());
-  snProblem drake_problem{};
   char problem_name[] = "drake_problem";
-  char no_print_file[] = "";
-  snInit(&drake_problem, problem_name, no_print_file, 0 /* no summary */);
+  std::string print_file_name;
+  const auto print_file_it = snopt_options_string.find("Print file");
+  if (print_file_it != snopt_options_string.end()) {
+    print_file_name = print_file_it->second;
+  }
+  int snopt_problem_memCalled = 0;
+  isnLog snopt_problem_snLog = NULL;
+  isnLog2 snopt_problem_snLog2 = NULL;
+  isqLog snopt_problem_sqLog = NULL;
+  isnSTOP snopt_problem_snSTOP = NULL;
+  int snopt_problem_leniw = 500;
+  int snopt_problem_lenrw = 500;
+  int* snopt_problem_iw =
+      static_cast<int*>(malloc(sizeof(int) * snopt_problem_leniw));
+  double* snopt_problem_rw =
+      static_cast<double*>(malloc(sizeof(double) * snopt_problem_lenrw));
+  int snopt_problem_leniu = 0;
+  int snopt_problem_lenru = 0;
+  int* snopt_problem_iu = NULL;
+  double* snopt_problem_ru = NULL;
+
+  f_sninit(const_cast<char*>(print_file_name.c_str()),
+           print_file_name.length() /* print_file_len */, 0 /* no summary */,
+           snopt_problem_iw, snopt_problem_leniw, snopt_problem_rw,
+           snopt_problem_lenrw);
 
   const std::set<int> nonlinear_cost_gradient_indices =
       GetAllNonlinearCostNonzeroGradientIndices(prog);
-  const SnoptUserFunInfo snopt_userfun_info(
-      &prog,
-      &nonlinear_cost_gradient_indices);
-  snopt_userfun_info.SetInto(&drake_problem);
+  const SnoptUserFunInfo snopt_userfun_info(&prog,
+                                            &nonlinear_cost_gradient_indices);
+  snopt_userfun_info.SetInto(&snopt_problem_iu, &snopt_problem_leniu);
 
   const int nx = prog.num_vars();
   std::vector<double> x(nx, 0.0);
@@ -608,8 +629,9 @@ void SolveWithGivenOptions(
   std::vector<int> jGvar(lenG, 0);
   size_t grad_index = 0;
   for (const auto cost_gradient_index : nonlinear_cost_gradient_indices) {
-    iGfun[grad_index] = 0;
-    jGvar[grad_index] = cost_gradient_index;
+    // Fortran is 1-indexed.
+    iGfun[grad_index] = 1;
+    jGvar[grad_index] = 1 + cost_gradient_index;
     ++grad_index;
   }
 
@@ -657,56 +679,98 @@ void SolveWithGivenOptions(
   size_t A_index = 0;
   for (const auto& it : variable_to_linear_cost_coefficient) {
     A[A_index] = it.second;
-    iAfun[A_index] = 0;
-    jAvar[A_index] = it.first;
+    // Fortran uses 1-index.
+    iAfun[A_index] = 1;
+    jAvar[A_index] = it.first + 1;
     A_index++;
   }
   for (const auto& it : linear_constraints_triplets) {
     A[A_index] = it.value();
-    iAfun[A_index] = 1 + num_nonlinear_constraints + it.row();
-    jAvar[A_index] = it.col();
+    iAfun[A_index] = 2 + num_nonlinear_constraints + it.row();
+    jAvar[A_index] = 1 + it.col();
     A_index++;
   }
 
-  // Determines if we should print out snopt debugging info.
-  const auto print_file_it = snopt_options_string.find("Print file");
-  if (print_file_it != snopt_options_string.end()) {
-    setPrintfile(&drake_problem,
-                 const_cast<char*>(print_file_it->second.c_str()));
-    char major_print_level[] = "Major print level";
-    // According to SNOPT user manual, set major print level to 11 gives
-    // additional details of the Jacobian factorization that commences each
-    // major iteration.
-    setIntParameter(&drake_problem, major_print_level, 11);
-  }
-
   for (const auto& it : snopt_options_double) {
-    setRealParameter(&drake_problem, const_cast<char*>(it.first.c_str()),
-                     it.second);
+    int errors;
+    f_snsetr(const_cast<char*>(it.first.c_str()), it.first.length(), it.second,
+             &errors, snopt_problem_iw, snopt_problem_leniw, snopt_problem_rw,
+             snopt_problem_lenrw);
   }
 
   for (const auto& it : snopt_options_int) {
-    setIntParameter(&drake_problem, const_cast<char*>(it.first.c_str()),
-                    it.second);
+    int errors;
+    f_snseti(const_cast<char*>(it.first.c_str()), it.first.length(), it.second,
+             &errors, snopt_problem_iw, snopt_problem_leniw, snopt_problem_rw,
+             snopt_problem_lenrw);
   }
 
   const int Cold = 0;
   const double ObjAdd = linear_cost_constant_term;
-  const int ObjRow = 0;
+  const int ObjRow = 1;
   int nS = 0;
   int nInf{0};
   double sInf{0.0};
 
-  *snopt_status =
-      solveA(&drake_problem, Cold, nF, nx, ObjAdd, ObjRow, snopt_userfun, lenA,
-             iAfun.data(), jAvar.data(), A.data(), lenG, iGfun.data(),
-             jGvar.data(), xlow.data(), xupp.data(), Flow.data(), Fupp.data(),
-             x.data(), xstate.data(), xmul.data(), F.data(), Fstate.data(),
-             Fmul.data(), &nS, &nInf, &sInf);
+  // Reallocate int and real workspace
+  int miniw, minrw;
+  if (snopt_problem_memCalled == 0) {
+    f_snmema(snopt_status, nF, nx, lenA, lenG, &miniw, &minrw, snopt_problem_iw,
+             snopt_problem_leniw, snopt_problem_rw, snopt_problem_lenrw);
+    if (miniw > snopt_problem_leniw) {
+      snopt_problem_leniw = miniw;
+      snopt_problem_iw = static_cast<int*>(
+          realloc(snopt_problem_iw, sizeof(int) * snopt_problem_leniw));
+      const std::string option = "Total int workspace";
+      int errors;
+      f_snseti(const_cast<char*>(option.c_str()), option.length(),
+               snopt_problem_leniw, &errors, snopt_problem_iw,
+               snopt_problem_leniw, snopt_problem_rw, snopt_problem_lenrw);
+    }
+    if (minrw > snopt_problem_lenrw) {
+      snopt_problem_lenrw = minrw;
+      snopt_problem_rw = static_cast<double*>(
+          realloc(snopt_problem_rw, sizeof(double) * snopt_problem_lenrw));
+      const std::string option = "Total real workspace";
+      int errors;
+      f_snseti(const_cast<char*>(option.c_str()), option.length(),
+               snopt_problem_lenrw, &errors, snopt_problem_iw,
+               snopt_problem_leniw, snopt_problem_rw, snopt_problem_lenrw);
+    }
+    snopt_problem_memCalled = 1;
+  }
+  // Actual solve.
+  f_snkera(Cold, problem_name, nF, nx, ObjAdd, ObjRow, snopt_userfun,
+           snopt_problem_snLog, snopt_problem_snLog2, snopt_problem_sqLog,
+           snopt_problem_snSTOP, iAfun.data(), jAvar.data(), lenA, A.data(),
+           iGfun.data(), jGvar.data(), lenG, xlow.data(), xupp.data(),
+           Flow.data(), Fupp.data(), x.data(), xstate.data(), xmul.data(),
+           F.data(), Fstate.data(), Fmul.data(), snopt_status, &nS, &nInf,
+           &sInf, &miniw, &minrw, snopt_problem_iu, snopt_problem_leniu,
+           snopt_problem_ru, snopt_problem_lenru, snopt_problem_iw,
+           snopt_problem_leniw, snopt_problem_rw, snopt_problem_lenrw);
   *x_val = Eigen::Map<Eigen::VectorXd>(x.data(), nx);
   *objective = F[0];
 
-  deleteSNOPT(&drake_problem);
+  // Frees internal memory associated with SNOPT
+  f_snend(snopt_problem_iw, snopt_problem_leniw, snopt_problem_rw,
+          snopt_problem_lenrw);
+  free(snopt_problem_iw);
+  free(snopt_problem_rw);
+  // Sets snopt problem parameters to null or empty.
+  snopt_problem_memCalled = 0;
+  snopt_problem_snLog = nullptr;
+  snopt_problem_snLog2 = nullptr;
+  snopt_problem_sqLog = nullptr;
+  snopt_problem_snSTOP = nullptr;
+  snopt_problem_leniw = 0;
+  snopt_problem_lenrw = 0;
+  snopt_problem_iw = nullptr;
+  snopt_problem_rw = nullptr;
+  snopt_problem_leniu = 0;
+  snopt_problem_lenru = 0;
+  snopt_problem_iu = nullptr;
+  snopt_problem_ru = nullptr;
 }
 
 SolutionResult MapSnoptInfoToSolutionResult(int snopt_info) {

@@ -151,7 +151,7 @@ void CheckRationalForwardKinematics(
 
   rational_forward_kinematics.tree().CalcAllBodyPosesInWorld(*mbt_context,
                                                              &X_WB_expected);
-  /*
+
   symbolic::Environment env;
   for (int i = 0; i < q_star_val.rows(); ++i) {
     env.insert(rational_forward_kinematics.q_star()(i), q_star_val(i));
@@ -179,7 +179,7 @@ void CheckRationalForwardKinematics(
     const double tol{1E-12};
     EXPECT_TRUE(CompareMatrices(R_WB_i, X_WB_expected[i].linear(), tol));
     EXPECT_TRUE(CompareMatrices(p_WB_i, X_WB_expected[i].translation(), tol));
-  }*/
+  }
 }
 
 GTEST_TEST(RationalForwardKinematicsTest, Iiwa) {
@@ -190,6 +190,19 @@ GTEST_TEST(RationalForwardKinematicsTest, Iiwa) {
   CheckRationalForwardKinematics(
       rational_forward_kinematics, Eigen::VectorXd::Zero(7),
       Eigen::VectorXd::Zero(7), Eigen::VectorXd::Zero(7));
+
+  Eigen::VectorXd q_val(7);
+  // arbitrary value
+  q_val << 0.2, 0.3, 0.5, -0.1, 1.2, 2.3, -0.5;
+  Eigen::VectorXd t_val = (q_val / 2).array().tan().matrix();
+  CheckRationalForwardKinematics(rational_forward_kinematics, q_val,
+                                 Eigen::VectorXd::Zero(7), t_val);
+
+  Eigen::VectorXd q_star_val(7);
+  q_star_val << 1.2, -0.4, 0.3, -0.5, 0.4, 1, 0.2;
+  t_val = ((q_val - q_star_val) / 2).array().tan().matrix();
+  CheckRationalForwardKinematics(rational_forward_kinematics, q_val, q_star_val,
+                                 t_val);
 }
 
 }  // namespace

@@ -532,10 +532,13 @@ void SolveWithGivenOptions(
   int* snopt_problem_iu = NULL;
   double* snopt_problem_ru = NULL;
 
+  int iprint = 9;
+  int isumm = 0;
+  int print_file_name_len = print_file_name.length();
   f_sninit(const_cast<char*>(print_file_name.c_str()),
-           print_file_name.length() /* print_file_len */, 0 /* no summary */,
-           snopt_problem_iw, snopt_problem_leniw, snopt_problem_rw,
-           snopt_problem_lenrw);
+           &print_file_name_len /* print_file_len */, &iprint,
+           &isumm /* no summary */, snopt_problem_iw, &snopt_problem_leniw,
+           snopt_problem_rw, &snopt_problem_lenrw);
 
   const std::set<int> nonlinear_cost_gradient_indices =
       GetAllNonlinearCostNonzeroGradientIndices(prog);
@@ -543,7 +546,7 @@ void SolveWithGivenOptions(
                                             &nonlinear_cost_gradient_indices);
   snopt_userfun_info.SetInto(&snopt_problem_iu, &snopt_problem_leniu);
 
-  const int nx = prog.num_vars();
+  int nx = prog.num_vars();
   std::vector<double> x(nx, 0.0);
   std::vector<double> xlow(nx, -std::numeric_limits<double>::infinity());
   std::vector<double> xupp(nx, std::numeric_limits<double>::infinity());
@@ -616,7 +619,7 @@ void SolveWithGivenOptions(
   }
 
   // Update the bound of the constraint.
-  const int nF = 1 + num_nonlinear_constraints + num_linear_constraints;
+  int nF = 1 + num_nonlinear_constraints + num_linear_constraints;
   std::vector<double> F(nF, 0.0);
   std::vector<double> Flow(nF, -std::numeric_limits<double>::infinity());
   std::vector<double> Fupp(nF, std::numeric_limits<double>::infinity());
@@ -624,7 +627,7 @@ void SolveWithGivenOptions(
   std::vector<int> Fstate(nF, 0);
 
   // Set up the gradient sparsity pattern.
-  const int lenG = max_num_gradients;
+  int lenG = max_num_gradients;
   std::vector<int> iGfun(lenG, 0);
   std::vector<int> jGvar(lenG, 0);
   size_t grad_index = 0;
@@ -671,8 +674,8 @@ void SolveWithGivenOptions(
                          &linear_constraints_triplets, &Flow, &Fupp,
                          &constraint_index, &linear_constraint_index);
 
-  const int lenA = variable_to_linear_cost_coefficient.size() +
-                   linear_constraints_triplets.size();
+  int lenA = variable_to_linear_cost_coefficient.size() +
+             linear_constraints_triplets.size();
   std::vector<double> A(lenA, 0.0);
   std::vector<int> iAfun(lenA, 0);
   std::vector<int> jAvar(lenA, 0);
@@ -693,21 +696,23 @@ void SolveWithGivenOptions(
 
   for (const auto& it : snopt_options_double) {
     int errors;
-    f_snsetr(const_cast<char*>(it.first.c_str()), it.first.length(), it.second,
-             &errors, snopt_problem_iw, snopt_problem_leniw, snopt_problem_rw,
-             snopt_problem_lenrw);
+    int option_len = it.first.length();
+    f_snsetr(const_cast<char*>(it.first.c_str()), &option_len,
+             const_cast<double*>(&(it.second)), &errors, snopt_problem_iw,
+             &snopt_problem_leniw, snopt_problem_rw, &snopt_problem_lenrw);
   }
 
   for (const auto& it : snopt_options_int) {
     int errors;
-    f_snseti(const_cast<char*>(it.first.c_str()), it.first.length(), it.second,
-             &errors, snopt_problem_iw, snopt_problem_leniw, snopt_problem_rw,
-             snopt_problem_lenrw);
+    int option_len = it.first.length();
+    f_snseti(const_cast<char*>(it.first.c_str()), &option_len,
+             const_cast<int*>(&(it.second)), &errors, snopt_problem_iw,
+             &snopt_problem_leniw, snopt_problem_rw, &snopt_problem_lenrw);
   }
 
-  const int Cold = 0;
-  const double ObjAdd = linear_cost_constant_term;
-  const int ObjRow = 1;
+  int Cold = 0;
+  double ObjAdd = linear_cost_constant_term;
+  int ObjRow = 1;
   int nS = 0;
   int nInf{0};
   double sInf{0.0};
@@ -715,17 +720,19 @@ void SolveWithGivenOptions(
   // Reallocate int and real workspace
   int miniw, minrw;
   if (snopt_problem_memCalled == 0) {
-    f_snmema(snopt_status, nF, nx, lenA, lenG, &miniw, &minrw, snopt_problem_iw,
-             snopt_problem_leniw, snopt_problem_rw, snopt_problem_lenrw);
+    f_snmema(snopt_status, &nF, &nx, &lenA, &lenG, &miniw, &minrw,
+             snopt_problem_iw, &snopt_problem_leniw, snopt_problem_rw,
+             &snopt_problem_lenrw);
     if (miniw > snopt_problem_leniw) {
       snopt_problem_leniw = miniw;
       snopt_problem_iw = static_cast<int*>(
           realloc(snopt_problem_iw, sizeof(int) * snopt_problem_leniw));
       const std::string option = "Total int workspace";
       int errors;
-      f_snseti(const_cast<char*>(option.c_str()), option.length(),
-               snopt_problem_leniw, &errors, snopt_problem_iw,
-               snopt_problem_leniw, snopt_problem_rw, snopt_problem_lenrw);
+      int option_len = option.length();
+      f_snseti(const_cast<char*>(option.c_str()), &option_len,
+               &snopt_problem_leniw, &errors, snopt_problem_iw,
+               &snopt_problem_leniw, snopt_problem_rw, &snopt_problem_lenrw);
     }
     if (minrw > snopt_problem_lenrw) {
       snopt_problem_lenrw = minrw;
@@ -733,28 +740,28 @@ void SolveWithGivenOptions(
           realloc(snopt_problem_rw, sizeof(double) * snopt_problem_lenrw));
       const std::string option = "Total real workspace";
       int errors;
-      f_snseti(const_cast<char*>(option.c_str()), option.length(),
-               snopt_problem_lenrw, &errors, snopt_problem_iw,
-               snopt_problem_leniw, snopt_problem_rw, snopt_problem_lenrw);
+      int option_len = option.length();
+      f_snseti(const_cast<char*>(option.c_str()), &option_len,
+               &snopt_problem_lenrw, &errors, snopt_problem_iw,
+               &snopt_problem_leniw, snopt_problem_rw, &snopt_problem_lenrw);
     }
     snopt_problem_memCalled = 1;
   }
   // Actual solve.
-  f_snkera(Cold, problem_name, nF, nx, ObjAdd, ObjRow, snopt_userfun,
+  f_snkera(&Cold, problem_name, &nF, &nx, &ObjAdd, &ObjRow, snopt_userfun,
            snopt_problem_snLog, snopt_problem_snLog2, snopt_problem_sqLog,
-           snopt_problem_snSTOP, iAfun.data(), jAvar.data(), lenA, A.data(),
-           iGfun.data(), jGvar.data(), lenG, xlow.data(), xupp.data(),
+           snopt_problem_snSTOP, iAfun.data(), jAvar.data(), &lenA, A.data(),
+           iGfun.data(), jGvar.data(), &lenG, xlow.data(), xupp.data(),
            Flow.data(), Fupp.data(), x.data(), xstate.data(), xmul.data(),
            F.data(), Fstate.data(), Fmul.data(), snopt_status, &nS, &nInf,
-           &sInf, &miniw, &minrw, snopt_problem_iu, snopt_problem_leniu,
-           snopt_problem_ru, snopt_problem_lenru, snopt_problem_iw,
-           snopt_problem_leniw, snopt_problem_rw, snopt_problem_lenrw);
+           &sInf, &miniw, &minrw, snopt_problem_iu, &snopt_problem_leniu,
+           snopt_problem_ru, &snopt_problem_lenru, snopt_problem_iw,
+           &snopt_problem_leniw, snopt_problem_rw, &snopt_problem_lenrw);
   *x_val = Eigen::Map<Eigen::VectorXd>(x.data(), nx);
   *objective = F[0];
 
   // Frees internal memory associated with SNOPT
-  f_snend(snopt_problem_iw, snopt_problem_leniw, snopt_problem_rw,
-          snopt_problem_lenrw);
+  f_snend(&iprint);
   free(snopt_problem_iw);
   free(snopt_problem_rw);
   // Sets snopt problem parameters to null or empty.

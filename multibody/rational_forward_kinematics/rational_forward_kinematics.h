@@ -32,23 +32,13 @@ class RationalForwardKinematics {
  public:
   DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(RationalForwardKinematics)
 
+  struct Pose {
+    Vector3<symbolic::RationalFunction> p_WB;
+    Matrix3<symbolic::RationalFunction> R_WB;
+  };
+
   explicit RationalForwardKinematics(const MultibodyTree<double>& tree);
 
-  const Vector3<symbolic::RationalFunction>& p_WB(int body_index) const {
-    return p_WB_[body_index];
-  }
-
-  const Matrix3<symbolic::RationalFunction>& R_WB(int body_index) const {
-    return R_WB_[body_index];
-  }
-
-  const MultibodyTree<double>& tree() const { return tree_; }
-
-  const VectorX<symbolic::Variable>& t() const { return t_; }
-
-  const VectorX<symbolic::Variable>& q_star() const { return q_star_; }
-
- private:
   // Compute the pose of each link as fractional functions of t.
   // We will set up the indeterminates t also.
   // A revolute joint requires a single t, where t = tan(Δθ/2).
@@ -57,8 +47,14 @@ class RationalForwardKinematics {
   // A free-floating joint requires 12 t, 3 for position, and 9 for the rotation
   // matrix.
   // A gimbal joint requires 9 t, for the rotation matrix.
-  void CalcLinkPoses();
+  std::vector<Pose> CalcLinkPoses(
+      const Eigen::Ref<const Eigen::VectorXd>& q_star) const;
 
+  const MultibodyTree<double>& tree() const { return tree_; }
+
+  const VectorX<symbolic::Variable>& t() const { return t_; }
+
+ private:
   // Compute the pose of the link, connected to its parent link through a
   // revolute joint.
   // We will first compute the link pose as multilinear polynomials, with
@@ -73,43 +69,36 @@ class RationalForwardKinematics {
   template <typename T>
   void CalcLinkPoseAsMultilinearPolynomialWithRevoluteJoint(
       const RevoluteMobilizer<double>* revolute_mobilizer,
-      const Matrix3<T>& R_WP, const Vector3<T>& p_WP,
+      const Matrix3<T>& R_WP, const Vector3<T>& p_WP, double theta_star,
       VectorX<symbolic::Variable>* cos_delta,
-      VectorX<symbolic::Variable>* sin_delta,
-      VectorX<symbolic::Variable>* t_angle, Matrix3<T>* R_WC, Vector3<T>* p_WC);
+      VectorX<symbolic::Variable>* sin_delta, Matrix3<T>* R_WC,
+      Vector3<T>* p_WC) const;
 
   // Compute the pose of the link, connected to its parent link through a
   // weld joint.
   template <typename T>
   void CalcLinkPoseWithWeldJoint(const WeldMobilizer<double>* weld_mobilizer,
                                  const Matrix3<T>& R_WP, const Vector3<T>& p_WP,
-                                 Matrix3<T>* R_WC, Vector3<T>* p_WC);
+                                 Matrix3<T>* R_WC, Vector3<T>* p_WC) const;
 
   const MultibodyTree<double>& tree_;
   // The variables used in computing the pose as rational functions. t_ are the
   // indeterminates in the rational functions.
   VectorX<symbolic::Variable> t_;
-  // q_star_ is the nominal configuration of the robot. For example, for a
-  // revolute joint, it could be θ* mentioned in the class documentation.
-  // q_star_ are the decision variables of the rational functions.
-  VectorX<symbolic::Variable> q_star_;
-  // p_WB_[i] is the position of body i's frame origin, measured in the world
-  // frame W. Each entry in p_WB_[i] is a rational function of t_;
-  std::vector<Vector3<symbolic::RationalFunction>> p_WB_;
-  // R_WB_[i] is the rotation matrix of body i's frame, measured in the world
-  // frame W. Each entry in R_WB_[i] is a rational function of t_;
-  std::vector<Matrix3<symbolic::RationalFunction>> R_WB_;
+
+  // The variables used to represent tan(θ / 2).
+  VectorX<symbolic::Variable> t_angles_;
 };
 
 /** If e is a multilinear polynomial of cos_delta and sin_delta, and no
  * cos_delta(i) and sin_delta(i) appear in the same monomial, then we replace
- * cos_delta(i) with (1-t_angle(i)^2)/(1+t_angle(i)^2), and sin_delta(i) with
- * 2t_angle(i)/(1+t_angle(i)^2), and get a rational polynomial of t.
+ * cos_delta(i) with (1-t_angles(i)^2)/(1+t_angles(i)^2), and sin_delta(i)
+ * with 2t_angles(i)/(1+t_angles(i)^2), and get a rational polynomial of t.
  */
 void ReplaceCosAndSinWithRationalFunction(
-    const symbolic::Polynomial & e, const VectorX<symbolic::Variable>& cos_delta,
+    const symbolic::Polynomial& e, const VectorX<symbolic::Variable>& cos_delta,
     const VectorX<symbolic::Variable>& sin_delta,
-    const VectorX<symbolic::Variable>& t_angle, const symbolic::Variables& t,
+    const VectorX<symbolic::Variable>& t_angles, const symbolic::Variables& t,
     symbolic::RationalFunction* e_rational);
 }  // namespace multibody
 }  // namespace drake

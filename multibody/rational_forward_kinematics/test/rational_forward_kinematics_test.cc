@@ -138,8 +138,6 @@ void CheckRationalForwardKinematics(
     const Eigen::Ref<const Eigen::VectorXd>& q_val,
     const Eigen::Ref<const Eigen::VectorXd>& q_star_val,
     const Eigen::Ref<const Eigen::VectorXd>& t_val) {
-  DRAKE_DEMAND(q_star_val.rows() ==
-               rational_forward_kinematics.q_star().rows());
   DRAKE_DEMAND(t_val.rows() == rational_forward_kinematics.t().rows());
   auto context = rational_forward_kinematics.tree().CreateDefaultContext();
 
@@ -153,27 +151,22 @@ void CheckRationalForwardKinematics(
                                                              &X_WB_expected);
 
   symbolic::Environment env;
-  for (int i = 0; i < q_star_val.rows(); ++i) {
-    env.insert(rational_forward_kinematics.q_star()(i), q_star_val(i));
-  }
   for (int i = 0; i < t_val.rows(); ++i) {
     env.insert(rational_forward_kinematics.t()(i), t_val(i));
   }
+
+  const auto& poses = rational_forward_kinematics.CalcLinkPoses(q_star_val);
 
   for (int i = 1; i < rational_forward_kinematics.tree().num_bodies(); ++i) {
     Matrix3<double> R_WB_i;
     Vector3<double> p_WB_i;
     for (int m = 0; m < 3; ++m) {
       for (int n = 0; n < 3; ++n) {
-        R_WB_i(m, n) =
-            rational_forward_kinematics.R_WB(i)(m, n).numerator().Evaluate(
-                env) /
-            rational_forward_kinematics.R_WB(i)(m, n).denominator().Evaluate(
-                env);
+        R_WB_i(m, n) = poses[i].R_WB(m, n).numerator().Evaluate(env) /
+                       poses[i].R_WB(m, n).denominator().Evaluate(env);
       }
-      p_WB_i(m) =
-          rational_forward_kinematics.p_WB(i)(m).numerator().Evaluate(env) /
-          rational_forward_kinematics.p_WB(i)(m).denominator().Evaluate(env);
+      p_WB_i(m) = poses[i].p_WB(m).numerator().Evaluate(env) /
+                  poses[i].p_WB(m).denominator().Evaluate(env);
     }
 
     const double tol{1E-12};

@@ -666,6 +666,11 @@ drake_cc_library(
             "//math:autodiff",
             "@snopt//:snopt_cwrap",
         ],
+        "//tools:with_snopt_f2c": [
+            ":mathematical_program_api",
+            "//math:autodiff",
+            "@snopt//:snopt_c",
+        ],
         "//conditions:default": [
             ":mathematical_program_api",
         ],

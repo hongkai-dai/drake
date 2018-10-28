@@ -27,6 +27,16 @@ drake_cc_library(
   ],
 )
 
+drake_cc_library(
+    name = "configuration_space_collision_free_region",
+    srcs = ["configuration_space_collision_free_region.cc"],
+    hdrs = ["configuration_space_collision_free_region.h"],
+    deps = [
+        ":rational_forward_kinematics",
+        "//solvers:mathematical_program",
+    ],
+)
+
 drake_cc_googletest(
     name = "rational_forward_kinematics_test",
     deps = [

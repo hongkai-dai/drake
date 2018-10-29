@@ -2,9 +2,9 @@
 
 namespace drake {
 namespace multibody {
+using symbolic::Expression;
 using symbolic::Polynomial;
 using symbolic::RationalFunction;
-using symbolic::Expression;
 RationalForwardKinematics::RationalForwardKinematics(
     const MultibodyTree<double>& tree)
     : tree_(tree) {
@@ -108,7 +108,61 @@ void RationalForwardKinematics::CalcLinkPoseWithWeldJoint(
   CalcChildPose(R_WP, p_WP, *weld_mobilizer, R_FM, p_FM, R_WC, p_WC);
 }
 
-std::vector<RationalForwardKinematics::Pose>
+void RationalForwardKinematics::CalcLinkPosesAsMultilinearPolynomials(
+    const Eigen::Ref<const Eigen::VectorXd>& q_star,
+    std::vector<Pose<symbolic::Polynomial>>* poses_poly,
+    VectorX<symbolic::Variable>* cos_delta,
+    VectorX<symbolic::Variable>* sin_delta) const {
+  poses_poly->resize(tree_.num_bodies());
+  const Polynomial poly_zero{};
+  const Polynomial poly_one{1};
+  // clang-format off
+  (*poses_poly)[0].R_WB << poly_one, poly_zero, poly_zero,
+                           poly_zero, poly_one, poly_zero,
+                           poly_zero, poly_zero, poly_one;
+  (*poses_poly)[0].p_WB << poly_zero, poly_zero, poly_zero;
+  // clang-format on
+  for (BodyIndex body_index(1); body_index < tree_.num_bodies(); ++body_index) {
+    const BodyTopology& body_topology =
+        tree_.get_topology().get_body(body_index);
+    const auto mobilizer =
+        &(tree_.get_mobilizer(body_topology.inboard_mobilizer));
+    const BodyIndex parent_index =
+        tree_.get_topology().get_body(body_index).parent_body;
+    if (dynamic_cast<const RevoluteMobilizer<double>*>(mobilizer) != nullptr) {
+      const RevoluteMobilizer<double>* revolute_mobilizer =
+          dynamic_cast<const RevoluteMobilizer<double>*>(mobilizer);
+      CalcLinkPoseAsMultilinearPolynomialWithRevoluteJoint(
+          revolute_mobilizer, (*poses_poly)[parent_index].R_WB,
+          (*poses_poly)[parent_index].p_WB,
+          q_star(revolute_mobilizer->get_topology().positions_start), cos_delta,
+          sin_delta, &((*poses_poly)[body_index].R_WB),
+          &((*poses_poly)[body_index].p_WB));
+    } else if (dynamic_cast<const PrismaticMobilizer<double>*>(mobilizer) !=
+               nullptr) {
+      throw std::runtime_error("Prismatic joint has not been handled yet.");
+    } else if (dynamic_cast<const WeldMobilizer<double>*>(mobilizer) !=
+               nullptr) {
+      const WeldMobilizer<double>* weld_mobilizer =
+          dynamic_cast<const WeldMobilizer<double>*>(mobilizer);
+      CalcLinkPoseWithWeldJoint(
+          weld_mobilizer, (*poses_poly)[parent_index].R_WB,
+          (*poses_poly)[parent_index].p_WB, &((*poses_poly)[body_index].R_WB),
+          &((*poses_poly)[body_index].p_WB));
+    } else if (dynamic_cast<const SpaceXYZMobilizer<double>*>(mobilizer) !=
+               nullptr) {
+      throw std::runtime_error("Gimbal joint has not been handled yet.");
+    } else if (dynamic_cast<const QuaternionFloatingMobilizer<double>*>(
+                   mobilizer) != nullptr) {
+      throw std::runtime_error("Free floating joint has not been handled yet.");
+    } else {
+      throw std::runtime_error(
+          "RationalForwardKinematics: Can't handle this mobilizer.");
+    }
+  }
+}
+
+std::vector<RationalForwardKinematics::Pose<RationalFunction>>
 RationalForwardKinematics::CalcLinkPoses(
     const Eigen::Ref<const Eigen::VectorXd>& q_star) const {
   // We will first compute the link pose as multilinear polynomials, with
@@ -125,9 +179,9 @@ RationalForwardKinematics::CalcLinkPoses(
   // r(x) is computed as (p1(x) * r(x) + p2(x) * q1(x) * r(x)) / (q1(x) *
   // r(x) *
   // r(x)), without handling the common factor r(x) in the denominator.
-  std::vector<RationalForwardKinematics::Pose> poses(tree_.num_bodies());
   const RationalFunction rational_zero(0);
   const RationalFunction rational_one(1);
+  std::vector<Pose<RationalFunction>> poses(tree_.num_bodies());
   poses[0].p_WB << rational_zero, rational_zero, rational_zero;
   // clang-format off
   poses[0].R_WB << rational_one, rational_zero, rational_zero,
@@ -135,52 +189,9 @@ RationalForwardKinematics::CalcLinkPoses(
                    rational_zero, rational_zero, rational_one;
   // clang-format on
   VectorX<symbolic::Variable> cos_delta, sin_delta;
-  std::vector<Matrix3<Polynomial>> R_WB_poly(tree_.num_bodies());
-  std::vector<Vector3<Polynomial>> p_WB_poly(tree_.num_bodies());
-  const Polynomial poly_zero{};
-  const Polynomial poly_one{1};
-  // clang-format off
-  R_WB_poly[0] << poly_one, poly_zero, poly_zero,
-                  poly_zero, poly_one, poly_zero,
-                  poly_zero, poly_zero, poly_one;
-  p_WB_poly[0] << poly_zero, poly_zero, poly_zero;
-  // clang-format on
-  for (BodyIndex body_index(1); body_index < tree_.num_bodies(); ++body_index) {
-    const BodyTopology& body_topology =
-        tree_.get_topology().get_body(body_index);
-    const auto mobilizer =
-        &(tree_.get_mobilizer(body_topology.inboard_mobilizer));
-    const BodyIndex parent_index =
-        tree_.get_topology().get_body(body_index).parent_body;
-    if (dynamic_cast<const RevoluteMobilizer<double>*>(mobilizer) != nullptr) {
-      const RevoluteMobilizer<double>* revolute_mobilizer =
-          dynamic_cast<const RevoluteMobilizer<double>*>(mobilizer);
-      CalcLinkPoseAsMultilinearPolynomialWithRevoluteJoint(
-          revolute_mobilizer, R_WB_poly[parent_index], p_WB_poly[parent_index],
-          q_star(revolute_mobilizer->get_topology().positions_start),
-          &cos_delta, &sin_delta, &(R_WB_poly[body_index]),
-          &(p_WB_poly[body_index]));
-    } else if (dynamic_cast<const PrismaticMobilizer<double>*>(mobilizer) !=
-               nullptr) {
-      throw std::runtime_error("Prismatic joint has not been handled yet.");
-    } else if (dynamic_cast<const WeldMobilizer<double>*>(mobilizer) !=
-               nullptr) {
-      const WeldMobilizer<double>* weld_mobilizer =
-          dynamic_cast<const WeldMobilizer<double>*>(mobilizer);
-      CalcLinkPoseWithWeldJoint(
-          weld_mobilizer, R_WB_poly[parent_index], p_WB_poly[parent_index],
-          &(R_WB_poly[body_index]), &(p_WB_poly[body_index]));
-    } else if (dynamic_cast<const SpaceXYZMobilizer<double>*>(mobilizer) !=
-               nullptr) {
-      throw std::runtime_error("Gimbal joint has not been handled yet.");
-    } else if (dynamic_cast<const QuaternionFloatingMobilizer<double>*>(
-                   mobilizer) != nullptr) {
-      throw std::runtime_error("Free floating joint has not been handled yet.");
-    } else {
-      throw std::runtime_error(
-          "RationalForwardKinematics: Can't handle this mobilizer.");
-    }
-  }
+  std::vector<Pose<Polynomial>> poses_poly;
+  CalcLinkPosesAsMultilinearPolynomials(q_star, &poses_poly, &cos_delta,
+                                        &sin_delta);
   symbolic::Variables t_variables(t_);
   for (BodyIndex body_index{1}; body_index < tree_.num_bodies(); ++body_index) {
     // Now convert the multilinear polynomial of cos and sin to rational
@@ -188,12 +199,12 @@ RationalForwardKinematics::CalcLinkPoses(
     for (int i = 0; i < 3; ++i) {
       for (int j = 0; j < 3; ++j) {
         ReplaceCosAndSinWithRationalFunction(
-            R_WB_poly[body_index](i, j), cos_delta, sin_delta, t_angles_,
+            poses_poly[body_index].R_WB(i, j), cos_delta, sin_delta, t_angles_,
             t_variables, &(poses[body_index].R_WB(i, j)));
       }
-      ReplaceCosAndSinWithRationalFunction(p_WB_poly[body_index](i), cos_delta,
-                                           sin_delta, t_angles_, t_variables,
-                                           &(poses[body_index].p_WB(i)));
+      ReplaceCosAndSinWithRationalFunction(
+          poses_poly[body_index].p_WB(i), cos_delta, sin_delta, t_angles_,
+          t_variables, &(poses[body_index].p_WB(i)));
     }
   }
   return poses;

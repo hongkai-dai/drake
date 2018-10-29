@@ -42,9 +42,7 @@ ConfigurationSpaceCollisionFreeRegion::ConfigurationSpaceCollisionFreeRegion(
 
 std::vector<symbolic::Polynomial>
 ConfigurationSpaceCollisionFreeRegion::GenerateLinkOutsideHalfspacePolynomials(
-    const Eigen::VectorXd& q_star) const {
-  const std::vector<RationalForwardKinematics::Pose> link_poses =
-      rational_forward_kinematics_.CalcLinkPoses(q_star);
+    const Eigen::VectorXd& ) const {
   std::vector<symbolic::Polynomial> collision_free_polynomials;
   for (int i = 1; i < rational_forward_kinematics_.tree().num_bodies(); ++i) {
     for (int j = 0; j < static_cast<int>(link_polytopes_[i].size()); ++j) {

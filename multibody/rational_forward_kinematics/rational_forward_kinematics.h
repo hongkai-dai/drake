@@ -32,23 +32,43 @@ class RationalForwardKinematics {
  public:
   DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(RationalForwardKinematics)
 
+  template <typename T>
   struct Pose {
-    Vector3<symbolic::RationalFunction> p_WB;
-    Matrix3<symbolic::RationalFunction> R_WB;
+    Vector3<T> p_WB;
+    Matrix3<T> R_WB;
+  };
+
+  struct LinkPoints {
+    int link_index;
+    // The position of the points Q in the link frame B.
+    Eigen::Matrix3Xd p_BQ;
   };
 
   explicit RationalForwardKinematics(const MultibodyTree<double>& tree);
 
-  // Compute the pose of each link as fractional functions of t.
-  // We will set up the indeterminates t also.
-  // A revolute joint requires a single t, where t = tan(Δθ/2).
-  // A prismatic joint requires a single t, where t = Δd, d being the
-  // translational motion of the prismatic joint.
-  // A free-floating joint requires 12 t, 3 for position, and 9 for the rotation
-  // matrix.
-  // A gimbal joint requires 9 t, for the rotation matrix.
-  std::vector<Pose> CalcLinkPoses(
+  /** Compute the pose of each link as fractional functions of t.
+   * We will set up the indeterminates t also.
+   * A revolute joint requires a single t, where t = tan(Δθ/2).
+   * A prismatic joint requires a single t, where t = Δd, d being the
+   * translational motion of the prismatic joint.
+   * A free-floating joint requires 12 t, 3 for position, and 9 for the rotation
+   * matrix.
+   * A gimbal joint requires 9 t, for the rotation matrix.
+   */
+  std::vector<Pose<symbolic::RationalFunction>> CalcLinkPoses(
       const Eigen::Ref<const Eigen::VectorXd>& q_star) const;
+
+  /**
+   * Compute the position of points fixed to link A, expressed in another body.
+   * The point position is a rational function of t().
+   * @param link_points The links and the points attached to each link.
+   * @param expressed_body_index The link points are expressed in this body's
+   * frame. If the points are to be measured in the world frame, then set
+   * expressed_body_index = 0 (0 is always the world index).
+   */
+  std::vector<Matrix3X<symbolic::RationalFunction>> CalcLinkPointsPosition(
+      const std::vector<LinkPoints>& link_points,
+      int expressed_body_index) const;
 
   const MultibodyTree<double>& tree() const { return tree_; }
 
@@ -80,6 +100,12 @@ class RationalForwardKinematics {
   void CalcLinkPoseWithWeldJoint(const WeldMobilizer<double>* weld_mobilizer,
                                  const Matrix3<T>& R_WP, const Vector3<T>& p_WP,
                                  Matrix3<T>* R_WC, Vector3<T>* p_WC) const;
+
+  void CalcLinkPosesAsMultilinearPolynomials(
+      const Eigen::Ref<const Eigen::VectorXd>& q_star,
+      std::vector<Pose<symbolic::Polynomial>>* poses,
+      VectorX<symbolic::Variable>* cos_delta,
+      VectorX<symbolic::Variable>* sin_delta) const;
 
   const MultibodyTree<double>& tree_;
   // The variables used in computing the pose as rational functions. t_ are the

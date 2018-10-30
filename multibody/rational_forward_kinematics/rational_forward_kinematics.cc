@@ -192,7 +192,7 @@ RationalForwardKinematics::CalcLinkPoses(
   std::vector<Pose<Polynomial>> poses_poly;
   CalcLinkPosesAsMultilinearPolynomials(q_star, &poses_poly, &cos_delta,
                                         &sin_delta);
-  symbolic::Variables t_variables(t_);
+  const symbolic::Variables t_variables(t_);
   for (BodyIndex body_index{1}; body_index < tree_.num_bodies(); ++body_index) {
     // Now convert the multilinear polynomial of cos and sin to rational
     // function of t.
@@ -208,6 +208,50 @@ RationalForwardKinematics::CalcLinkPoses(
     }
   }
   return poses;
+}
+
+std::vector<Matrix3X<symbolic::RationalFunction>>
+RationalForwardKinematics::CalcLinkPointsPosition(
+    const Eigen::Ref<const Eigen::VectorXd>& q_star,
+    const std::vector<RationalForwardKinematics::LinkPoints>& link_points,
+    int expressed_body_index) const {
+  std::vector<Pose<RationalFunction>> poses(tree_.num_bodies());
+  const RationalFunction rational_zero(0);
+  const RationalFunction rational_one(1);
+  poses[0].p_WB << rational_zero, rational_zero, rational_zero;
+  // clang-format off
+  poses[0].R_WB << rational_one, rational_zero, rational_zero,
+                   rational_zero, rational_one, rational_zero,
+                   rational_zero, rational_zero, rational_one;
+  // clang-format on
+  VectorX<symbolic::Variable> cos_delta, sin_delta;
+  std::vector<Pose<Polynomial>> poses_poly;
+  CalcLinkPosesAsMultilinearPolynomials(q_star, &poses_poly, &cos_delta,
+                                        &sin_delta);
+  const symbolic::Variables t_variables(t_);
+  // Now convert the multilinear polynomial on cos_delta and sin_delta to
+  // rational function on t.
+
+  // A is the body frame `expressed_body_index`.
+  std::vector<Matrix3X<RationalFunction>> p_AQ(link_points.size());
+  for (int i = 0; i < static_cast<int>(link_points.size()); ++i) {
+    const int link_idx = link_points[i].link_index;
+    p_AQ[i].resize(3, link_points[i].p_BQ.cols());
+    for (int j = 0; j < link_points[i].p_BQ.cols(); ++j) {
+      const Vector3<Polynomial> p_WQj_poly =
+          poses_poly[link_idx].p_WB +
+          poses_poly[link_idx].R_WB * link_points[i].p_BQ.col(j);
+      const Vector3<Polynomial> p_AQj_poly =
+          poses_poly[expressed_body_index].R_WB.transpose() *
+          (p_WQj_poly - poses_poly[expressed_body_index].p_WB);
+      for (int k = 0; k < 3; ++k) {
+        ReplaceCosAndSinWithRationalFunction(p_AQj_poly(k), cos_delta,
+                                             sin_delta, t_angles_, t_variables,
+                                             &(p_AQ[i](k, j)));
+      }
+    }
+  }
+  return p_AQ;
 }
 
 bool CheckPolynomialIndeterminatesAreCosSinDelta(

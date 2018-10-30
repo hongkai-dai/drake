@@ -12,8 +12,8 @@
 namespace drake {
 namespace multibody {
 namespace {
-using symbolic::RationalFunction;
 using symbolic::Polynomial;
+using symbolic::RationalFunction;
 using symbolic::test::PolyEqualAfterExpansion;
 
 void CheckReplaceCosAndSinWithRationalFunction(
@@ -133,11 +133,13 @@ std::unique_ptr<multibody_plant::MultibodyPlant<double>> ConstructIiwaPlant(
   return plant;
 }
 
-void CheckRationalForwardKinematics(
+void CheckLinkKinematics(
     const RationalForwardKinematics& rational_forward_kinematics,
     const Eigen::Ref<const Eigen::VectorXd>& q_val,
     const Eigen::Ref<const Eigen::VectorXd>& q_star_val,
-    const Eigen::Ref<const Eigen::VectorXd>& t_val) {
+    const Eigen::Ref<const Eigen::VectorXd>& t_val,
+    const std::vector<RationalForwardKinematics::LinkPoints>& link_points,
+    int expressed_body_index) {
   DRAKE_DEMAND(t_val.rows() == rational_forward_kinematics.t().rows());
   auto context = rational_forward_kinematics.tree().CreateDefaultContext();
 
@@ -156,7 +158,10 @@ void CheckRationalForwardKinematics(
   }
 
   const auto& poses = rational_forward_kinematics.CalcLinkPoses(q_star_val);
+  const auto& p_AQ = rational_forward_kinematics.CalcLinkPointsPosition(
+      q_star_val, link_points, expressed_body_index);
 
+  const double tol{1E-12};
   for (int i = 1; i < rational_forward_kinematics.tree().num_bodies(); ++i) {
     Matrix3<double> R_WB_i;
     Vector3<double> p_WB_i;
@@ -169,33 +174,67 @@ void CheckRationalForwardKinematics(
                   poses[i].p_WB(m).denominator().Evaluate(env);
     }
 
-    const double tol{1E-12};
     EXPECT_TRUE(CompareMatrices(R_WB_i, X_WB_expected[i].linear(), tol));
     EXPECT_TRUE(CompareMatrices(p_WB_i, X_WB_expected[i].translation(), tol));
   }
+
+  for (int i = 0; i < static_cast<int>(link_points.size()); ++i) {
+    const Eigen::Matrix3Xd p_WQ_expected =
+        X_WB_expected[link_points[i].link_index].translation() *
+            Eigen::RowVectorXd::Ones(link_points[i].p_BQ.cols()) +
+        X_WB_expected[link_points[i].link_index].linear() * link_points[i].p_BQ;
+    const Eigen::Matrix3Xd p_AQ_expected =
+        X_WB_expected[expressed_body_index].linear().transpose() *
+        (p_WQ_expected -
+         X_WB_expected[expressed_body_index].translation() *
+             Eigen::RowVectorXd::Ones(link_points[i].p_BQ.cols()));
+    Eigen::Matrix3Xd p_AQ_val(3, link_points[i].p_BQ.cols());
+    for (int j = 0; j < 3; ++j) {
+      for (int k = 0; k < link_points[i].p_BQ.cols(); ++k) {
+        p_AQ_val(j, k) = p_AQ[i](j, k).numerator().Evaluate(env) /
+                         p_AQ[i](j, k).denominator().Evaluate(env);
+      }
+    }
+    EXPECT_TRUE(CompareMatrices(p_AQ_val, p_AQ_expected, tol));
+  }
 }
 
-GTEST_TEST(RationalForwardKinematicsTest, Iiwa) {
+GTEST_TEST(RationalForwardKinematicsTest, CalcLinkPoses) {
   auto iiwa_plant = ConstructIiwaPlant("iiwa14_no_collision.sdf");
   RationalForwardKinematics rational_forward_kinematics(iiwa_plant->tree());
   EXPECT_EQ(rational_forward_kinematics.t().rows(), 7);
 
-  CheckRationalForwardKinematics(
-      rational_forward_kinematics, Eigen::VectorXd::Zero(7),
-      Eigen::VectorXd::Zero(7), Eigen::VectorXd::Zero(7));
+  std::vector<RationalForwardKinematics::LinkPoints> link_points;
+
+  link_points.emplace_back(1, Eigen::Matrix3d::Identity());
+  link_points.emplace_back(
+      4, (Eigen::Matrix<double, 3, 2>() << 0.1, 0.2, 0.3, -0.4, 0.2, 0)
+             .finished());
+  link_points.emplace_back(6, (Eigen::Matrix<double, 3, 3>() << 0.1, -0.3, 0.5,
+                               0.4, 0.1, -0.6, 1.2, -0.55, 0.23)
+                                  .finished());
+
+  CheckLinkKinematics(rational_forward_kinematics, Eigen::VectorXd::Zero(7),
+                      Eigen::VectorXd::Zero(7), Eigen::VectorXd::Zero(7),
+                      link_points, 0);
 
   Eigen::VectorXd q_val(7);
   // arbitrary value
   q_val << 0.2, 0.3, 0.5, -0.1, 1.2, 2.3, -0.5;
   Eigen::VectorXd t_val = (q_val / 2).array().tan().matrix();
-  CheckRationalForwardKinematics(rational_forward_kinematics, q_val,
-                                 Eigen::VectorXd::Zero(7), t_val);
+  CheckLinkKinematics(rational_forward_kinematics, q_val,
+                      Eigen::VectorXd::Zero(7), t_val, link_points, 0);
 
   Eigen::VectorXd q_star_val(7);
   q_star_val << 1.2, -0.4, 0.3, -0.5, 0.4, 1, 0.2;
   t_val = ((q_val - q_star_val) / 2).array().tan().matrix();
-  CheckRationalForwardKinematics(rational_forward_kinematics, q_val, q_star_val,
-                                 t_val);
+  CheckLinkKinematics(rational_forward_kinematics, q_val, q_star_val, t_val,
+                      link_points, 0);
+}
+
+GTEST_TEST(RationalForwardKinematicsTest, CalcLinkPointsPosition) {
+  auto iiwa_plant = ConstructIiwaPlant("iiwa14_no_collision.sdf");
+  RationalForwardKinematics rational_forward_kinematics(iiwa_plant->tree());
 }
 
 }  // namespace

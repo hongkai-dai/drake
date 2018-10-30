@@ -39,6 +39,9 @@ class RationalForwardKinematics {
   };
 
   struct LinkPoints {
+    LinkPoints(int m_link_index,
+               const Eigen::Ref<const Eigen::Matrix3Xd>& m_p_BQ)
+        : link_index{m_link_index}, p_BQ{m_p_BQ} {}
     int link_index;
     // The position of the points Q in the link frame B.
     Eigen::Matrix3Xd p_BQ;
@@ -61,12 +64,15 @@ class RationalForwardKinematics {
   /**
    * Compute the position of points fixed to link A, expressed in another body.
    * The point position is a rational function of t().
+   * @param q_star The nomial posture around which we will compute the link
+   * points positions.
    * @param link_points The links and the points attached to each link.
    * @param expressed_body_index The link points are expressed in this body's
    * frame. If the points are to be measured in the world frame, then set
    * expressed_body_index = 0 (0 is always the world index).
    */
   std::vector<Matrix3X<symbolic::RationalFunction>> CalcLinkPointsPosition(
+      const Eigen::Ref<const Eigen::VectorXd>& q_star,
       const std::vector<LinkPoints>& link_points,
       int expressed_body_index) const;
 

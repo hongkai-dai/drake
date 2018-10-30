@@ -157,25 +157,33 @@ void CheckLinkKinematics(
     env.insert(rational_forward_kinematics.t()(i), t_val(i));
   }
 
-  const auto& poses = rational_forward_kinematics.CalcLinkPoses(q_star_val);
+  const auto& poses = rational_forward_kinematics.CalcLinkPoses(
+      q_star_val, expressed_body_index);
   const auto& p_AQ = rational_forward_kinematics.CalcLinkPointsPosition(
       q_star_val, link_points, expressed_body_index);
 
   const double tol{1E-12};
   for (int i = 1; i < rational_forward_kinematics.tree().num_bodies(); ++i) {
-    Matrix3<double> R_WB_i;
-    Vector3<double> p_WB_i;
+    EXPECT_EQ(poses[i].frame_A_index, expressed_body_index);
+    Matrix3<double> R_AB_i;
+    Vector3<double> p_AB_i;
     for (int m = 0; m < 3; ++m) {
       for (int n = 0; n < 3; ++n) {
-        R_WB_i(m, n) = poses[i].R_WB(m, n).numerator().Evaluate(env) /
-                       poses[i].R_WB(m, n).denominator().Evaluate(env);
+        R_AB_i(m, n) = poses[i].R_AB(m, n).numerator().Evaluate(env) /
+                       poses[i].R_AB(m, n).denominator().Evaluate(env);
       }
-      p_WB_i(m) = poses[i].p_WB(m).numerator().Evaluate(env) /
-                  poses[i].p_WB(m).denominator().Evaluate(env);
+      p_AB_i(m) = poses[i].p_AB(m).numerator().Evaluate(env) /
+                  poses[i].p_AB(m).denominator().Evaluate(env);
     }
 
-    EXPECT_TRUE(CompareMatrices(R_WB_i, X_WB_expected[i].linear(), tol));
-    EXPECT_TRUE(CompareMatrices(p_WB_i, X_WB_expected[i].translation(), tol));
+    EXPECT_TRUE(CompareMatrices(
+        R_AB_i,
+        (X_WB_expected[expressed_body_index] * X_WB_expected[i]).linear(),
+        tol));
+    EXPECT_TRUE(CompareMatrices(
+        p_AB_i,
+        (X_WB_expected[expressed_body_index] * X_WB_expected[i]).translation(),
+        tol));
   }
 
   for (int i = 0; i < static_cast<int>(link_points.size()); ++i) {

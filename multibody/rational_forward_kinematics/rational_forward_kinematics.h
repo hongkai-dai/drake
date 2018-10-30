@@ -34,8 +34,9 @@ class RationalForwardKinematics {
 
   template <typename T>
   struct Pose {
-    Vector3<T> p_WB;
-    Matrix3<T> R_WB;
+    Vector3<T> p_AB;
+    Matrix3<T> R_AB;
+    int frame_A_index;
   };
 
   struct LinkPoints {
@@ -57,9 +58,13 @@ class RationalForwardKinematics {
    * A free-floating joint requires 12 t, 3 for position, and 9 for the rotation
    * matrix.
    * A gimbal joint requires 9 t, for the rotation matrix.
+   * @param q_star The nominal posture around which we compute the link poses.
+   * @param expressed_body_index The pose of each link is expressed in this
+   * body.
    */
   std::vector<Pose<symbolic::RationalFunction>> CalcLinkPoses(
-      const Eigen::Ref<const Eigen::VectorXd>& q_star) const;
+      const Eigen::Ref<const Eigen::VectorXd>& q_star,
+      int expressed_body_index) const;
 
   /**
    * Compute the position of points fixed to link A, expressed in another body.
@@ -95,20 +100,19 @@ class RationalForwardKinematics {
   template <typename T>
   void CalcLinkPoseAsMultilinearPolynomialWithRevoluteJoint(
       const RevoluteMobilizer<double>* revolute_mobilizer,
-      const Matrix3<T>& R_WP, const Vector3<T>& p_WP, double theta_star,
+      const Pose<T>& X_AP,
+      double theta_star,
       VectorX<symbolic::Variable>* cos_delta,
-      VectorX<symbolic::Variable>* sin_delta, Matrix3<T>* R_WC,
-      Vector3<T>* p_WC) const;
+      VectorX<symbolic::Variable>* sin_delta, Pose<T>* X_AC) const;
 
   // Compute the pose of the link, connected to its parent link through a
   // weld joint.
   template <typename T>
   void CalcLinkPoseWithWeldJoint(const WeldMobilizer<double>* weld_mobilizer,
-                                 const Matrix3<T>& R_WP, const Vector3<T>& p_WP,
-                                 Matrix3<T>* R_WC, Vector3<T>* p_WC) const;
+      const Pose<T>& X_AP, Pose<T>* X_AC) const;
 
   void CalcLinkPosesAsMultilinearPolynomials(
-      const Eigen::Ref<const Eigen::VectorXd>& q_star,
+      const Eigen::Ref<const Eigen::VectorXd>& q_star, int expressed_body_index,
       std::vector<Pose<symbolic::Polynomial>>* poses,
       VectorX<symbolic::Variable>* cos_delta,
       VectorX<symbolic::Variable>* sin_delta) const;

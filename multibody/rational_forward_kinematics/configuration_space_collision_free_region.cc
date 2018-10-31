@@ -42,31 +42,24 @@ ConfigurationSpaceCollisionFreeRegion::ConfigurationSpaceCollisionFreeRegion(
   }
 }
 
-std::vector<symbolic::Polynomial>
-ConfigurationSpaceCollisionFreeRegion::GenerateLinkOutsideHalfspacePolynomials(
-    const Eigen::VectorXd& q_star) const {
-  std::vector<RationalForwardKinematics::LinkPoints> link_polytope_vertices(
-      rational_forward_kinematics_.tree().num_bodies());
-  for (int i = 0; i < static_cast<int>(link_polytopes_.size()); ++i) {
-    // Horizontally concatenate all the polytope vertices attached to the same
-    // link.
-    Eigen::Matrix3Xd link_i_vertices(3, 0);
-    for (const auto& polytope : link_polytopes_[i]) {
-      link_i_vertices.conservativeResize(
-          3, link_i_vertices.cols() + polytope.vertices.cols());
-      link_i_vertices.rightCols(polytope.vertices.cols()) = polytope.vertices;
-    }
-    link_polytope_vertices.emplace_back(i, link_i_vertices);
-  }
-  const std::vector<Matrix3X<RationalFunction>> p_WV =
-      rational_forward_kinematics_.CalcLinkPointsPosition(
-          q_star, link_polytope_vertices, 0);
-  std::vector<symbolic::Polynomial> collision_free_polynomials;
+std::vector<symbolic::RationalFunction> ConfigurationSpaceCollisionFreeRegion::
+    GenerateLinkOutsideHalfspaceRationalFunction(
+        const Eigen::VectorXd& q_star) const {
+  const std::vector<RationalForwardKinematics::Pose<symbolic::Polynomial>>
+      link_poses_poly =
+          rational_forward_kinematics_.CalcLinkPosesAsMultilinearPolynomials(
+              q_star, 0);
+  std::vector<symbolic::RationalFunction> collision_free_rationals;
+  const symbolic::Monomial monomial_one{};
   for (int i = 1; i < rational_forward_kinematics_.tree().num_bodies(); ++i) {
-    int link_vertex_count = 0;
     for (int j = 0; j < static_cast<int>(link_polytopes_[i].size()); ++j) {
-      const auto& p_WVj = p_WV[i].block<3, Eigen::Dynamic>(
-          0, link_vertex_count, 3, link_polytopes_[i][j].vertices.cols());
+      const int num_polytope_vertices = link_polytopes_[i][j].vertices.cols();
+      Matrix3X<symbolic::Polynomial> p_WV(3, num_polytope_vertices);
+      for (int l = 0; l < num_polytope_vertices; ++l) {
+        p_WV.col(l) =
+            link_poses_poly[i].p_AB +
+            link_poses_poly[i].R_AB * link_polytopes_[i][j].vertices.col(l);
+      }
       for (int k = 0; k < static_cast<int>(obstacles_.size()); ++k) {
         // For each pair of link polytope and obstacle polytope, we need to
         // impose the constraint that all vertices of the link polytope are on
@@ -75,12 +68,37 @@ ConfigurationSpaceCollisionFreeRegion::GenerateLinkOutsideHalfspacePolynomials(
         // constraint that each vertex of the obstacle polytope is in the
         // "inner" side of the hyperplane. This will be some linear constraints
         // on the hyperplane parameter a.
+        // We want to impose the constraint a_hyperplane[i][j]k]ᵀ (p_WV -
+        // p_WB_center) >= 1
+        Vector3<symbolic::Polynomial> a_poly;
+        for (int idx = 0; idx < 3; ++idx) {
+          a_poly(idx) = symbolic::Polynomial(
+              {{monomial_one, a_hyperplane_[i][j][k](idx)}});
+        }
         for (int l = 0; l < link_polytopes_[i][j].vertices.cols(); ++l) {
-          a_hyperplane[i][j][k].dot(p_WVj.col(l) 
+          const symbolic::Polynomial outside_hyperplane_poly =
+              a_poly.dot(p_WV.col(l) - obstacle_center_[k]) - 1;
+          const symbolic::RationalFunction outside_hyperplane_rational =
+              rational_forward_kinematics_
+                  .ConvertMultilinearPolynomialToRationalFunction(
+                      outside_hyperplane_poly);
+          collision_free_rationals.push_back(outside_hyperplane_rational);
         }
       }
-      link_vertex_count += link_polytopes_[i][j].vertices.cols();
     }
+  }
+  return collision_free_rationals;
+}
+
+std::vector<symbolic::Polynomial>
+ConfigurationSpaceCollisionFreeRegion::GenerateLinkOutsideHalfspacePolynomials(
+    const Eigen::VectorXd& q_star) const {
+  const std::vector<symbolic::RationalFunction> collision_free_rationals =
+      GenerateLinkOutsideHalfspaceRationalFunction(q_star);
+  std::vector<symbolic::Polynomial> collision_free_polynomials;
+  collision_free_polynomials.reserve(collision_free_rationals.size());
+  for (const auto& rational : collision_free_rationals) {
+    collision_free_polynomials.push_back(rational.numerator());
   }
   return collision_free_polynomials;
 }

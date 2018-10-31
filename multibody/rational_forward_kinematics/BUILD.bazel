@@ -18,13 +18,13 @@ load("//tools/lint:lint.bzl", "add_lint_tests")
 package(default_visibility = ["//visibility:public"])
 
 drake_cc_library(
-  name = "rational_forward_kinematics",
-  srcs = ["rational_forward_kinematics.cc"],
-  hdrs = ["rational_forward_kinematics.h"],
-  deps = [
-      "//multibody/multibody_tree",
-      "//common:symbolic",
-  ],
+    name = "rational_forward_kinematics",
+    srcs = ["rational_forward_kinematics.cc"],
+    hdrs = ["rational_forward_kinematics.h"],
+    deps = [
+        "//common:symbolic",
+        "//multibody/multibody_tree",
+    ],
 )
 
 drake_cc_library(
@@ -37,19 +37,38 @@ drake_cc_library(
     ],
 )
 
+drake_cc_library(
+    name = "rational_forward_kinematics_test_utilities",
+    testonly = 1,
+    srcs = ["test/rational_forward_kinematics_test_utilities.cc"],
+    hdrs = ["test/rational_forward_kinematics_test_utilities.h"],
+    data = [
+        "//manipulation/models/iiwa_description:models",
+    ],
+    deps = [
+        "//common:find_resource",
+        "//multibody/benchmarks/kuka_iiwa_robot",
+        "//multibody/multibody_tree/multibody_plant",
+        "//multibody/multibody_tree/parsing:multibody_plant_sdf_parser",
+    ],
+)
+
 drake_cc_googletest(
     name = "rational_forward_kinematics_test",
     deps = [
         ":rational_forward_kinematics",
-        "//multibody/benchmarks/kuka_iiwa_robot",
-        "//common:find_resource",
+        ":rational_forward_kinematics_test_utilities",
         "//common/test_utilities:eigen_matrix_compare",
         "//common/test_utilities:symbolic_test_util",
-        "//multibody/multibody_tree/multibody_plant",
-        "//multibody/multibody_tree/parsing:multibody_plant_sdf_parser",
     ],
-    data = [
-        "//manipulation/models/iiwa_description:models",
+)
+
+drake_cc_googletest(
+    name = "configuration_space_collision_free_region_test",
+    deps = [
+        ":configuration_space_collision_free_region",
+        "//common/test_utilities:eigen_matrix_compare",
+        "//common/test_utilities:symbolic_test_util",
     ],
 )
 

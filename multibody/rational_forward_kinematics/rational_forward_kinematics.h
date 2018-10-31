@@ -1,5 +1,8 @@
 #pragma once
 
+#include <unordered_map>
+#include <vector>
+
 #include "drake/common/symbolic.h"
 #include "drake/multibody/multibody_tree/multibody_tree.h"
 #include "drake/multibody/multibody_tree/prismatic_mobilizer.h"
@@ -66,20 +69,12 @@ class RationalForwardKinematics {
       const Eigen::Ref<const Eigen::VectorXd>& q_star,
       int expressed_body_index) const;
 
-  /**
-   * Compute the position of points fixed to link A, expressed in another body.
-   * The point position is a rational function of t().
-   * @param q_star The nomial posture around which we will compute the link
-   * points positions.
-   * @param link_points The links and the points attached to each link.
-   * @param expressed_body_index The link points are expressed in this body's
-   * frame. If the points are to be measured in the world frame, then set
-   * expressed_body_index = 0 (0 is always the world index).
-   */
-  std::vector<Matrix3X<symbolic::RationalFunction>> CalcLinkPointsPosition(
+  std::vector<Pose<symbolic::Polynomial>> CalcLinkPosesAsMultilinearPolynomials(
       const Eigen::Ref<const Eigen::VectorXd>& q_star,
-      const std::vector<LinkPoints>& link_points,
       int expressed_body_index) const;
+
+  symbolic::RationalFunction ConvertMultilinearPolynomialToRationalFunction(
+      const symbolic::Polynomial e) const;
 
   const MultibodyTree<double>& tree() const { return tree_; }
 
@@ -99,23 +94,15 @@ class RationalForwardKinematics {
   // r(x)), without handling the common factor r(x) in the denominator.
   template <typename T>
   void CalcLinkPoseAsMultilinearPolynomialWithRevoluteJoint(
-      const RevoluteMobilizer<double>* revolute_mobilizer,
-      const Pose<T>& X_AP,
-      double theta_star,
-      VectorX<symbolic::Variable>* cos_delta,
-      VectorX<symbolic::Variable>* sin_delta, Pose<T>* X_AC) const;
+      const RevoluteMobilizer<double>* revolute_mobilizer, const Pose<T>& X_AP,
+      double theta_star, const symbolic::Variable& cos_delta,
+      const symbolic::Variable& sin_delta, Pose<T>* X_AC) const;
 
   // Compute the pose of the link, connected to its parent link through a
   // weld joint.
   template <typename T>
   void CalcLinkPoseWithWeldJoint(const WeldMobilizer<double>* weld_mobilizer,
-      const Pose<T>& X_AP, Pose<T>* X_AC) const;
-
-  void CalcLinkPosesAsMultilinearPolynomials(
-      const Eigen::Ref<const Eigen::VectorXd>& q_star, int expressed_body_index,
-      std::vector<Pose<symbolic::Polynomial>>* poses,
-      VectorX<symbolic::Variable>* cos_delta,
-      VectorX<symbolic::Variable>* sin_delta) const;
+                                 const Pose<T>& X_AP, Pose<T>* X_AC) const;
 
   const MultibodyTree<double>& tree_;
   // The variables used in computing the pose as rational functions. t_ are the
@@ -124,6 +111,12 @@ class RationalForwardKinematics {
 
   // The variables used to represent tan(θ / 2).
   VectorX<symbolic::Variable> t_angles_;
+
+  VectorX<symbolic::Variable> cos_delta_;
+  VectorX<symbolic::Variable> sin_delta_;
+  std::unordered_map<int, int> map_t_index_to_angle_index_;
+  std::unordered_map<int, int> map_angle_index_to_t_index_;
+  symbolic::Variables t_variables_;
 };
 
 /** If e is a multilinear polynomial of cos_delta and sin_delta, and no

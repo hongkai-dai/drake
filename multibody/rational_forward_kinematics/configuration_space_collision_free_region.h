@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 #include "drake/common/drake_copyable.h"
 #include "drake/multibody/rational_forward_kinematics/rational_forward_kinematics.h"
 #include "drake/solvers/mathematical_program.h"
@@ -73,6 +75,13 @@ class ConfigurationSpaceCollisionFreeRegion {
       const Eigen::VectorXd& q_star) const;
 
  private:
+  std::vector<symbolic::RationalFunction>
+  GenerateLinkOutsideHalfspaceRationalFunction(
+      const Eigen::VectorXd& q_star) const;
+
+  // forward declare the tester class.
+  friend class ConfigurationSpaceCollisionFreeRegionTester;
+
   RationalForwardKinematics rational_forward_kinematics_;
   // link_polytopes_[i] contains all the polytopes fixed to the i'th link
   std::vector<std::vector<Polytope>> link_polytopes_;

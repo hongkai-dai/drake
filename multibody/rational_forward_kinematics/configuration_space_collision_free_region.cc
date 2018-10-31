@@ -2,6 +2,8 @@
 
 namespace drake {
 namespace multibody {
+using symbolic::RationalFunction;
+
 ConfigurationSpaceCollisionFreeRegion::ConfigurationSpaceCollisionFreeRegion(
     const MultibodyTree<double>& tree,
     const std::vector<
@@ -42,10 +44,29 @@ ConfigurationSpaceCollisionFreeRegion::ConfigurationSpaceCollisionFreeRegion(
 
 std::vector<symbolic::Polynomial>
 ConfigurationSpaceCollisionFreeRegion::GenerateLinkOutsideHalfspacePolynomials(
-    const Eigen::VectorXd& ) const {
+    const Eigen::VectorXd& q_star) const {
+  std::vector<RationalForwardKinematics::LinkPoints> link_polytope_vertices(
+      rational_forward_kinematics_.tree().num_bodies());
+  for (int i = 0; i < static_cast<int>(link_polytopes_.size()); ++i) {
+    // Horizontally concatenate all the polytope vertices attached to the same
+    // link.
+    Eigen::Matrix3Xd link_i_vertices(3, 0);
+    for (const auto& polytope : link_polytopes_[i]) {
+      link_i_vertices.conservativeResize(
+          3, link_i_vertices.cols() + polytope.vertices.cols());
+      link_i_vertices.rightCols(polytope.vertices.cols()) = polytope.vertices;
+    }
+    link_polytope_vertices.emplace_back(i, link_i_vertices);
+  }
+  const std::vector<Matrix3X<RationalFunction>> p_WV =
+      rational_forward_kinematics_.CalcLinkPointsPosition(
+          q_star, link_polytope_vertices, 0);
   std::vector<symbolic::Polynomial> collision_free_polynomials;
   for (int i = 1; i < rational_forward_kinematics_.tree().num_bodies(); ++i) {
+    int link_vertex_count = 0;
     for (int j = 0; j < static_cast<int>(link_polytopes_[i].size()); ++j) {
+      const auto& p_WVj = p_WV[i].block<3, Eigen::Dynamic>(
+          0, link_vertex_count, 3, link_polytopes_[i][j].vertices.cols());
       for (int k = 0; k < static_cast<int>(obstacles_.size()); ++k) {
         // For each pair of link polytope and obstacle polytope, we need to
         // impose the constraint that all vertices of the link polytope are on
@@ -55,10 +76,10 @@ ConfigurationSpaceCollisionFreeRegion::GenerateLinkOutsideHalfspacePolynomials(
         // "inner" side of the hyperplane. This will be some linear constraints
         // on the hyperplane parameter a.
         for (int l = 0; l < link_polytopes_[i][j].vertices.cols(); ++l) {
-
-
+          a_hyperplane[i][j][k].dot(p_WVj.col(l) 
         }
       }
+      link_vertex_count += link_polytopes_[i][j].vertices.cols();
     }
   }
   return collision_free_polynomials;

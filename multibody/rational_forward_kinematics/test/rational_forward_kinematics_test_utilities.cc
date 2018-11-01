@@ -17,5 +17,23 @@ std::unique_ptr<multibody_plant::MultibodyPlant<double>> ConstructIiwaPlant(
   return plant;
 }
 
+Eigen::Matrix<double, 3, 8> GenerateBoxVertices(const Eigen::Vector3d& size,
+                                                const Eigen::Isometry3d& pose) {
+  Eigen::Matrix<double, 3, 8> vertices;
+  // clang-format off
+  vertices << 1, 1, 1, 1, -1, -1, -1, -1,
+              1, 1, -1, -1, 1, 1, -1, -1,
+              1, -1, 1, -1, 1, -1, 1, -1;
+  // clang-format on
+  for (int i = 0; i < 3; ++i) {
+    DRAKE_ASSERT(size(i) > 0);
+    vertices.row(i) *= size(i) / 2;
+  }
+  vertices = pose.linear() * vertices +
+             pose.translation() * Eigen::Matrix<double, 1, 8>::Ones();
+
+  return vertices;
+}
+
 }  // namespace multibody
 }  // namespace drake

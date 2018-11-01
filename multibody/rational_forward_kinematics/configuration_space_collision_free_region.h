@@ -23,9 +23,12 @@ class ConfigurationSpaceCollisionFreeRegion {
   DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(ConfigurationSpaceCollisionFreeRegion)
 
   struct Polytope {
-    Polytope() : vertices(3, 0) {}
-    explicit Polytope(const Eigen::Ref<const Eigen::Matrix3Xd>& m_vertices)
-        : vertices{m_vertices} {}
+    Polytope(int m_body_index,
+             const Eigen::Ref<const Eigen::Matrix3Xd>& m_vertices)
+        : body_index{m_body_index}, vertices{m_vertices} {
+      DRAKE_ASSERT(vertices.cols() > 0)
+    }
+    int body_index;
     Eigen::Matrix3Xd vertices;
   };
 
@@ -36,7 +39,7 @@ class ConfigurationSpaceCollisionFreeRegion {
    */
   ConfigurationSpaceCollisionFreeRegion(
       const MultibodyTree<double>& tree,
-      const std::vector<std::vector<Polytope>>& link_polytopes,
+      const std::vector<Polytope>& link_polytopes,
       const std::vector<Polytope>& obstacles);
 
   const RationalForwardKinematics& rational_forward_kinematics() const {

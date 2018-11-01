@@ -6,13 +6,12 @@ using symbolic::RationalFunction;
 
 ConfigurationSpaceCollisionFreeRegion::ConfigurationSpaceCollisionFreeRegion(
     const MultibodyTree<double>& tree,
-    const std::vector<
-        std::vector<ConfigurationSpaceCollisionFreeRegion::Polytope>>&
+    const std::vector<ConfigurationSpaceCollisionFreeRegion::Polytope>&
         link_polytopes,
     const std::vector<ConfigurationSpaceCollisionFreeRegion::Polytope>&
         obstacles)
     : rational_forward_kinematics_{tree},
-      link_polytopes_{link_polytopes},
+      link_polytopes_{static_cast<size_t>(tree.num_bodies())},
       obstacles_{obstacles},
       obstacle_center_{obstacles_.size()},
       a_hyperplane_(link_polytopes_.size()) {
@@ -20,8 +19,15 @@ ConfigurationSpaceCollisionFreeRegion::ConfigurationSpaceCollisionFreeRegion(
   const int num_obstacles = static_cast<int>(obstacles_.size());
   DRAKE_DEMAND(num_obstacles > 0);
   DRAKE_DEMAND(static_cast<int>(link_polytopes_.size()) == num_links);
+  for (const auto& obstacle : obstacles_) {
+    DRAKE_ASSERT(obstacle.body_index == 0);
+  }
+  for (const auto& link_polytope : link_polytopes) {
+    DRAKE_ASSERT(link_polytope.body_index != 0);
+    link_polytopes_[link_polytope.body_index].push_back(link_polytope);
+  }
   for (int i = 0; i < num_links; ++i) {
-    const int num_link_polytopes = static_cast<int>(link_polytopes[i].size());
+    const int num_link_polytopes = static_cast<int>(link_polytopes_[i].size());
     a_hyperplane_[i].resize(num_link_polytopes);
     for (int j = 0; j < num_link_polytopes; ++j) {
       a_hyperplane_[i][j].resize(num_obstacles);

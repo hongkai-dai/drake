@@ -26,7 +26,7 @@ ConfigurationSpaceCollisionFreeRegion::ConfigurationSpaceCollisionFreeRegion(
     DRAKE_ASSERT(link_polytope.body_index != 0);
     link_polytopes_[link_polytope.body_index].push_back(link_polytope);
   }
-  for (int i = 0; i < num_links; ++i) {
+  for (int i = 1; i < num_links; ++i) {
     const int num_link_polytopes = static_cast<int>(link_polytopes_[i].size());
     a_hyperplane_[i].resize(num_link_polytopes);
     for (int j = 0; j < num_link_polytopes; ++j) {

@@ -65,6 +65,10 @@ class ConfigurationSpaceCollisionFreeRegion {
     return a_hyperplane_;
   }
 
+  const std::vector<Eigen::Vector3d>& obstacle_center() const {
+    return obstacle_center_;
+  }
+
   /**
    * Generate polynomials on the indeterminates t
    * (rational_forward_kinematics().t()), such that if all these polynomials are

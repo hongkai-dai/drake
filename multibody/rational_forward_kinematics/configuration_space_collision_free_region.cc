@@ -109,5 +109,23 @@ ConfigurationSpaceCollisionFreeRegion::GenerateLinkOutsideHalfspacePolynomials(
   return collision_free_polynomials;
 }
 
+std::vector<symbolic::Expression> ConfigurationSpaceCollisionFreeRegion::
+    GenerateObstacleInsideHalfspaceExpression() const {
+  std::vector<symbolic::Expression> exprs;
+  for (int i = 1; i < rational_forward_kinematics_.tree().num_bodies(); ++i) {
+    for (int j = 0; j < static_cast<int>(link_polytopes_[i].size()); ++j) {
+      for (int k = 0; k < static_cast<int>(obstacles_.size()); ++k) {
+        for (int l = 0; l < obstacles_[k].vertices.cols(); ++l) {
+          exprs.push_back(
+              a_hyperplane_[i][j][k].dot(obstacles_[k].vertices.col(l) -
+                                         obstacle_center_[k]) -
+              1);
+        }
+      }
+    }
+  }
+  return exprs;
+}
+
 }  // namespace multibody
 }  // namespace drake

@@ -81,6 +81,16 @@ class ConfigurationSpaceCollisionFreeRegion {
   std::vector<symbolic::Polynomial> GenerateLinkOutsideHalfspacePolynomials(
       const Eigen::VectorXd& q_star) const;
 
+  /**
+   * Generate expressions on a_hyperplane, such that the expression <= 0
+   * indicates that the obstacle is inside the hyperplane.
+   * Mathematically, we use aᵀ(v - p) <= 1 to denote obstalce inside the
+   * hyperplane, where v is the vertex of the obstacle, and p is the obstacle
+   * center.
+   */
+  std::vector<symbolic::Expression> GenerateObstacleInsideHalfspaceExpression()
+      const;
+
  private:
   std::vector<symbolic::RationalFunction>
   GenerateLinkOutsideHalfspaceRationalFunction(

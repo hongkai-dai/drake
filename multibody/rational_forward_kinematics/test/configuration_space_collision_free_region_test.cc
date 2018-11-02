@@ -107,7 +107,7 @@ void CheckGenerateLinkOutsideHalfspacePolynomials(
 }
 
 GTEST_TEST(ConfigurationSpaceCollisionFreeRegionTest,
-           GenerateLinkOutsideHalfspacePolynomials) {
+           GenerateLinkOutsideHalfspaceRationalFunction) {
   auto iiwa = ConstructIiwaPlant("iiwa14_no_collision.sdf");
   std::cout << "iiwa num_bodies: " << iiwa->num_bodies() << "\n";
 
@@ -175,6 +175,17 @@ GTEST_TEST(ConfigurationSpaceCollisionFreeRegionTest,
   t_val = ((q_val - q_star) / 2).array().tan().matrix();
   CheckGenerateLinkOutsideHalfspacePolynomials(tester, q_star, q_val, t_val,
                                                a_hyperplane_val);
+
+  const std::vector<symbolic::Polynomial> link_outside_halfspace_polynomials =
+      dut.GenerateLinkOutsideHalfspacePolynomials(q_star);
+  for (const auto& link_outside_halfspace_polynomial :
+       link_outside_halfspace_polynomials) {
+    for (int i = 0; i < dut.rational_forward_kinematics().t().rows(); ++i) {
+      EXPECT_LE(link_outside_halfspace_polynomial.Degree(
+                    dut.rational_forward_kinematics().t()(i)),
+                2);
+    }
+  }
 }
 }  // namespace multibody
 }  // namespace drake

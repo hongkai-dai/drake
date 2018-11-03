@@ -76,10 +76,14 @@ drake_cc_googletest(
 
 drake_cc_binary(
     name = "iiwa_two_boxes_demo",
+    testonly = 1,
     srcs = ["test/iiwa_two_boxes_demo.cc"],
     deps = [
         ":rational_forward_kinematics_test_utilities",
         "//manipulation/util:simple_tree_visualizer",
-    )
+        "//solvers:mathematical_program",
+        "@gflags",
+    ]
+)
 
 add_lint_tests()

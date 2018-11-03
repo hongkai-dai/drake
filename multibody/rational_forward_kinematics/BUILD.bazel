@@ -46,6 +46,7 @@ drake_cc_library(
         "//manipulation/models/iiwa_description:models",
     ],
     deps = [
+        ":configuration_space_collision_free_region",
         "//common:find_resource",
         "//multibody/benchmarks/kuka_iiwa_robot",
         "//multibody/multibody_tree/multibody_plant",
@@ -72,5 +73,13 @@ drake_cc_googletest(
         "//common/test_utilities:symbolic_test_util",
     ],
 )
+
+drake_cc_binary(
+    name = "iiwa_two_boxes_demo",
+    srcs = ["test/iiwa_two_boxes_demo.cc"],
+    deps = [
+        ":rational_forward_kinematics_test_utilities",
+        "//manipulation/util:simple_tree_visualizer",
+    )
 
 add_lint_tests()

@@ -84,10 +84,12 @@ std::vector<symbolic::RationalFunction> ConfigurationSpaceCollisionFreeRegion::
         for (int l = 0; l < link_polytopes_[i][j].vertices.cols(); ++l) {
           const symbolic::Polynomial outside_hyperplane_poly =
               a_poly.dot(p_WV.col(l) - obstacle_center_[k]) - 1;
+          const symbolic::Polynomial outside_hyperplane_poly_trimmed =
+              outside_hyperplane_poly.RemoveTermsWithSmallCoefficients(1e-12);
           const symbolic::RationalFunction outside_hyperplane_rational =
               rational_forward_kinematics_
                   .ConvertMultilinearPolynomialToRationalFunction(
-                      outside_hyperplane_poly);
+                      outside_hyperplane_poly_trimmed);
           collision_free_rationals.push_back(outside_hyperplane_rational);
         }
       }

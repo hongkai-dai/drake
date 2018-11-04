@@ -26,7 +26,7 @@ class ConfigurationSpaceCollisionFreeRegion {
     Polytope(int m_body_index,
              const Eigen::Ref<const Eigen::Matrix3Xd>& m_vertices)
         : body_index{m_body_index}, vertices{m_vertices} {
-      DRAKE_ASSERT(vertices.cols() > 0)
+      DRAKE_ASSERT(vertices.cols() > 0);
     }
     int body_index;
     Eigen::Matrix3Xd vertices;

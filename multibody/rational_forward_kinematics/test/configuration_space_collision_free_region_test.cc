@@ -120,7 +120,7 @@ GTEST_TEST(ConfigurationSpaceCollisionFreeRegionTest,
           0.2, 0.2, 0.3, 0.3, 0.1, 0.4)
              .finished());
   link_polytopes.emplace_back(
-      7, (Eigen::Matrix<double, 3, 4>() << -0.1, -0.3, 0.2, 0.3, 0.2, 0.1, 0.2,
+      8, (Eigen::Matrix<double, 3, 4>() << -0.1, -0.3, 0.2, 0.3, 0.2, 0.1, 0.2,
           0.2, 0.3, 0.3, 0.1, 0.4)
              .finished());
 
@@ -140,7 +140,7 @@ GTEST_TEST(ConfigurationSpaceCollisionFreeRegionTest,
   EXPECT_EQ(dut.link_polytopes().size(), iiwa->num_bodies());
   ComparePolytopes(dut.link_polytopes()[5][0], link_polytopes[0]);
   ComparePolytopes(dut.link_polytopes()[5][1], link_polytopes[1]);
-  ComparePolytopes(dut.link_polytopes()[7][0], link_polytopes[2]);
+  ComparePolytopes(dut.link_polytopes()[8][0], link_polytopes[2]);
 
   ConfigurationSpaceCollisionFreeRegionTester tester(dut);
   Eigen::VectorXd q_star(7);
@@ -158,10 +158,10 @@ GTEST_TEST(ConfigurationSpaceCollisionFreeRegionTest,
   a_hyperplane_val[5][1].resize(2);
   a_hyperplane_val[5][1][0] << 0.2, 1.3, -0.3;
   a_hyperplane_val[5][1][1] << -0.4, 1.2, 0.1;
-  a_hyperplane_val[7].resize(1);
-  a_hyperplane_val[7][0].resize(2);
-  a_hyperplane_val[7][0][0] << 0.5, 0.3, -1.2;
-  a_hyperplane_val[7][0][1] << 0.1, -0.4, 1.5;
+  a_hyperplane_val[8].resize(1);
+  a_hyperplane_val[8][0].resize(2);
+  a_hyperplane_val[8][0][0] << 0.5, 0.3, -1.2;
+  a_hyperplane_val[8][0][1] << 0.1, -0.4, 1.5;
 
   CheckGenerateLinkOutsideHalfspacePolynomials(tester, q_star, q_val, t_val,
                                                a_hyperplane_val);

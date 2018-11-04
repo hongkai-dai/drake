@@ -74,7 +74,7 @@ class RationalForwardKinematics {
       int expressed_body_index) const;
 
   symbolic::RationalFunction ConvertMultilinearPolynomialToRationalFunction(
-      const symbolic::Polynomial e) const;
+      const symbolic::Polynomial& e) const;
 
   const MultibodyTree<double>& tree() const { return tree_; }
 
@@ -111,6 +111,9 @@ class RationalForwardKinematics {
 
   // The variables used to represent tan(θ / 2).
   VectorX<symbolic::Variable> t_angles_;
+  VectorX<symbolic::Polynomial> one_plus_t_angles_squared_;
+  VectorX<symbolic::Polynomial> two_t_angles_;
+  VectorX<symbolic::Polynomial> one_minus_t_angles_squared_;
 
   VectorX<symbolic::Variable> cos_delta_;
   VectorX<symbolic::Variable> sin_delta_;

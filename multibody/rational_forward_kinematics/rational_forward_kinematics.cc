@@ -7,6 +7,104 @@ namespace multibody {
 using symbolic::Expression;
 using symbolic::Polynomial;
 using symbolic::RationalFunction;
+
+bool CheckPolynomialIndeterminatesAreCosSinDelta(
+    const Polynomial& e_poly, const VectorX<symbolic::Variable>& cos_delta,
+    const VectorX<symbolic::Variable>& sin_delta) {
+  VectorX<symbolic::Variable> cos_sin_delta(cos_delta.rows() +
+                                            sin_delta.rows());
+  cos_sin_delta << cos_delta, sin_delta;
+  const symbolic::Variables cos_sin_delta_variables(cos_sin_delta);
+  return e_poly.indeterminates().IsSubsetOf(cos_sin_delta_variables);
+}
+
+void ReplaceCosAndSinWithRationalFunction(
+    const symbolic::Polynomial& e_poly,
+    const VectorX<symbolic::Variable>& cos_delta,
+    const VectorX<symbolic::Variable>& sin_delta,
+    const VectorX<symbolic::Variable>& t_angle, const symbolic::Variables&,
+    const VectorX<symbolic::Polynomial>& one_plus_t_angles_squared,
+    const VectorX<symbolic::Polynomial>& two_t_angles,
+    const VectorX<symbolic::Polynomial>& one_minus_t_angles_squared,
+    symbolic::RationalFunction* e_rational) {
+  DRAKE_DEMAND(cos_delta.rows() == sin_delta.rows());
+  DRAKE_DEMAND(cos_delta.rows() == t_angle.rows());
+  DRAKE_DEMAND(CheckPolynomialIndeterminatesAreCosSinDelta(e_poly, cos_delta,
+                                                           sin_delta));
+  // First find the angles whose cos or sin appear in the polynomial. This
+  // will determine the denominator of the rational function.
+  std::set<int> angle_indices;
+  for (const auto& pair : e_poly.monomial_to_coefficient_map()) {
+    // Also check that this monomial can't contain both cos_delta(i) and
+    // sin_delta(i).
+    for (int i = 0; i < cos_delta.rows(); ++i) {
+      const int angle_degree =
+          pair.first.degree(cos_delta(i)) + pair.first.degree(sin_delta(i));
+      DRAKE_DEMAND(angle_degree <= 1);
+      if (angle_degree == 1) {
+        angle_indices.insert(i);
+      }
+    }
+  }
+  if (angle_indices.empty()) {
+    *e_rational = RationalFunction(e_poly);
+    return;
+  }
+  const symbolic::Monomial monomial_one{};
+  symbolic::Polynomial denominator{1};
+  for (int angle_index : angle_indices) {
+    // denominator *= (1 + t_angle(angle_index)^2)
+    denominator *= one_plus_t_angles_squared[angle_index];
+  }
+  symbolic::Polynomial numerator{};
+
+  for (const auto& pair : e_poly.monomial_to_coefficient_map()) {
+    // If the monomial contains cos_delta(i), then replace cos_delta(i) with
+    // 1 - t_angle(i) * t_angle(i).
+    // If the monomial contains sin_delta(i), then replace sin_delta(i) with
+    // 2 * t_angle(i).
+    // Otherwise, multiplies with 1 + t_angle(i) * t_angle(i)
+
+    // We assume that t pair.second doesn't contain any indeterminates. So
+    // pair.second is the coefficient.
+    Polynomial numerator_monomial{{{monomial_one, pair.second}}};
+    for (int angle_index : angle_indices) {
+      if (pair.first.degree(cos_delta(angle_index)) > 0) {
+        numerator_monomial *= one_minus_t_angles_squared[angle_index];
+      } else if (pair.first.degree(sin_delta(angle_index)) > 0) {
+        numerator_monomial *= two_t_angles[angle_index];
+      } else {
+        numerator_monomial *= one_plus_t_angles_squared[angle_index];
+      }
+    }
+    numerator += numerator_monomial;
+  }
+
+  *e_rational = RationalFunction(numerator, denominator);
+}
+
+void ReplaceCosAndSinWithRationalFunction(
+    const symbolic::Polynomial& e_poly,
+    const VectorX<symbolic::Variable>& cos_delta,
+    const VectorX<symbolic::Variable>& sin_delta,
+    const VectorX<symbolic::Variable>& t_angle, const symbolic::Variables& t,
+    symbolic::RationalFunction* e_rational) {
+  const symbolic::Monomial monomial_one{};
+  VectorX<Polynomial> one_minus_t_square(t_angle.rows());
+  VectorX<Polynomial> two_t(t_angle.rows());
+  VectorX<Polynomial> one_plus_t_square(t_angle.rows());
+  for (int i = 0; i < t_angle.rows(); ++i) {
+    one_minus_t_square[i] = Polynomial(
+        {{monomial_one, 1}, {symbolic::Monomial(t_angle(i), 2), -1}});
+    two_t[i] = Polynomial({{symbolic::Monomial(t_angle(i), 1), 2}});
+    one_plus_t_square[i] =
+        Polynomial({{monomial_one, 1}, {symbolic::Monomial(t_angle(i), 2), 1}});
+  }
+  ReplaceCosAndSinWithRationalFunction(e_poly, cos_delta, sin_delta, t_angle, t,
+                                       one_plus_t_square, two_t,
+                                       one_minus_t_square, e_rational);
+}
+
 RationalForwardKinematics::RationalForwardKinematics(
     const MultibodyTree<double>& tree)
     : tree_(tree) {
@@ -40,6 +138,17 @@ RationalForwardKinematics::RationalForwardKinematics(
                nullptr) {
       throw std::runtime_error("Prismatic joint has not been handled yet.");
     }
+  }
+  const symbolic::Monomial monomial_one{};
+  one_plus_t_angles_squared_.resize(t_angles_.rows());
+  two_t_angles_.resize(t_angles_.rows());
+  one_minus_t_angles_squared_.resize(t_angles_.rows());
+  for (int i = 0; i < t_angles_.rows(); ++i) {
+    one_minus_t_angles_squared_(i) = Polynomial(
+        {{monomial_one, 1}, {symbolic::Monomial(t_angles_(i), 2), -1}});
+    two_t_angles_(i) = Polynomial({{symbolic::Monomial(t_angles_(i), 1), 2}});
+    one_plus_t_angles_squared_(i) = Polynomial(
+        {{monomial_one, 1}, {symbolic::Monomial(t_angles_(i), 2), 1}});
   }
   t_variables_ = symbolic::Variables(t_);
 }
@@ -175,10 +284,12 @@ RationalForwardKinematics::CalcLinkPosesAsMultilinearPolynomials(
 
 RationalFunction
 RationalForwardKinematics::ConvertMultilinearPolynomialToRationalFunction(
-    const symbolic::Polynomial e) const {
+    const symbolic::Polynomial& e) const {
   RationalFunction e_rational;
-  ReplaceCosAndSinWithRationalFunction(e, cos_delta_, sin_delta_, t_angles_,
-                                       t_variables_, &e_rational);
+  ReplaceCosAndSinWithRationalFunction(
+      e, cos_delta_, sin_delta_, t_angles_, t_variables_,
+      one_plus_t_angles_squared_, two_t_angles_, one_minus_t_angles_squared_,
+      &e_rational);
   return e_rational;
 }
 
@@ -232,85 +343,5 @@ RationalForwardKinematics::CalcLinkPoses(
   return poses;
 }
 
-bool CheckPolynomialIndeterminatesAreCosSinDelta(
-    const Polynomial& e_poly, const VectorX<symbolic::Variable>& cos_delta,
-    const VectorX<symbolic::Variable>& sin_delta) {
-  VectorX<symbolic::Variable> cos_sin_delta(cos_delta.rows() +
-                                            sin_delta.rows());
-  cos_sin_delta << cos_delta, sin_delta;
-  const symbolic::Variables cos_sin_delta_variables(cos_sin_delta);
-  return e_poly.indeterminates().IsSubsetOf(cos_sin_delta_variables);
-}
-
-void ReplaceCosAndSinWithRationalFunction(
-    const symbolic::Polynomial& e_poly,
-    const VectorX<symbolic::Variable>& cos_delta,
-    const VectorX<symbolic::Variable>& sin_delta,
-    const VectorX<symbolic::Variable>& t_angle, const symbolic::Variables&,
-    symbolic::RationalFunction* e_rational) {
-  DRAKE_DEMAND(cos_delta.rows() == sin_delta.rows());
-  DRAKE_DEMAND(cos_delta.rows() == t_angle.rows());
-  DRAKE_DEMAND(CheckPolynomialIndeterminatesAreCosSinDelta(e_poly, cos_delta,
-                                                           sin_delta));
-  // First find the angles whose cos or sin appear in the polynomial. This
-  // will determine the denominator of the rational function.
-  std::set<int> angle_indices;
-  for (const auto& pair : e_poly.monomial_to_coefficient_map()) {
-    // Also check that this monomial can't contain both cos_delta(i) and
-    // sin_delta(i).
-    for (int i = 0; i < cos_delta.rows(); ++i) {
-      const int angle_degree =
-          pair.first.degree(cos_delta(i)) + pair.first.degree(sin_delta(i));
-      DRAKE_DEMAND(angle_degree <= 1);
-      if (angle_degree == 1) {
-        angle_indices.insert(i);
-      }
-    }
-  }
-  if (angle_indices.empty()) {
-    *e_rational = RationalFunction(e_poly);
-    return;
-  }
-  const symbolic::Monomial monomial_one{};
-  symbolic::Polynomial denominator{1};
-  for (int angle_index : angle_indices) {
-    // denominator *= (1 + t_angle(angle_index)^2)
-    const Polynomial one_plus_t_square(
-        {{monomial_one, 1}, {symbolic::Monomial(t_angle(angle_index), 2), 1}});
-    denominator *= one_plus_t_square;
-  }
-  symbolic::Polynomial numerator{};
-  for (const auto& pair : e_poly.monomial_to_coefficient_map()) {
-    // If the monomial contains cos_delta(i), then replace cos_delta(i) with
-    // 1 - t_angle(i) * t_angle(i).
-    // If the monomial contains sin_delta(i), then replace sin_delta(i) with
-    // 2 * t_angle(i).
-    // Otherwise, multiplies with 1 + t_angle(i) * t_angle(i)
-
-    // We assume that t pair.second doesn't contain any indeterminates. So
-    // pair.second is the coefficient.
-    Polynomial numerator_monomial{{{monomial_one, pair.second}}};
-    for (int angle_index : angle_indices) {
-      if (pair.first.degree(cos_delta(angle_index)) > 0) {
-        const Polynomial one_minus_t_square(
-            {{monomial_one, 1},
-             {symbolic::Monomial{t_angle(angle_index), 2}, -1}});
-        numerator_monomial *= one_minus_t_square;
-      } else if (pair.first.degree(sin_delta(angle_index)) > 0) {
-        const Polynomial two_t(
-            {{symbolic::Monomial(t_angle(angle_index), 1), 2}});
-        numerator_monomial *= two_t;
-      } else {
-        const Polynomial one_plus_t_square(
-            {{monomial_one, 1},
-             {symbolic::Monomial(t_angle(angle_index), 2), 1}});
-        numerator_monomial *= one_plus_t_square;
-      }
-    }
-    numerator += numerator_monomial;
-  }
-
-  *e_rational = RationalFunction(numerator, denominator);
-}
 }  // namespace multibody
 }  // namespace drake

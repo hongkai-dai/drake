@@ -10,23 +10,21 @@
 #include "drake/multibody/rational_forward_kinematics/test/rational_forward_kinematics_test_utilities.h"
 #include "drake/solvers/mathematical_program.h"
 #include "drake/solvers/mosek_solver.h"
+#include "drake/solvers/scs_solver.h"
+#include "drake/solvers/sos_basis_generator.h"
 
 namespace drake {
 namespace multibody {
-std::unique_ptr<RigidBodyTreed> ConstructIiwaWithPolytopeRBT() {
-  const std::string file_path =
-      "drake/manipulation/models/iiwa_description/sdf/iiwa14_no_collision.sdf";
-  auto plant = std::make_unique<multibody_plant::MultibodyPlant<double>>(0);
-  parsing::AddModelFromSdfFile(FindResourceOrThrow(file_path), plant.get());
-  plant->WeldFrames(plant->world_frame(), plant->GetFrameByName("iiwa_link_0"));
+int DoMain() {
+  auto plant = ConstructIiwaPlant("iiwa14_no_collision.sdf");
 
   const std::vector<ConfigurationSpaceCollisionFreeRegion::Polytope>
       link_polytopes = GenerateIiwaLinkPolytopes(*plant);
 
   Eigen::Isometry3d box1_pose = Eigen::Isometry3d::Identity();
-  box1_pose.translation() << -0.4, 0, 0.5;
+  box1_pose.translation() << -0.5, 0, 0.5;
   Eigen::Isometry3d box2_pose = Eigen::Isometry3d::Identity();
-  box2_pose.translation() << 0.4, 0, 0.5;
+  box2_pose.translation() << 0.5, 0, 0.5;
   std::vector<ConfigurationSpaceCollisionFreeRegion::Polytope> obstacle_boxes;
   obstacle_boxes.emplace_back(
       0, GenerateBoxVertices(Eigen::Vector3d(0.4, 0.6, 1), box1_pose));
@@ -58,7 +56,7 @@ std::unique_ptr<RigidBodyTreed> ConstructIiwaWithPolytopeRBT() {
 
   const auto& links_outside_halfspace =
       dut.GenerateLinkOutsideHalfspacePolynomials(q_star);
-  const double rho = 0.1;
+  const double rho = 0.001;
   const symbolic::Polynomial indeterminate_bound(
       rho - prog.indeterminates().cast<symbolic::Expression>().dot(
                 prog.indeterminates()));
@@ -66,19 +64,23 @@ std::unique_ptr<RigidBodyTreed> ConstructIiwaWithPolytopeRBT() {
     // Create the Lagrangian multiplier
     const auto& lagragian_pair =
         prog.NewSosPolynomial(symbolic::Variables(prog.indeterminates()), 2);
-    prog.AddSosConstraint(link_outside_halfspace -
-                          lagragian_pair.first * indeterminate_bound);
+
+    const symbolic::Polynomial p =
+        link_outside_halfspace - lagragian_pair.first * indeterminate_bound;
+    const auto monomial_basis = solvers::ConstructMonomialBasis(p);
+    prog.AddSosConstraint(p, monomial_basis);
   }
 
-  solvers::MosekSolver mosek_solver;
-  mosek_solver.set_stream_logging(true, "");
-  const auto result = mosek_solver.Solve(prog);
+  // solvers::MosekSolver mosek_solver;
+  // mosek_solver.set_stream_logging(true, "");
+  solvers::ScsSolver scs_solver;
+  scs_solver.SetVerbose(true);
+  std::cout << "Call Solve.\n";
+  const auto result = scs_solver.Solve(prog);
   std::cout << "Solution result: " << result << "\n";
 
   return 0;
 }
-
-int DoMain() { return 0; }
 }  // namespace multibody
 }  // namespace drake
 

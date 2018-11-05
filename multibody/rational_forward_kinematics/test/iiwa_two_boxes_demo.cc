@@ -60,14 +60,34 @@ int DoMain() {
   const symbolic::Polynomial indeterminate_bound(
       rho - prog.indeterminates().cast<symbolic::Expression>().dot(
                 prog.indeterminates()));
+  const symbolic::Monomial monomial_one{};
   for (const auto& link_outside_halfspace : links_outside_halfspace) {
     // Create the Lagrangian multiplier
-    const auto& lagragian_pair =
-        prog.NewSosPolynomial(symbolic::Variables(prog.indeterminates()), 2);
+    const auto link_outside_halfspace_monomial_basis =
+        solvers::ConstructMonomialBasis(link_outside_halfspace);
+    const auto lagrangian_hessian = prog.NewSymmetricContinuousVariables(
+        link_outside_halfspace_monomial_basis.rows());
+    prog.AddPositiveSemidefiniteConstraint(lagrangian_hessian);
+    MatrixX<symbolic::Polynomial> lagrangian_hessian_poly(
+        lagrangian_hessian.rows(), lagrangian_hessian.cols());
+    for (int i = 0; i < lagrangian_hessian.rows(); ++i) {
+      for (int j = 0; j < lagrangian_hessian.cols(); ++j) {
+        lagrangian_hessian_poly(i, j) =
+            symbolic::Polynomial({{monomial_one, lagrangian_hessian(i, j)}});
+      }
+    }
+    const VectorX<symbolic::Polynomial>
+        link_outside_halfspace_monomial_basis_poly =
+            link_outside_halfspace_monomial_basis.cast<symbolic::Polynomial>();
+    const symbolic::Polynomial lagrangian =
+        link_outside_halfspace_monomial_basis_poly.dot(
+            lagrangian_hessian_poly *
+            link_outside_halfspace_monomial_basis_poly);
 
     const symbolic::Polynomial p =
-        link_outside_halfspace - lagragian_pair.first * indeterminate_bound;
+        link_outside_halfspace - lagrangian * indeterminate_bound;
     const auto monomial_basis = solvers::ConstructMonomialBasis(p);
+    std::cout << "monomial_basis size: " << monomial_basis.size() << "\n";
     prog.AddSosConstraint(p, monomial_basis);
   }
 

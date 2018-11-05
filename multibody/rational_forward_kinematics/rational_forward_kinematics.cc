@@ -342,6 +342,5 @@ RationalForwardKinematics::CalcLinkPoses(
   }
   return poses;
 }
-
 }  // namespace multibody
 }  // namespace drake

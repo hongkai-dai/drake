@@ -132,5 +132,6 @@ void ReplaceCosAndSinWithRationalFunction(
     const VectorX<symbolic::Variable>& sin_delta,
     const VectorX<symbolic::Variable>& t_angles, const symbolic::Variables& t,
     symbolic::RationalFunction* e_rational);
+
 }  // namespace multibody
 }  // namespace drake

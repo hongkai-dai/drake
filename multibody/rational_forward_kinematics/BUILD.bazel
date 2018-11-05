@@ -28,6 +28,15 @@ drake_cc_library(
 )
 
 drake_cc_library(
+    name = "generate_monomial_basis_util",
+    srcs = ["generate_monomial_basis_util.cc"],
+    hdrs = ["generate_monomial_basis_util.h"],
+    deps = [
+        "//common:symbolic",
+    ],
+)
+
+drake_cc_library(
     name = "configuration_space_collision_free_region",
     srcs = ["configuration_space_collision_free_region.cc"],
     hdrs = ["configuration_space_collision_free_region.h"],
@@ -61,6 +70,13 @@ drake_cc_googletest(
         ":rational_forward_kinematics_test_utilities",
         "//common/test_utilities:eigen_matrix_compare",
         "//common/test_utilities:symbolic_test_util",
+    ],
+)
+
+drake_cc_googletest(
+    name = "generate_monomial_basis_util_test",
+    deps = [
+        ":generate_monomial_basis_util",
     ],
 )
 

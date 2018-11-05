@@ -189,7 +189,6 @@ GTEST_TEST(RationalForwardKinematicsTest, CalcLinkPoses) {
   t_val = ((q_val - q_star_val) / 2).array().tan().matrix();
   CheckLinkKinematics(rational_forward_kinematics, q_val, q_star_val, t_val, 0);
 }
-
 }  // namespace
 }  // namespace multibody
 }  // namespace drake

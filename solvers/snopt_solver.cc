@@ -501,9 +501,9 @@ void UpdateLinearConstraint(const MathematicalProgram& prog,
 void SolveWithGivenOptions(
     const MathematicalProgram& prog,
     const Eigen::Ref<const Eigen::VectorXd>& x_init,
-    const std::map<std::string, std::string>& snopt_options_string,
-    const std::map<std::string, int>& snopt_options_int,
-    const std::map<std::string, double>& snopt_options_double,
+    const std::unordered_map<std::string, std::string>& snopt_options_string,
+    const std::unordered_map<std::string, int>& snopt_options_int,
+    const std::unordered_map<std::string, double>& snopt_options_double,
     int* snopt_status, double* objective, EigenPtr<Eigen::VectorXd> x_val) {
   DRAKE_ASSERT(x_val->rows() == prog.num_vars());
   char problem_name[] = "drake_problem";
@@ -797,7 +797,7 @@ SolutionResult MapSnoptInfoToSolutionResult(int snopt_info) {
 
 }  // namespace
 
-bool SnoptSolver::available() const { return true; }
+bool SnoptSolver::is_available() { return true; }
 
 SolutionResult SnoptSolver::Solve(MathematicalProgram& prog) const {
   int snopt_status{0};

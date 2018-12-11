@@ -59,7 +59,7 @@ drake_cc_library(
         "//common:find_resource",
         "//multibody/benchmarks/kuka_iiwa_robot",
         "//multibody/multibody_tree/multibody_plant",
-        "//multibody/multibody_tree/parsing:multibody_plant_sdf_parser",
+        "//multibody/parsing:parser",
     ],
 )
 
@@ -96,7 +96,7 @@ drake_cc_binary(
     srcs = ["test/iiwa_two_boxes_demo.cc"],
     deps = [
         ":rational_forward_kinematics_test_utilities",
-        "//manipulation/util:simple_tree_visualizer",
+        ":generate_monomial_basis_util",
         "//solvers:mathematical_program",
         "@gflags",
     ]

@@ -4,9 +4,8 @@
 #include <gflags/gflags.h>
 
 #include "drake/common/find_resource.h"
-#include "drake/manipulation/util/simple_tree_visualizer.h"
-#include "drake/multibody/multibody_tree/parsing/multibody_plant_sdf_parser.h"
 #include "drake/multibody/rational_forward_kinematics/configuration_space_collision_free_region.h"
+#include "drake/multibody/rational_forward_kinematics/generate_monomial_basis_util.h"
 #include "drake/multibody/rational_forward_kinematics/test/rational_forward_kinematics_test_utilities.h"
 #include "drake/solvers/mathematical_program.h"
 #include "drake/solvers/mosek_solver.h"
@@ -61,13 +60,44 @@ int DoMain() {
       rho - prog.indeterminates().cast<symbolic::Expression>().dot(
                 prog.indeterminates()));
   const symbolic::Monomial monomial_one{};
+  using MonomialBasis = VectorX<symbolic::Monomial>;
+  // For each variables t, we need two monomial basis. The first one is for the
+  // Lagrangian multiplier, which contains all monomials of form ∏tᵢⁿⁱ, where
+  // nᵢ <= 1. The second one is for the verified polynomial with the lagrangian
+  // multiplier, containing all monomials of order all up to 1, except one may
+  // up to 2.
+  std::unordered_map<symbolic::Variables,
+                     std::pair<MonomialBasis, MonomialBasis>>
+      map_variables_to_monomial_basis;
   for (const auto& link_outside_halfspace : links_outside_halfspace) {
+    const symbolic::Variables t_indeterminates =
+        link_outside_halfspace.indeterminates();
+    // Find if the monomial basis for t_indeterminates has been computed
+    // already. If not, then generate the monomial basis.
+    MonomialBasis link_outside_halfspace_monomial_basis, monomial_basis;
+    auto it = map_variables_to_monomial_basis.find(t_indeterminates);
+    if (it == map_variables_to_monomial_basis.end()) {
+      std::cout << "compute new monomial basis.\n";
+      link_outside_halfspace_monomial_basis =
+          GenerateMonomialBasisWithOrderUpToOne(t_indeterminates);
+      monomial_basis = GenerateMonomialBasisOrderAllUpToOneExceptOneUpToTwo(
+          t_indeterminates);
+      map_variables_to_monomial_basis.emplace_hint(
+          it, t_indeterminates,
+          std::make_pair(link_outside_halfspace_monomial_basis,
+                         monomial_basis));
+    } else {
+      std::cout << "Found existed monomial basis.\n";
+      link_outside_halfspace_monomial_basis = it->second.first;
+      monomial_basis = it->second.second;
+    }
     // Create the Lagrangian multiplier
-    const auto link_outside_halfspace_monomial_basis =
-        solvers::ConstructMonomialBasis(link_outside_halfspace);
     const auto lagrangian_hessian = prog.NewSymmetricContinuousVariables(
         link_outside_halfspace_monomial_basis.rows());
     prog.AddPositiveSemidefiniteConstraint(lagrangian_hessian);
+    // We create lagrangian_hessian_poly so that we can compute
+    // monomial_basis_poly.dot(lagrangian_hessian_poly * monomial_basis_poly) as
+    // a polynomial.
     MatrixX<symbolic::Polynomial> lagrangian_hessian_poly(
         lagrangian_hessian.rows(), lagrangian_hessian.cols());
     for (int i = 0; i < lagrangian_hessian.rows(); ++i) {
@@ -83,20 +113,21 @@ int DoMain() {
         link_outside_halfspace_monomial_basis_poly.dot(
             lagrangian_hessian_poly *
             link_outside_halfspace_monomial_basis_poly);
+    std::cout << "compute lagrangian.\n";
 
     const symbolic::Polynomial p =
         link_outside_halfspace - lagrangian * indeterminate_bound;
-    const auto monomial_basis = solvers::ConstructMonomialBasis(p);
     std::cout << "monomial_basis size: " << monomial_basis.size() << "\n";
     prog.AddSosConstraint(p, monomial_basis);
+    std::cout << "Add sos constraint.\n";
   }
 
-  // solvers::MosekSolver mosek_solver;
-  // mosek_solver.set_stream_logging(true, "");
-  solvers::ScsSolver scs_solver;
-  scs_solver.SetVerbose(true);
+  solvers::MosekSolver mosek_solver;
+  mosek_solver.set_stream_logging(true, "");
+  // solvers::ScsSolver scs_solver;
+  // scs_solver.SetVerbose(true);
   std::cout << "Call Solve.\n";
-  const auto result = scs_solver.Solve(prog);
+  const auto result = mosek_solver.Solve(prog);
   std::cout << "Solution result: " << result << "\n";
 
   return 0;

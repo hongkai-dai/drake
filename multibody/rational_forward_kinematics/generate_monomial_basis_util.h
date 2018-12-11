@@ -7,8 +7,10 @@ namespace multibody {
 /**
  * Generate all the monomials of t_angles, such that the order for t_angles(i)
  * is no larger than 1.
- * The link pose is a polynomial of t_angles. The monomials in this polynomial
- * has the form ∏ tᵢᵐⁱ, where tᵢ is a term in t_angles, and the order mᵢ <= 2.
+ * The link pose is a rational function of t_angles. In both the numerator and
+ * denominator polynomials of this rational function, the monomials in these
+ * polynomials has the form ∏ tᵢᵐⁱ, where tᵢ is a term in t_angles, and the
+ * order mᵢ <= 2.
  * Hence if we compute the monomial basis z for this polynomial, such that the
  * polynomial can be written as zᵀHz, then z should contain all the monomials
  * of form ∏tᵢⁿⁱ, where nᵢ <= 1.

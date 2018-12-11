@@ -1,5 +1,7 @@
 #include "drake/multibody/rational_forward_kinematics/configuration_space_collision_free_region.h"
 
+#include "drake/multibody/rational_forward_kinematics/generate_monomial_basis_util.h"
+
 namespace drake {
 namespace multibody {
 using symbolic::RationalFunction;
@@ -127,6 +129,129 @@ std::vector<symbolic::Expression> ConfigurationSpaceCollisionFreeRegion::
     }
   }
   return exprs;
+}
+
+void ConfigurationSpaceCollisionFreeRegion::
+    ConstructProgramToVerifyFreeRegionAroundPosture(
+        const Eigen::Ref<const Eigen::VectorXd>& q_star,
+        const Eigen::Ref<const Eigen::VectorXd>& weights, double rho,
+        const ConfigurationSpaceCollisionFreeRegion::VerificationOptions&
+            options,
+        solvers::MathematicalProgram* prog) const {
+  // Check the size of q_star.
+  DRAKE_ASSERT(q_star.rows() ==
+               rational_forward_kinematics_.tree().num_positions());
+  DRAKE_ASSERT(weights.rows() == rational_forward_kinematics_.t().rows());
+  DRAKE_ASSERT((weights.array() >= 0).all());
+  DRAKE_ASSERT(rho >= 0);
+  DRAKE_ASSERT(prog);
+  // t are the indeterminates.
+  prog->AddIndeterminates(rational_forward_kinematics_.t());
+  // The separating hyperplanes are the decision variables.
+  for (int i = 1; i < static_cast<int>(a_hyperplane_.size()); ++i) {
+    for (int j = 0; j < static_cast<int>(a_hyperplane_[i].size()); ++j) {
+      for (int k = 0; k < static_cast<int>(a_hyperplane_[i][j].size()); ++k) {
+        prog->AddDecisionVariables(a_hyperplane_[i][j][k]);
+      }
+    }
+  }
+
+  // Obstacles inside halfspace a'(v - p) <= 1
+  const auto& obstacles_inside_halfspace =
+      GenerateObstacleInsideHalfspaceExpression();
+  for (const auto& expr : obstacles_inside_halfspace) {
+    prog->AddLinearConstraint(expr <= 0);
+  }
+
+  const auto& links_outside_halfspace =
+      GenerateLinkOutsideHalfspacePolynomials(q_star);
+  const symbolic::Monomial monomial_one{};
+  using MonomialBasis = VectorX<symbolic::Monomial>;
+  // For each variables t, we need two monomial basis. The first one is for the
+  // Lagrangian multiplier, which contains all monomials of form ∏tᵢⁿⁱ, where
+  // nᵢ <= 1. The second one is for the verified polynomial with the lagrangian
+  // multiplier, containing all monomials of order all up to 1, except one may
+  // up to 2. The value contains (ρ - ∑ᵢ wᵢtᵢ², lagrangian_monomial_basis,
+  // link_outside_monomial_basis).
+  std::unordered_map<
+      symbolic::Variables,
+      std::tuple<symbolic::Polynomial, MonomialBasis, MonomialBasis>>
+      map_variables_to_indeterminate_bound_and_monomial_basis;
+  for (const auto& link_outside_halfspace : links_outside_halfspace) {
+    const symbolic::Variables& t_indeterminates =
+        link_outside_halfspace.indeterminates();
+    // Find if the polynomial ρ - ∑ᵢ wᵢtᵢ² and the monomial basis for
+    // t_indeterminates has been computed already. If not, then generate the
+    // monomial basis.
+    symbolic::Polynomial neighbourhood_poly;
+    MonomialBasis lagrangian_monomial_basis, link_outside_monomial_basis;
+    auto it = map_variables_to_indeterminate_bound_and_monomial_basis.find(
+        t_indeterminates);
+    if (it == map_variables_to_indeterminate_bound_and_monomial_basis.end()) {
+      // Compute the neighbourhood polynomial ρ - ∑ᵢ wᵢtᵢ².
+      symbolic::Polynomial::MapType neighbourhood_poly_map;
+      neighbourhood_poly_map.emplace(monomial_one, rho);
+      for (int i = 0; i < rational_forward_kinematics_.t().rows(); ++i) {
+        if (t_indeterminates.find(rational_forward_kinematics_.t()(i)) !=
+            t_indeterminates.end()) {
+          neighbourhood_poly_map.emplace(
+              symbolic::Monomial({rational_forward_kinematics_.t()(i), 2}),
+              -weights(i));
+        }
+      }
+      neighbourhood_poly = symbolic::Polynomial(neighbourhood_poly_map);
+
+      // Compute the monomial basis.
+      lagrangian_monomial_basis =
+          GenerateMonomialBasisWithOrderUpToOne(t_indeterminates);
+      link_outside_monomial_basis =
+          GenerateMonomialBasisOrderAllUpToOneExceptOneUpToTwo(
+              t_indeterminates);
+      map_variables_to_indeterminate_bound_and_monomial_basis.emplace_hint(
+          it, t_indeterminates,
+          std::make_tuple(neighbourhood_poly, lagrangian_monomial_basis,
+                          link_outside_monomial_basis));
+    } else {
+      neighbourhood_poly = std::get<0>(it->second);
+      lagrangian_monomial_basis = std::get<1>(it->second);
+      link_outside_monomial_basis = std::get<2>(it->second);
+    }
+
+    // Create the Lagrangian multiplier
+    symbolic::Polynomial lagrangian;
+    switch (options.lagrangian_type_) {
+      case ConfigurationSpaceCollisionFreeRegion::PositivePolynomial::kSOS: {
+        lagrangian = prog->NewSosPolynomial(lagrangian_monomial_basis).first;
+        break;
+      }
+      case ConfigurationSpaceCollisionFreeRegion::PositivePolynomial::kSDSOS: {
+        throw std::runtime_error("Not implemented yet.");
+        break;
+      }
+      case ConfigurationSpaceCollisionFreeRegion::PositivePolynomial::kDSOS: {
+        throw std::runtime_error("Not implemented yet.");
+        break;
+      }
+    }
+
+    const symbolic::Polynomial link_outside_verification_poly =
+        link_outside_halfspace - lagrangian * neighbourhood_poly;
+    switch (options.link_polynomial_type_) {
+      case ConfigurationSpaceCollisionFreeRegion::PositivePolynomial::kSOS: {
+        std::cout << "Call add sos constraint.\n";
+        prog->AddSosConstraint(link_outside_verification_poly,
+                               link_outside_monomial_basis);
+        std::cout << "Finish calling add sos constraint.\n";
+        break;
+      }
+      case ConfigurationSpaceCollisionFreeRegion::PositivePolynomial::kSDSOS: {
+        throw std::runtime_error("Not implemented yet.");
+      }
+      case ConfigurationSpaceCollisionFreeRegion::PositivePolynomial::kDSOS: {
+        throw std::runtime_error("Not implemented yet.");
+      }
+    }
+  }
 }
 
 }  // namespace multibody

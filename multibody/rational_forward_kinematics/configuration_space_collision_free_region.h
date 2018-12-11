@@ -91,6 +91,51 @@ class ConfigurationSpaceCollisionFreeRegion {
   std::vector<symbolic::Expression> GenerateObstacleInsideHalfspaceExpression()
       const;
 
+  enum class PositivePolynomial {
+    kSOS,
+    kSDSOS,
+    kDSOS,
+  };
+
+  struct VerificationOptions {
+    VerificationOptions()
+        : lagrangian_type_{PositivePolynomial::kSOS},
+          link_polynomial_type_{PositivePolynomial::kSOS} {}
+
+    // Whether the Lagrangian should be SOS, SDSOS or DSOS.
+    PositivePolynomial lagrangian_type_;
+    // Whether the polynomial q(t) - l(t)(ρ - ∑ᵢ wᵢtᵢ²) should be SOS, SDSOS or
+    // DSOS. This polynomial >= 0 means that the link is outside the separating
+    // hyperplane when the joint values are in the configuration neighbourhood.
+    PositivePolynomial link_polynomial_type_;
+  };
+
+  /**
+   * Construct a mathematical program to verify that the region
+   * ∑ wᵢ tᵢ² ≤ ρ is a collision free region, where tᵢ = tan((θᵢ - θᵢ*)/2).
+   * A convex-shaped link is not colliding with another convex-shaped obstacle
+   * if there exist a hyperplane aᵀ(x - p)= 1 that separates the link from the
+   * obstacle, where p is the obstacle center. Hence we impose the following
+   * constraint
+   * aᵀ(v - p) <= 1 for each obstacle vertex v
+   * q(t) - l(t)(ρ - ∑ᵢ wᵢtᵢ²) >= 0 ∀t
+   * l(t) >= 0 ∀t
+   * where q(t) is a polynomial of t, q(t) = aᵀ(n(t) - p*d(t)) - d(t)
+   * where n(t)/d(t) is the position of a link vertex, expressed as a rational
+   * function of t.
+   * @param q_star The nominal posture of the robot. The collision free
+   * neighbourhood is around this nominal posture.
+   * @param weights w in the documentation above. weights must be non-negative.
+   * @param rho The size of the neighbourhood. rho >= 0.
+   * @param options The verification options.
+   * @param[out] prog The constructed optimization program.
+   */
+  void ConstructProgramToVerifyFreeRegionAroundPosture(
+      const Eigen::Ref<const Eigen::VectorXd>& q_star,
+      const Eigen::Ref<const Eigen::VectorXd>& weights, double rho,
+      const VerificationOptions& options,
+      solvers::MathematicalProgram* prog) const;
+
  private:
   std::vector<symbolic::RationalFunction>
   GenerateLinkOutsideHalfspaceRationalFunction(

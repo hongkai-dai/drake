@@ -41,6 +41,7 @@ drake_cc_library(
     srcs = ["configuration_space_collision_free_region.cc"],
     hdrs = ["configuration_space_collision_free_region.h"],
     deps = [
+        ":generate_monomial_basis_util",
         ":rational_forward_kinematics",
         "//solvers:mathematical_program",
     ],
@@ -96,7 +97,6 @@ drake_cc_binary(
     srcs = ["test/iiwa_two_boxes_demo.cc"],
     deps = [
         ":rational_forward_kinematics_test_utilities",
-        ":generate_monomial_basis_util",
         "//solvers:mathematical_program",
         "@gflags",
     ]

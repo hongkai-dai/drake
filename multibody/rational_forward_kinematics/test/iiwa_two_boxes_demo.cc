@@ -38,8 +38,10 @@ int DoMain() {
   solvers::MathematicalProgram prog;
   const double rho = 0.001;
 
-  const ConfigurationSpaceCollisionFreeRegion::VerificationOptions
+  ConfigurationSpaceCollisionFreeRegion::VerificationOptions
       verification_options{};
+  verification_options.link_polynomial_type =
+      solvers::MathematicalProgram::NonnegativePolynomial::kSdsos;
 
   dut.ConstructProgramToVerifyFreeRegionAroundPosture(
       q_star, Eigen::VectorXd::Ones(7), rho, verification_options, &prog);

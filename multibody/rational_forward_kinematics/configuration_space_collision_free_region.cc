@@ -238,6 +238,7 @@ void ConfigurationSpaceCollisionFreeRegion::
     for (const auto& diff_poly_item : diff_poly.monomial_to_coefficient_map()) {
       prog->AddLinearEqualityConstraint(diff_poly_item.second == 0);
     }
+    std::cout << "Add sos constraint.\n";
   }
 }
 

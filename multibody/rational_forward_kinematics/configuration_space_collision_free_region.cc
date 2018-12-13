@@ -207,6 +207,10 @@ void ConfigurationSpaceCollisionFreeRegion::
       link_outside_monomial_basis =
           GenerateMonomialBasisOrderAllUpToOneExceptOneUpToTwo(
               t_indeterminates);
+      std::cout << "lagrangian_monomial_basis size: "
+                << lagrangian_monomial_basis.rows()
+                << "\nlink_outside_monomial_basis: "
+                << link_outside_monomial_basis.rows() << "\n";
       map_variables_to_indeterminate_bound_and_monomial_basis.emplace_hint(
           it, t_indeterminates,
           std::make_tuple(neighbourhood_poly, lagrangian_monomial_basis,
@@ -218,38 +222,21 @@ void ConfigurationSpaceCollisionFreeRegion::
     }
 
     // Create the Lagrangian multiplier
-    symbolic::Polynomial lagrangian;
-    switch (options.lagrangian_type_) {
-      case ConfigurationSpaceCollisionFreeRegion::PositivePolynomial::kSOS: {
-        lagrangian = prog->NewSosPolynomial(lagrangian_monomial_basis).first;
-        break;
-      }
-      case ConfigurationSpaceCollisionFreeRegion::PositivePolynomial::kSDSOS: {
-        throw std::runtime_error("Not implemented yet.");
-        break;
-      }
-      case ConfigurationSpaceCollisionFreeRegion::PositivePolynomial::kDSOS: {
-        throw std::runtime_error("Not implemented yet.");
-        break;
-      }
-    }
+    const symbolic::Polynomial lagrangian = prog->NewNonnegativePolynomial(
+        lagrangian_monomial_basis, options.lagrangian_type).first;
 
     const symbolic::Polynomial link_outside_verification_poly =
         link_outside_halfspace - lagrangian * neighbourhood_poly;
-    switch (options.link_polynomial_type_) {
-      case ConfigurationSpaceCollisionFreeRegion::PositivePolynomial::kSOS: {
-        std::cout << "Call add sos constraint.\n";
-        prog->AddSosConstraint(link_outside_verification_poly,
-                               link_outside_monomial_basis);
-        std::cout << "Finish calling add sos constraint.\n";
-        break;
-      }
-      case ConfigurationSpaceCollisionFreeRegion::PositivePolynomial::kSDSOS: {
-        throw std::runtime_error("Not implemented yet.");
-      }
-      case ConfigurationSpaceCollisionFreeRegion::PositivePolynomial::kDSOS: {
-        throw std::runtime_error("Not implemented yet.");
-      }
+
+    const symbolic::Polynomial link_outside_verification_poly_expected =
+        prog->NewNonnegativePolynomial(link_outside_monomial_basis,
+                                       options.link_polynomial_type)
+            .first;
+    const symbolic::Polynomial diff_poly{
+        link_outside_verification_poly -
+        link_outside_verification_poly_expected};
+    for (const auto& diff_poly_item : diff_poly.monomial_to_coefficient_map()) {
+      prog->AddLinearEqualityConstraint(diff_poly_item.second == 0);
     }
   }
 }

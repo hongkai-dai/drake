@@ -91,23 +91,18 @@ class ConfigurationSpaceCollisionFreeRegion {
   std::vector<symbolic::Expression> GenerateObstacleInsideHalfspaceExpression()
       const;
 
-  enum class PositivePolynomial {
-    kSOS,
-    kSDSOS,
-    kDSOS,
-  };
-
   struct VerificationOptions {
     VerificationOptions()
-        : lagrangian_type_{PositivePolynomial::kSOS},
-          link_polynomial_type_{PositivePolynomial::kSOS} {}
+        : lagrangian_type{solvers::MathematicalProgram::NonnegativePolynomial::kSos},
+          link_polynomial_type{
+            solvers::MathematicalProgram::NonnegativePolynomial::kSos} {}
 
     // Whether the Lagrangian should be SOS, SDSOS or DSOS.
-    PositivePolynomial lagrangian_type_;
+    solvers::MathematicalProgram::NonnegativePolynomial lagrangian_type;
     // Whether the polynomial q(t) - l(t)(ρ - ∑ᵢ wᵢtᵢ²) should be SOS, SDSOS or
     // DSOS. This polynomial >= 0 means that the link is outside the separating
     // hyperplane when the joint values are in the configuration neighbourhood.
-    PositivePolynomial link_polynomial_type_;
+    solvers::MathematicalProgram::NonnegativePolynomial link_polynomial_type;
   };
 
   /**

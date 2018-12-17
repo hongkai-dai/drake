@@ -6,11 +6,11 @@
 
 namespace drake {
 namespace multibody {
-std::unique_ptr<multibody_plant::MultibodyPlant<double>> ConstructIiwaPlant(
+std::unique_ptr<MultibodyPlant<double>> ConstructIiwaPlant(
     const std::string& iiwa_sdf_name) {
   const std::string file_path =
       "drake/manipulation/models/iiwa_description/sdf/" + iiwa_sdf_name;
-  auto plant = std::make_unique<multibody_plant::MultibodyPlant<double>>(0);
+  auto plant = std::make_unique<MultibodyPlant<double>>(0);
   Parser parser(plant.get());
   parser.AddModelFromFile(FindResourceOrThrow(file_path));
   plant->WeldFrames(plant->world_frame(), plant->GetFrameByName("iiwa_link_0"));
@@ -37,7 +37,7 @@ Eigen::Matrix<double, 3, 8> GenerateBoxVertices(const Eigen::Vector3d& size,
 }
 
 std::vector<ConfigurationSpaceCollisionFreeRegion::Polytope>
-GenerateIiwaLinkPolytopes(const multibody_plant::MultibodyPlant<double>& iiwa) {
+GenerateIiwaLinkPolytopes(const MultibodyPlant<double>& iiwa) {
   std::vector<ConfigurationSpaceCollisionFreeRegion::Polytope> link_polytopes;
   const int link7_idx = iiwa.GetBodyByName("iiwa_link_7").node_index();
   Eigen::Isometry3d link7_box_pose = Eigen::Isometry3d::Identity();

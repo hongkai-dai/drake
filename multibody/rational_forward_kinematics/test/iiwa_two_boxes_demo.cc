@@ -36,7 +36,7 @@ int DoMain() {
   q_star.setZero();
 
   solvers::MathematicalProgram prog;
-  const double rho = 0.001;
+  const double rho = 0.15;
 
   ConfigurationSpaceCollisionFreeRegion::VerificationOptions
       verification_options{};

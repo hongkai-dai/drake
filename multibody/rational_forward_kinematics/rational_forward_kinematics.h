@@ -4,12 +4,12 @@
 #include <vector>
 
 #include "drake/common/symbolic.h"
-#include "drake/multibody/multibody_tree/multibody_tree.h"
-#include "drake/multibody/multibody_tree/prismatic_mobilizer.h"
-#include "drake/multibody/multibody_tree/quaternion_floating_mobilizer.h"
-#include "drake/multibody/multibody_tree/revolute_mobilizer.h"
-#include "drake/multibody/multibody_tree/space_xyz_mobilizer.h"
-#include "drake/multibody/multibody_tree/weld_mobilizer.h"
+#include "drake/multibody/tree/multibody_tree.h"
+#include "drake/multibody/tree/prismatic_mobilizer.h"
+#include "drake/multibody/tree/quaternion_floating_mobilizer.h"
+#include "drake/multibody/tree/revolute_mobilizer.h"
+#include "drake/multibody/tree/space_xyz_mobilizer.h"
+#include "drake/multibody/tree/weld_mobilizer.h"
 
 namespace drake {
 namespace multibody {

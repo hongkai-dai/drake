@@ -93,9 +93,10 @@ class ConfigurationSpaceCollisionFreeRegion {
 
   struct VerificationOptions {
     VerificationOptions()
-        : lagrangian_type{solvers::MathematicalProgram::NonnegativePolynomial::kSos},
+        : lagrangian_type{solvers::MathematicalProgram::NonnegativePolynomial::
+                              kSos},
           link_polynomial_type{
-            solvers::MathematicalProgram::NonnegativePolynomial::kSos} {}
+              solvers::MathematicalProgram::NonnegativePolynomial::kSos} {}
 
     // Whether the Lagrangian should be SOS, SDSOS or DSOS.
     solvers::MathematicalProgram::NonnegativePolynomial lagrangian_type;
@@ -107,19 +108,20 @@ class ConfigurationSpaceCollisionFreeRegion {
 
   /**
    * Construct a mathematical program to verify that the region
-   * ∑ wᵢ tᵢ² ≤ ρ is a collision free region, where tᵢ = tan((θᵢ - θᵢ*)/2).
+   * c(t) <= 0 is a collision free region, where tᵢ = tan((θᵢ - θᵢ*)/2).
    * A convex-shaped link is not colliding with another convex-shaped obstacle
    * if there exist a hyperplane aᵀ(x - p)= 1 that separates the link from the
    * obstacle, where p is the obstacle center. Hence we impose the following
    * constraint
    * aᵀ(v - p) <= 1 for each obstacle vertex v
-   * q(t) - l(t)(ρ - ∑ᵢ wᵢtᵢ²) >= 0 ∀t
-   * l(t) >= 0 ∀t
+   * q(t) + l(t)ᵀc(t) >= 0 ∀t
+   * lᵢ(t) >= 0 ∀t, i
    * where q(t) is a polynomial of t, q(t) = aᵀ(n(t) - p*d(t)) - d(t)
    * where n(t)/d(t) is the position of a link vertex, expressed as a rational
    * function of t.
    * @param q_star The nominal posture of the robot. The collision free
    * neighbourhood is around this nominal posture.
+   * @param
    * @param weights w in the documentation above. weights must be non-negative.
    * @param rho The size of the neighbourhood. rho >= 0.
    * @param options The verification options.
@@ -127,11 +129,64 @@ class ConfigurationSpaceCollisionFreeRegion {
    */
   void ConstructProgramToVerifyFreeRegionAroundPosture(
       const Eigen::Ref<const Eigen::VectorXd>& q_star,
-      const Eigen::Ref<const Eigen::VectorXd>& weights, double rho,
+      const Eigen::Ref<const VectorX<symbolic::Polynomial>>& c,
+      const Eigen::Ref<const VectorX<symbolic::Monomial>>&
+          lagrangian_monomial_basis,
+      const Eigen::Ref<const VectorX<symbolic::Monomial>>&
+          aggregated_monomial_basis,
       const VerificationOptions& options,
       solvers::MathematicalProgram* prog) const;
 
+  /**
+   * Verifies that the ellipsoidal region {t| ∑ᵢ wᵢ*tᵢ²≤ ρ} is collision free,
+   * where tᵢ = tan((θᵢ - θᵢ*)/2).
+   * A convex-shaped link is not colliding with another convex-shaped obstacle
+   * if there exist a hyperplane aᵀ(x - p)= 1 that separates the link from the
+   * obstacle, where p is the obstacle center. Hence we impose the following
+   * constraint
+   * aᵀ(v - p) <= 1 for each obstacle vertex v
+   * q(t) + l(t)(ρ-∑ᵢ wᵢtᵢ²) >= 0 ∀t
+   * l(t) >= 0 ∀t
+   * where q(t) is a polynomial of t, q(t) = aᵀ(n(t) - p*d(t)) - d(t)
+   * where n(t)/d(t) is the position of a link vertex, expressed as a rational
+   * function of t.
+   * @param q_star The nominal posture of the robot. The collision free
+   * neighbourhood is around this nominal posture.
+   * @param
+   * @param weights w in the documentation above. weights must be non-negative.
+   * @param rho The size of the neighbourhood. rho >= 0.
+   * @param options The verification options.
+   * @param[out] prog The constructed optimization program.
+   */
+  void ConstructProgramToVerifyEllipsoidalFreeRegionAroundPosture(
+      const Eigen::Ref<const Eigen::VectorXd>& q_star,
+      const Eigen::Ref<const Eigen::VectorXd>& weights, double rho,
+      const ConfigurationSpaceCollisionFreeRegion::VerificationOptions& options,
+      solvers::MathematicalProgram* prog) const;
+
+  /**
+   * Verifies that the box region {t| tᵢ_lower ≤ tᵢ ≤ tᵢ_upper} is collision
+   * free, where tᵢ = tan((θᵢ - θᵢ*)/2).
+   * @return lagrangian_pairs lagrangian_pairs[k] contains all the pairs
+   * (t_upper(j) - t(j), l1j(t)) or (t(j) - t_lower(j), l2j(t)) to verify that
+   * GenerateLinkOutsideHalfspacePolynomials(q_star)(k) is nonnegative, where
+   * l1j(t) and l2j(t) are lagrangians for t_upper(j) - tj) and t(j) -
+   * t_lower(j) respectively.
+   */
+  std::vector<
+      std::vector<std::pair<symbolic::Polynomial, symbolic::Polynomial>>>
+  ConstructProgramToVerifyBoxFreeRegionAroundPosture(
+      const Eigen::Ref<const Eigen::VectorXd>& q_star,
+      const Eigen::Ref<const Eigen::VectorXd>& t_lower,
+      const Eigen::Ref<const Eigen::VectorXd>& t_upper,
+      const ConfigurationSpaceCollisionFreeRegion::VerificationOptions& options,
+      solvers::MathematicalProgram* prog) const;
+
  private:
+  void AddIndeterminatesAndObstacleInsideHalfspaceToProgram(
+      const Eigen::Ref<const Eigen::VectorXd>& q_star,
+      solvers::MathematicalProgram* prog) const;
+
   std::vector<symbolic::RationalFunction>
   GenerateLinkOutsideHalfspaceRationalFunction(
       const Eigen::VectorXd& q_star) const;

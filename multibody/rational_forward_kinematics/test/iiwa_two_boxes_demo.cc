@@ -36,15 +36,25 @@ int DoMain() {
   q_star.setZero();
 
   solvers::MathematicalProgram prog;
-  const double rho = 0.15;
+  //const double rho = 0.15;
 
   ConfigurationSpaceCollisionFreeRegion::VerificationOptions
       verification_options{};
   verification_options.link_polynomial_type =
       solvers::MathematicalProgram::NonnegativePolynomial::kSdsos;
 
-  dut.ConstructProgramToVerifyFreeRegionAroundPosture(
-      q_star, Eigen::VectorXd::Ones(7), rho, verification_options, &prog);
+  //dut.ConstructProgramToVerifyEllipsoidalFreeRegionAroundPosture(
+  //    q_star, Eigen::VectorXd::Ones(7), rho, verification_options, &prog);
+
+  verification_options.link_polynomial_type =
+      solvers::MathematicalProgram::NonnegativePolynomial::kSos;
+  verification_options.lagrangian_type =
+      solvers::MathematicalProgram::NonnegativePolynomial::kSdsos;
+  Eigen::VectorXd t_lower(7);
+  t_lower << -0.07, -0.08, -0.09, -0.1, -0.11, -0.12, -0.13;
+  Eigen::VectorXd t_upper = -t_lower;
+  dut.ConstructProgramToVerifyBoxFreeRegionAroundPosture(
+      q_star, t_lower, t_upper, verification_options, &prog);
 
   solvers::MosekSolver mosek_solver;
   mosek_solver.set_stream_logging(true, "");

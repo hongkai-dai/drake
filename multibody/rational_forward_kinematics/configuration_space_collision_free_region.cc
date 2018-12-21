@@ -132,18 +132,12 @@ std::vector<symbolic::Expression> ConfigurationSpaceCollisionFreeRegion::
 }
 
 void ConfigurationSpaceCollisionFreeRegion::
-    ConstructProgramToVerifyFreeRegionAroundPosture(
+    AddIndeterminatesAndObstacleInsideHalfspaceToProgram(
         const Eigen::Ref<const Eigen::VectorXd>& q_star,
-        const Eigen::Ref<const Eigen::VectorXd>& weights, double rho,
-        const ConfigurationSpaceCollisionFreeRegion::VerificationOptions&
-            options,
         solvers::MathematicalProgram* prog) const {
   // Check the size of q_star.
   DRAKE_ASSERT(q_star.rows() ==
                rational_forward_kinematics_.tree().num_positions());
-  DRAKE_ASSERT(weights.rows() == rational_forward_kinematics_.t().rows());
-  DRAKE_ASSERT((weights.array() >= 0).all());
-  DRAKE_ASSERT(rho >= 0);
   DRAKE_ASSERT(prog);
   // t are the indeterminates.
   prog->AddIndeterminates(rational_forward_kinematics_.t());
@@ -162,6 +156,20 @@ void ConfigurationSpaceCollisionFreeRegion::
   for (const auto& expr : obstacles_inside_halfspace) {
     prog->AddLinearConstraint(expr <= 0);
   }
+}
+
+void ConfigurationSpaceCollisionFreeRegion::
+    ConstructProgramToVerifyEllipsoidalFreeRegionAroundPosture(
+        const Eigen::Ref<const Eigen::VectorXd>& q_star,
+        const Eigen::Ref<const Eigen::VectorXd>& weights, double rho,
+        const ConfigurationSpaceCollisionFreeRegion::VerificationOptions&
+            options,
+        solvers::MathematicalProgram* prog) const {
+  DRAKE_ASSERT(weights.rows() == rational_forward_kinematics_.t().rows());
+  DRAKE_ASSERT((weights.array() >= 0).all());
+  DRAKE_ASSERT(rho >= 0);
+
+  AddIndeterminatesAndObstacleInsideHalfspaceToProgram(q_star, prog);
 
   const auto& links_outside_halfspace =
       GenerateLinkOutsideHalfspacePolynomials(q_star);
@@ -222,8 +230,10 @@ void ConfigurationSpaceCollisionFreeRegion::
     }
 
     // Create the Lagrangian multiplier
-    const symbolic::Polynomial lagrangian = prog->NewNonnegativePolynomial(
-        lagrangian_monomial_basis, options.lagrangian_type).first;
+    const symbolic::Polynomial lagrangian =
+        prog->NewNonnegativePolynomial(lagrangian_monomial_basis,
+                                       options.lagrangian_type)
+            .first;
 
     const symbolic::Polynomial link_outside_verification_poly =
         link_outside_halfspace - lagrangian * neighbourhood_poly;
@@ -242,5 +252,99 @@ void ConfigurationSpaceCollisionFreeRegion::
   }
 }
 
+std::vector<std::vector<std::pair<symbolic::Polynomial, symbolic::Polynomial>>>
+ConfigurationSpaceCollisionFreeRegion::
+    ConstructProgramToVerifyBoxFreeRegionAroundPosture(
+        const Eigen::Ref<const Eigen::VectorXd>& q_star,
+        const Eigen::Ref<const Eigen::VectorXd>& t_lower,
+        const Eigen::Ref<const Eigen::VectorXd>& t_upper,
+        const ConfigurationSpaceCollisionFreeRegion::VerificationOptions&
+            options,
+        solvers::MathematicalProgram* prog) const {
+  DRAKE_ASSERT((t_lower.array() < t_upper.array()).all());
+  DRAKE_ASSERT(t_lower.size() == rational_forward_kinematics_.t().size());
+  AddIndeterminatesAndObstacleInsideHalfspaceToProgram(q_star, prog);
+
+  const auto& links_outside_halfspace =
+      GenerateLinkOutsideHalfspacePolynomials(q_star);
+  const symbolic::Monomial monomial_one{};
+  using MonomialBasis = VectorX<symbolic::Monomial>;
+  std::unordered_map<symbolic::Variables, MonomialBasis>
+      map_variables_to_monomial_basis;
+  // Map each variable t(i) to t_upper(i) - t(i) and t(i) - t_lower(i)
+  std::unordered_map<symbolic::Variable::Id,
+                     std::pair<symbolic::Polynomial, symbolic::Polynomial>>
+      map_variable_to_box;
+  const auto& t = rational_forward_kinematics_.t();
+  for (int i = 0; i < t_lower.size(); ++i) {
+    const symbolic::Polynomial p1(
+        {{monomial_one, t_upper(i)}, {symbolic::Monomial(t(i)), -1}});
+    const symbolic::Polynomial p2(
+        {{monomial_one, -t_lower(i)}, {symbolic::Monomial(t(i)), 1}});
+    map_variable_to_box.emplace(t(i).get_id(), std::make_pair(p1, p2));
+  }
+  std::vector<
+      std::vector<std::pair<symbolic::Polynomial, symbolic::Polynomial>>>
+      lagrangians_pairs(links_outside_halfspace.size());
+  int link_outside_halfspace_count = 0;
+  for (const auto& link_outside_halfspace : links_outside_halfspace) {
+    const symbolic::Variables& t_indeterminates =
+        link_outside_halfspace.indeterminates();
+    lagrangians_pairs[link_outside_halfspace_count].reserve(
+        2 * t_indeterminates.size());
+    auto it = map_variables_to_monomial_basis.find(t_indeterminates);
+    MonomialBasis lagrangian_monomial_basis;
+    if (it == map_variables_to_monomial_basis.end()) {
+      lagrangian_monomial_basis =
+          GenerateMonomialBasisWithOrderUpToOne(t_indeterminates);
+      map_variables_to_monomial_basis.emplace_hint(it, t_indeterminates,
+                                                   lagrangian_monomial_basis);
+    } else {
+      lagrangian_monomial_basis = it->second;
+    }
+
+    // Computes the sum between lagrangian multipliers and the box condition as
+    // sum (t_upper(j) - t(j)) * l1j(t) + (t(j) - t_lower(j)) * l2j(t)
+    symbolic::Polynomial sum_lagrangian_times_condition{};
+    for (const auto& ti : t_indeterminates) {
+      const symbolic::Polynomial l1j =
+          prog->NewNonnegativePolynomial(lagrangian_monomial_basis,
+                                         options.lagrangian_type)
+              .first;
+      const symbolic::Polynomial l2j =
+          prog->NewNonnegativePolynomial(lagrangian_monomial_basis,
+                                         options.lagrangian_type)
+              .first;
+      const auto& box_conditions = map_variable_to_box.at(ti.get_id());
+      sum_lagrangian_times_condition +=
+          box_conditions.first * l1j + box_conditions.second * l2j;
+      lagrangians_pairs[link_outside_halfspace_count].emplace_back(
+          box_conditions.first, l1j);
+      lagrangians_pairs[link_outside_halfspace_count].emplace_back(
+          box_conditions.second, l2j);
+    }
+
+    const symbolic::Polynomial aggregated_polynomial =
+        link_outside_halfspace - sum_lagrangian_times_condition;
+
+    const symbolic::Polynomial aggregated_polynomial_expected =
+        prog->NewNonnegativePolynomial(lagrangian_monomial_basis,
+                                       options.link_polynomial_type)
+            .first;
+
+    const symbolic::Polynomial diff_poly{aggregated_polynomial -
+                                         aggregated_polynomial_expected};
+    for (const auto& diff_poly_item : diff_poly.monomial_to_coefficient_map()) {
+      prog->AddLinearEqualityConstraint(diff_poly_item.second == 0);
+    }
+
+    std::cout << "Add condition for " << link_outside_halfspace_count
+              << "'th (vertex-obstacle) pair.\n";
+    link_outside_halfspace_count++;
+  }
+  DRAKE_DEMAND(link_outside_halfspace_count ==
+               static_cast<int>(links_outside_halfspace.size()));
+  return lagrangians_pairs;
+}
 }  // namespace multibody
 }  // namespace drake

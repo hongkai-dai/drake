@@ -48,6 +48,24 @@ drake_cc_library(
 )
 
 drake_cc_library(
+    name = "convex_geometry",
+    srcs = ["convex_geometry.cc"],
+    hdrs = ["convex_geometry.h"],
+    deps = [
+        "//solvers:mathematical_program",
+    ],
+)
+
+drake_cc_library(
+    name = "closest_pair",
+    srcs = ["closest_pair.cc"],
+    hdrs = ["closest_pair.h"],
+    deps = [
+        "//multibody/multibody_tree",
+    ],
+)
+
+drake_cc_library(
     name = "rational_forward_kinematics_test_utilities",
     testonly = 1,
     srcs = ["test/rational_forward_kinematics_test_utilities.cc"],
@@ -100,6 +118,14 @@ drake_cc_binary(
         "//solvers:mathematical_program",
         "@gflags",
     ]
+)
+
+drake_cc_googletest(
+    name = "convex_geometry_test",
+    deps = [
+        ":convex_geometry",
+        "//common/test_utilities:eigen_matrix_compare",
+    ],
 )
 
 add_lint_tests()

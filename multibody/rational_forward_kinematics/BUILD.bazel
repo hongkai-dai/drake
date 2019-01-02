@@ -128,4 +128,19 @@ drake_cc_googletest(
     ],
 )
 
+drake_cc_binary(
+    name = "dual_arm_iiwa_self_collision_avoidance_demo",
+    testonly = 1,
+    srcs = ["test/dual_arm_iiwa_self_collision_avoidance_demo.cc"],
+    deps = [
+        ":configuration_space_collision_free_region",
+        ":rational_forward_kinematics_test_utilities",
+        "//common:find_resource",
+        "//multibody/parsing:parser",
+        "//multibody/inverse_kinematics:inverse_kinematics",
+        "//solvers:mathematical_program",
+        "@gtest//:without_main",
+    ],
+)
+
 add_lint_tests()

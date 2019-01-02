@@ -189,6 +189,66 @@ GTEST_TEST(RationalForwardKinematicsTest, CalcLinkPoses) {
   t_val = ((q_val - q_star_val) / 2).array().tan().matrix();
   CheckLinkKinematics(rational_forward_kinematics, q_val, q_star_val, t_val, 0);
 }
+
+GTEST_TEST(RationalForwardKinematicsTest, CalcLinkPosesForDualArmIiwa) {
+  Eigen::Isometry3d X_WL, X_WR;
+  X_WL.linear() = Eigen::Matrix3d::Identity();
+  X_WL.translation() << 0, 0, 0;
+  X_WR.linear() = Eigen::AngleAxisd(0.2 * M_PI, Eigen::Vector3d::UnitZ())
+                      .toRotationMatrix();
+  X_WR.translation() << 0.2, 0.8, 0.1;
+  ModelInstanceIndex left_iiwa_instance, right_iiwa_instance;
+  auto iiwa_plant =
+      ConstructDualArmIiwaPlant("iiwa14_no_collision.sdf", X_WL, X_WR,
+                                &left_iiwa_instance, &right_iiwa_instance);
+
+  RationalForwardKinematics rational_forward_kinematics(iiwa_plant->tree());
+  EXPECT_EQ(rational_forward_kinematics.t().size(), 14);
+
+  Eigen::VectorXd q_star_val(14);
+  q_star_val.setZero();
+  Eigen::VectorXd q_val(14);
+  q_val.setZero();
+  Eigen::VectorXd t_val(14);
+  t_val.setZero();
+
+  auto set_t_val = [&](
+      const Eigen::VectorXd& q_left, const Eigen::VectorXd& q_right,
+      const Eigen::VectorXd& q_left_star, const Eigen::VectorXd& q_right_star) {
+    auto context = iiwa_plant->CreateDefaultContext();
+    iiwa_plant->SetPositions(context.get(), left_iiwa_instance, q_left);
+    iiwa_plant->SetPositions(context.get(), right_iiwa_instance, q_right);
+    q_val = iiwa_plant->GetPositions(*context);
+    iiwa_plant->SetPositions(context.get(), left_iiwa_instance, q_left_star);
+    iiwa_plant->SetPositions(context.get(), right_iiwa_instance, q_right_star);
+    q_star_val = iiwa_plant->GetPositions(*context);
+    const std::array<int, 7> t_left_iiwa_idx = {0, 2, 4, 6, 8, 10, 12};
+    const std::array<int, 7> t_right_iiwa_idx = {1, 3, 5, 7, 9, 11, 13};
+    for (int i = 0; i < 7; ++i) {
+      t_val(t_left_iiwa_idx[i]) = std::tan((q_left(i) - q_left_star(i)) / 2);
+      t_val(t_right_iiwa_idx[i]) = std::tan((q_right(i) - q_right_star(i)) / 2);
+    }
+  };
+
+  CheckLinkKinematics(rational_forward_kinematics, q_val, q_star_val, t_val, 0);
+
+  Eigen::VectorXd q_left(7);
+  Eigen::VectorXd q_right(7);
+  Eigen::VectorXd q_left_star(7);
+  Eigen::VectorXd q_right_star(7);
+  q_left_star.setZero();
+  q_right_star.setZero();
+  q_left << 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7;
+  q_right << -0.1, -0.2, -0.3, -0.4, -0.5, -0.6, -0.7;
+  set_t_val(q_left, q_right, q_left_star, q_right_star);
+  CheckLinkKinematics(rational_forward_kinematics, q_val, q_star_val, t_val, 0);
+
+  q_left_star << -0.2, 1.2, 0.3, 0.4, -2.1, 2.2, 2.3;
+  q_right_star << 0.1, 0.2, 0.5, 1.1, -0.3, -0.2, 2.1;
+  set_t_val(q_left, q_right, q_left_star, q_right_star);
+  CheckLinkKinematics(rational_forward_kinematics, q_val, q_star_val, t_val, 0);
+}
+
 }  // namespace
 }  // namespace multibody
 }  // namespace drake

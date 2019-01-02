@@ -18,6 +18,11 @@ Eigen::Matrix<double, 3, 8> GenerateBoxVertices(const Eigen::Vector3d& size,
 std::vector<ConfigurationSpaceCollisionFreeRegion::Polytope>
 GenerateIiwaLinkPolytopes(const MultibodyPlant<double>& iiwa);
 
+std::unique_ptr<MultibodyPlant<double>> ConstructDualArmIiwaPlant(
+    const std::string& iiwa_sdf_name, const Eigen::Isometry3d& X_WL,
+    const Eigen::Isometry3d& X_WR, ModelInstanceIndex* left_iiwa_instance,
+    ModelInstanceIndex* right_iiwa_instance);
+
 /*
 std::unique_ptr<RigidBodyTreed> ConstructKukaRBT();
 

@@ -48,6 +48,30 @@ GenerateIiwaLinkPolytopes(const MultibodyPlant<double>& iiwa) {
   return link_polytopes;
 }
 
+std::unique_ptr<MultibodyPlant<double>> ConstructDualArmIiwaPlant(
+    const std::string& iiwa_sdf_name, const Eigen::Isometry3d& X_WL,
+    const Eigen::Isometry3d& X_WR, ModelInstanceIndex* left_iiwa_instance,
+    ModelInstanceIndex* right_iiwa_instance) {
+  const std::string file_path =
+      "drake/manipulation/models/iiwa_description/sdf/" + iiwa_sdf_name;
+  auto plant = std::make_unique<MultibodyPlant<double>>(0);
+  *left_iiwa_instance =
+      Parser(plant.get())
+          .AddModelFromFile(FindResourceOrThrow(file_path), "left_iiwa");
+  *right_iiwa_instance =
+      Parser(plant.get())
+          .AddModelFromFile(FindResourceOrThrow(file_path), "right_iiwa");
+  plant->WeldFrames(plant->world_frame(),
+                    plant->GetFrameByName("iiwa_link_0", *left_iiwa_instance),
+                    X_WL);
+  plant->WeldFrames(plant->world_frame(),
+                    plant->GetFrameByName("iiwa_link_0", *right_iiwa_instance),
+                    X_WR);
+
+  plant->Finalize();
+  return plant;
+}
+
 /*
 void AddBoxToTree(RigidBodyTreed* tree,
                   const Eigen::Ref<const Eigen::Vector3d>& box_size,

@@ -29,7 +29,7 @@ int DoMain() {
   obstacle_boxes.emplace_back(
       0, GenerateBoxVertices(Eigen::Vector3d(0.4, 0.6, 1), box2_pose));
 
-  ConfigurationSpaceCollisionFreeRegion dut(plant->tree(), link_polytopes,
+  ConfigurationSpaceCollisionFreeRegion dut(*plant, link_polytopes,
                                             obstacle_boxes);
 
   Eigen::VectorXd q_star(7);

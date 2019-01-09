@@ -42,15 +42,16 @@ void CheckGenerateLinkOutsideHalfspacePolynomials(
   std::vector<double> link_outside_halfspace_rational_expected;
 
   auto context =
-      tester.dut().rational_forward_kinematics().tree().CreateDefaultContext();
-  auto mbt_context = dynamic_cast<MultibodyTreeContext<double>*>(context.get());
-  mbt_context->get_mutable_positions() = q_val;
+      tester.dut().rational_forward_kinematics().plant().CreateDefaultContext();
+  tester.dut().rational_forward_kinematics().plant().SetPositions(context.get(),
+                                                                  q_val);
   std::vector<Eigen::Isometry3d> X_WB_expected;
-  tester.dut().rational_forward_kinematics().tree().CalcAllBodyPosesInWorld(
-      *mbt_context, &X_WB_expected);
+  const auto& tree = internal::GetInternalTree(
+      tester.dut().rational_forward_kinematics().plant());
+  tree.CalcAllBodyPosesInWorld(*context, &X_WB_expected);
 
   for (int i = 1;
-       i < tester.dut().rational_forward_kinematics().tree().num_bodies();
+       i < tester.dut().rational_forward_kinematics().plant().num_bodies();
        ++i) {
     for (int j = 0;
          j < static_cast<int>(tester.dut().link_polytopes()[i].size()); ++j) {
@@ -81,7 +82,7 @@ void CheckGenerateLinkOutsideHalfspacePolynomials(
     env[tester.dut().rational_forward_kinematics().t()(i)] = t_val(i);
   }
   const int num_bodies =
-      tester.dut().rational_forward_kinematics().tree().num_bodies();
+      tester.dut().rational_forward_kinematics().plant().num_bodies();
   for (int i = 1; i < num_bodies; ++i) {
     for (int j = 0; j < static_cast<int>(tester.dut().a_hyperplane()[i].size());
          ++j) {
@@ -134,8 +135,7 @@ GTEST_TEST(ConfigurationSpaceCollisionFreeRegionTest,
   obstacles.emplace_back(
       0, GenerateBoxVertices(Eigen::Vector3d(0.5, 0.1, 0.4), obstacle_pose));
 
-  ConfigurationSpaceCollisionFreeRegion dut(iiwa->tree(), link_polytopes,
-                                            obstacles);
+  ConfigurationSpaceCollisionFreeRegion dut(*iiwa, link_polytopes, obstacles);
 
   EXPECT_EQ(dut.link_polytopes().size(), iiwa->num_bodies());
   ComparePolytopes(dut.link_polytopes()[5][0], link_polytopes[0]);

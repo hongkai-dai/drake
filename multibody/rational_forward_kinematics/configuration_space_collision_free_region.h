@@ -38,7 +38,7 @@ class ConfigurationSpaceCollisionFreeRegion {
    * obstacles are also a union ob polytopes.
    */
   ConfigurationSpaceCollisionFreeRegion(
-      const MultibodyTree<double>& tree,
+      const MultibodyPlant<double>& plant,
       const std::vector<Polytope>& link_polytopes,
       const std::vector<Polytope>& obstacles);
 

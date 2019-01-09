@@ -125,16 +125,15 @@ void CheckLinkKinematics(
     const Eigen::Ref<const Eigen::VectorXd>& q_star_val,
     const Eigen::Ref<const Eigen::VectorXd>& t_val, int expressed_body_index) {
   DRAKE_DEMAND(t_val.rows() == rational_forward_kinematics.t().rows());
-  auto context = rational_forward_kinematics.tree().CreateDefaultContext();
+  auto context = rational_forward_kinematics.plant().CreateDefaultContext();
 
-  auto mbt_context = dynamic_cast<MultibodyTreeContext<double>*>(context.get());
-
-  mbt_context->get_mutable_positions() = q_val;
+  rational_forward_kinematics.plant().SetPositions(context.get(), q_val);
 
   std::vector<Eigen::Isometry3d> X_WB_expected;
 
-  rational_forward_kinematics.tree().CalcAllBodyPosesInWorld(*mbt_context,
-                                                             &X_WB_expected);
+  const auto& tree =
+      internal::GetInternalTree(rational_forward_kinematics.plant());
+  tree.CalcAllBodyPosesInWorld(*context, &X_WB_expected);
 
   symbolic::Environment env;
   for (int i = 0; i < t_val.rows(); ++i) {
@@ -145,7 +144,7 @@ void CheckLinkKinematics(
       q_star_val, expressed_body_index);
 
   const double tol{1E-12};
-  for (int i = 1; i < rational_forward_kinematics.tree().num_bodies(); ++i) {
+  for (int i = 1; i < rational_forward_kinematics.plant().num_bodies(); ++i) {
     EXPECT_EQ(poses[i].frame_A_index, expressed_body_index);
     Matrix3<double> R_AB_i;
     Vector3<double> p_AB_i;
@@ -171,7 +170,7 @@ void CheckLinkKinematics(
 
 GTEST_TEST(RationalForwardKinematicsTest, CalcLinkPoses) {
   auto iiwa_plant = ConstructIiwaPlant("iiwa14_no_collision.sdf");
-  RationalForwardKinematics rational_forward_kinematics(iiwa_plant->tree());
+  RationalForwardKinematics rational_forward_kinematics(*iiwa_plant);
   EXPECT_EQ(rational_forward_kinematics.t().rows(), 7);
 
   CheckLinkKinematics(rational_forward_kinematics, Eigen::VectorXd::Zero(7),
@@ -202,7 +201,7 @@ GTEST_TEST(RationalForwardKinematicsTest, CalcLinkPosesForDualArmIiwa) {
       ConstructDualArmIiwaPlant("iiwa14_no_collision.sdf", X_WL, X_WR,
                                 &left_iiwa_instance, &right_iiwa_instance);
 
-  RationalForwardKinematics rational_forward_kinematics(iiwa_plant->tree());
+  RationalForwardKinematics rational_forward_kinematics(*iiwa_plant);
   EXPECT_EQ(rational_forward_kinematics.t().size(), 14);
 
   Eigen::VectorXd q_star_val(14);

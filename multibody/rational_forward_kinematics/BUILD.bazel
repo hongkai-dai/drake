@@ -23,7 +23,7 @@ drake_cc_library(
     hdrs = ["rational_forward_kinematics.h"],
     deps = [
         "//common:symbolic",
-        "//multibody/multibody_tree",
+        "//multibody/plant",
     ],
 )
 

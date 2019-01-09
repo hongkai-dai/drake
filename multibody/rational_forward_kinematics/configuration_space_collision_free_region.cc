@@ -7,17 +7,17 @@ namespace multibody {
 using symbolic::RationalFunction;
 
 ConfigurationSpaceCollisionFreeRegion::ConfigurationSpaceCollisionFreeRegion(
-    const MultibodyTree<double>& tree,
+    const MultibodyPlant<double>& plant,
     const std::vector<ConfigurationSpaceCollisionFreeRegion::Polytope>&
         link_polytopes,
     const std::vector<ConfigurationSpaceCollisionFreeRegion::Polytope>&
         obstacles)
-    : rational_forward_kinematics_{tree},
-      link_polytopes_{static_cast<size_t>(tree.num_bodies())},
+    : rational_forward_kinematics_{plant},
+      link_polytopes_{static_cast<size_t>(plant.num_bodies())},
       obstacles_{obstacles},
       obstacle_center_{obstacles_.size()},
       a_hyperplane_(link_polytopes_.size()) {
-  const int num_links = tree.num_bodies();
+  const int num_links = plant.num_bodies();
   const int num_obstacles = static_cast<int>(obstacles_.size());
   DRAKE_DEMAND(num_obstacles > 0);
   DRAKE_DEMAND(static_cast<int>(link_polytopes_.size()) == num_links);
@@ -59,7 +59,7 @@ std::vector<symbolic::RationalFunction> ConfigurationSpaceCollisionFreeRegion::
               q_star, 0);
   std::vector<symbolic::RationalFunction> collision_free_rationals;
   const symbolic::Monomial monomial_one{};
-  for (int i = 1; i < rational_forward_kinematics_.tree().num_bodies(); ++i) {
+  for (int i = 1; i < rational_forward_kinematics_.plant().num_bodies(); ++i) {
     for (int j = 0; j < static_cast<int>(link_polytopes_[i].size()); ++j) {
       const int num_polytope_vertices = link_polytopes_[i][j].vertices.cols();
       Matrix3X<symbolic::Polynomial> p_WV(3, num_polytope_vertices);
@@ -116,7 +116,7 @@ ConfigurationSpaceCollisionFreeRegion::GenerateLinkOutsideHalfspacePolynomials(
 std::vector<symbolic::Expression> ConfigurationSpaceCollisionFreeRegion::
     GenerateObstacleInsideHalfspaceExpression() const {
   std::vector<symbolic::Expression> exprs;
-  for (int i = 1; i < rational_forward_kinematics_.tree().num_bodies(); ++i) {
+  for (int i = 1; i < rational_forward_kinematics_.plant().num_bodies(); ++i) {
     for (int j = 0; j < static_cast<int>(link_polytopes_[i].size()); ++j) {
       for (int k = 0; k < static_cast<int>(obstacles_.size()); ++k) {
         for (int l = 0; l < obstacles_[k].vertices.cols(); ++l) {
@@ -137,7 +137,7 @@ void ConfigurationSpaceCollisionFreeRegion::
         solvers::MathematicalProgram* prog) const {
   // Check the size of q_star.
   DRAKE_ASSERT(q_star.rows() ==
-               rational_forward_kinematics_.tree().num_positions());
+               rational_forward_kinematics_.plant().num_positions());
   DRAKE_ASSERT(prog);
   // t are the indeterminates.
   prog->AddIndeterminates(rational_forward_kinematics_.t());

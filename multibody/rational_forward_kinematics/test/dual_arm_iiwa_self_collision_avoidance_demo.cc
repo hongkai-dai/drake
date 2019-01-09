@@ -62,7 +62,7 @@ int DoMain() {
                                 &left_iiwa_instance, &right_iiwa_instance);
   EXPECT_EQ(plant->num_positions(), 14);
 
-  RationalForwardKinematics rational_forward_kinematics(plant->tree());
+  RationalForwardKinematics rational_forward_kinematics(*plant);
 
   // Now register a polytope on the left iiwa link 7, and a polytope on the
   // right iiwa link 7.

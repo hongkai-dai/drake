@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "drake/common/symbolic.h"
+#include "drake/multibody/plant/multibody_plant.h"
 #include "drake/multibody/tree/multibody_tree.h"
 #include "drake/multibody/tree/prismatic_mobilizer.h"
 #include "drake/multibody/tree/quaternion_floating_mobilizer.h"
@@ -51,7 +52,7 @@ class RationalForwardKinematics {
     Eigen::Matrix3Xd p_BQ;
   };
 
-  explicit RationalForwardKinematics(const MultibodyTree<double>& tree);
+  explicit RationalForwardKinematics(const MultibodyPlant<double>& plant);
 
   /** Compute the pose of each link as fractional functions of t.
    * We will set up the indeterminates t also.
@@ -76,7 +77,7 @@ class RationalForwardKinematics {
   symbolic::RationalFunction ConvertMultilinearPolynomialToRationalFunction(
       const symbolic::Polynomial& e) const;
 
-  const MultibodyTree<double>& tree() const { return tree_; }
+  const MultibodyPlant<double>& plant() const { return plant_; }
 
   const VectorX<symbolic::Variable>& t() const { return t_; }
 
@@ -94,17 +95,19 @@ class RationalForwardKinematics {
   // r(x)), without handling the common factor r(x) in the denominator.
   template <typename T>
   void CalcLinkPoseAsMultilinearPolynomialWithRevoluteJoint(
-      const RevoluteMobilizer<double>* revolute_mobilizer, const Pose<T>& X_AP,
-      double theta_star, const symbolic::Variable& cos_delta,
-      const symbolic::Variable& sin_delta, Pose<T>* X_AC) const;
+      const internal::RevoluteMobilizer<double>* revolute_mobilizer,
+      const Pose<T>& X_AP, double theta_star,
+      const symbolic::Variable& cos_delta, const symbolic::Variable& sin_delta,
+      Pose<T>* X_AC) const;
 
   // Compute the pose of the link, connected to its parent link through a
   // weld joint.
   template <typename T>
-  void CalcLinkPoseWithWeldJoint(const WeldMobilizer<double>* weld_mobilizer,
-                                 const Pose<T>& X_AP, Pose<T>* X_AC) const;
+  void CalcLinkPoseWithWeldJoint(
+      const internal::WeldMobilizer<double>* weld_mobilizer,
+      const Pose<T>& X_AP, Pose<T>* X_AC) const;
 
-  const MultibodyTree<double>& tree_;
+  const MultibodyPlant<double>& plant_;
   // The variables used in computing the pose as rational functions. t_ are the
   // indeterminates in the rational functions.
   VectorX<symbolic::Variable> t_;

@@ -112,8 +112,8 @@ int DoMain() {
 
   const std::vector<RationalForwardKinematics::Pose<symbolic::Polynomial>>
       link_poses_poly =
-          rational_forward_kinematics.CalcLinkPosesAsMultilinearPolynomials(q0,
-                                                                            0);
+          rational_forward_kinematics.CalcLinkPosesAsMultilinearPolynomials(
+              q0, BodyIndex(0));
 
   auto context = plant->CreateDefaultContext();
   plant->SetPositions(context.get(), q0);

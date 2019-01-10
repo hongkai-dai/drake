@@ -56,7 +56,7 @@ std::vector<symbolic::RationalFunction> ConfigurationSpaceCollisionFreeRegion::
   const std::vector<RationalForwardKinematics::Pose<symbolic::Polynomial>>
       link_poses_poly =
           rational_forward_kinematics_.CalcLinkPosesAsMultilinearPolynomials(
-              q_star, 0);
+              q_star, BodyIndex{0});
   std::vector<symbolic::RationalFunction> collision_free_rationals;
   const symbolic::Monomial monomial_one{};
   for (int i = 1; i < rational_forward_kinematics_.plant().num_bodies(); ++i) {

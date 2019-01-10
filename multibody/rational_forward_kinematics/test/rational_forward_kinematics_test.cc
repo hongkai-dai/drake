@@ -123,7 +123,8 @@ void CheckLinkKinematics(
     const RationalForwardKinematics& rational_forward_kinematics,
     const Eigen::Ref<const Eigen::VectorXd>& q_val,
     const Eigen::Ref<const Eigen::VectorXd>& q_star_val,
-    const Eigen::Ref<const Eigen::VectorXd>& t_val, int expressed_body_index) {
+    const Eigen::Ref<const Eigen::VectorXd>& t_val,
+    BodyIndex expressed_body_index) {
   DRAKE_DEMAND(t_val.rows() == rational_forward_kinematics.t().rows());
   auto context = rational_forward_kinematics.plant().CreateDefaultContext();
 
@@ -173,20 +174,23 @@ GTEST_TEST(RationalForwardKinematicsTest, CalcLinkPoses) {
   RationalForwardKinematics rational_forward_kinematics(*iiwa_plant);
   EXPECT_EQ(rational_forward_kinematics.t().rows(), 7);
 
+  const BodyIndex world_index = iiwa_plant->world_body().index();
   CheckLinkKinematics(rational_forward_kinematics, Eigen::VectorXd::Zero(7),
-                      Eigen::VectorXd::Zero(7), Eigen::VectorXd::Zero(7), 0);
+                      Eigen::VectorXd::Zero(7), Eigen::VectorXd::Zero(7),
+                      world_index);
 
   Eigen::VectorXd q_val(7);
   // arbitrary value
   q_val << 0.2, 0.3, 0.5, -0.1, 1.2, 2.3, -0.5;
   Eigen::VectorXd t_val = (q_val / 2).array().tan().matrix();
   CheckLinkKinematics(rational_forward_kinematics, q_val,
-                      Eigen::VectorXd::Zero(7), t_val, 0);
+                      Eigen::VectorXd::Zero(7), t_val, world_index);
 
   Eigen::VectorXd q_star_val(7);
   q_star_val << 1.2, -0.4, 0.3, -0.5, 0.4, 1, 0.2;
   t_val = ((q_val - q_star_val) / 2).array().tan().matrix();
-  CheckLinkKinematics(rational_forward_kinematics, q_val, q_star_val, t_val, 0);
+  CheckLinkKinematics(rational_forward_kinematics, q_val, q_star_val, t_val,
+                      world_index);
 }
 
 GTEST_TEST(RationalForwardKinematicsTest, CalcLinkPosesForDualArmIiwa) {
@@ -229,7 +233,9 @@ GTEST_TEST(RationalForwardKinematicsTest, CalcLinkPosesForDualArmIiwa) {
     }
   };
 
-  CheckLinkKinematics(rational_forward_kinematics, q_val, q_star_val, t_val, 0);
+  const BodyIndex world_index = iiwa_plant->world_body().index();
+  CheckLinkKinematics(rational_forward_kinematics, q_val, q_star_val, t_val,
+                      world_index);
 
   Eigen::VectorXd q_left(7);
   Eigen::VectorXd q_right(7);
@@ -240,12 +246,14 @@ GTEST_TEST(RationalForwardKinematicsTest, CalcLinkPosesForDualArmIiwa) {
   q_left << 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7;
   q_right << -0.1, -0.2, -0.3, -0.4, -0.5, -0.6, -0.7;
   set_t_val(q_left, q_right, q_left_star, q_right_star);
-  CheckLinkKinematics(rational_forward_kinematics, q_val, q_star_val, t_val, 0);
+  CheckLinkKinematics(rational_forward_kinematics, q_val, q_star_val, t_val,
+                      world_index);
 
   q_left_star << -0.2, 1.2, 0.3, 0.4, -2.1, 2.2, 2.3;
   q_right_star << 0.1, 0.2, 0.5, 1.1, -0.3, -0.2, 2.1;
   set_t_val(q_left, q_right, q_left_star, q_right_star);
-  CheckLinkKinematics(rational_forward_kinematics, q_val, q_star_val, t_val, 0);
+  CheckLinkKinematics(rational_forward_kinematics, q_val, q_star_val, t_val,
+                      world_index);
 }
 
 }  // namespace

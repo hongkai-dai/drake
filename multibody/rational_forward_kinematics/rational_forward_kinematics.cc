@@ -2,6 +2,8 @@
 
 #include <set>
 
+#include "drake/multibody/rational_forward_kinematics/rational_forward_kinematics_internal.h"
+
 namespace drake {
 namespace multibody {
 using symbolic::Expression;
@@ -228,13 +230,13 @@ void RationalForwardKinematics::CalcLinkPoseWithWeldJoint(
 std::vector<RationalForwardKinematics::Pose<Polynomial>>
 RationalForwardKinematics::CalcLinkPosesAsMultilinearPolynomials(
     const Eigen::Ref<const Eigen::VectorXd>& q_star,
-    int expressed_body_index) const {
+    BodyIndex expressed_body_index) const {
   // TODO(hongkai.dai): support expressed frame not in the world.
-  if (expressed_body_index != 0) {
-    throw std::runtime_error(
-        "Not implemented yet. The expressed frame needs to be the world "
-        "frame.");
-  }
+  // We need to change the frame in which the link pose is expressed. To do so,
+  // we will reshuffle the tree structure in the MultibodyPlant, namely if we
+  // express the pose in link A's frame, we will treat A as the root of the
+  // reshuffled tree. From link A, we propogate to its child links and so on, so
+  // as to compute the pose of all links in A's frame.
   std::vector<RationalForwardKinematics::Pose<Polynomial>> poses_poly(
       plant_.num_bodies());
   const Polynomial poly_zero{};
@@ -248,6 +250,9 @@ RationalForwardKinematics::CalcLinkPosesAsMultilinearPolynomials(
   // clang-format on
   poses_poly[expressed_body_index].frame_A_index = expressed_body_index;
   const auto& tree = internal::GetInternalTree(plant_);
+  std::unordered_set<BodyIndex> visited_body;
+  visited_body.insert(expressed_body_index);
+  // Find the child links of the expressed body
   for (BodyIndex body_index(1); body_index < plant_.num_bodies();
        ++body_index) {
     const auto& body_topology = tree.get_topology().get_body(body_index);
@@ -304,7 +309,7 @@ RationalForwardKinematics::ConvertMultilinearPolynomialToRationalFunction(
 std::vector<RationalForwardKinematics::Pose<RationalFunction>>
 RationalForwardKinematics::CalcLinkPoses(
     const Eigen::Ref<const Eigen::VectorXd>& q_star,
-    int expressed_body_index) const {
+    BodyIndex expressed_body_index) const {
   // We will first compute the link pose as multilinear polynomials, with
   // indeterminates cos_delta and sin_delta, representing cos(Δθ) and
   // sin(Δθ)

@@ -19,8 +19,14 @@ package(default_visibility = ["//visibility:public"])
 
 drake_cc_library(
     name = "rational_forward_kinematics",
-    srcs = ["rational_forward_kinematics.cc"],
-    hdrs = ["rational_forward_kinematics.h"],
+    srcs = [
+        "rational_forward_kinematics.cc",
+        "rational_forward_kinematics_internal.cc",
+        ],
+    hdrs = [
+        "rational_forward_kinematics.h",
+        "rational_forward_kinematics_internal.h"
+        ],
     deps = [
         "//common:symbolic",
         "//multibody/plant",
@@ -89,6 +95,14 @@ drake_cc_googletest(
         ":rational_forward_kinematics_test_utilities",
         "//common/test_utilities:eigen_matrix_compare",
         "//common/test_utilities:symbolic_test_util",
+    ],
+)
+
+drake_cc_googletest(
+    name = "rational_forward_kinematics_internal_test",
+    deps = [
+        ":rational_forward_kinematics",
+        ":rational_forward_kinematics_test_utilities",
     ],
 )
 

@@ -68,11 +68,11 @@ class RationalForwardKinematics {
    */
   std::vector<Pose<symbolic::RationalFunction>> CalcLinkPoses(
       const Eigen::Ref<const Eigen::VectorXd>& q_star,
-      int expressed_body_index) const;
+      BodyIndex expressed_body_index) const;
 
   std::vector<Pose<symbolic::Polynomial>> CalcLinkPosesAsMultilinearPolynomials(
       const Eigen::Ref<const Eigen::VectorXd>& q_star,
-      int expressed_body_index) const;
+      BodyIndex expressed_body_index) const;
 
   symbolic::RationalFunction ConvertMultilinearPolynomialToRationalFunction(
       const symbolic::Polynomial& e) const;
@@ -81,7 +81,8 @@ class RationalForwardKinematics {
 
   const VectorX<symbolic::Variable>& t() const { return t_; }
 
-  // Each t(i) is associated with a mobilizer.
+  /** Each t(i) is associated with a mobilizer.
+   */
   const std::unordered_map<symbolic::Variable::Id,
                            const internal::Mobilizer<double>*>&
   map_t_to_mobilizer() const {

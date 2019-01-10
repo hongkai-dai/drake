@@ -131,6 +131,8 @@ RationalForwardKinematics::RationalForwardKinematics(
       num_t += 1;
       map_t_index_to_angle_index_.emplace(t_.rows() - 1, t_angles_.rows() - 1);
       map_angle_index_to_t_index_.emplace(t_angles_.rows() - 1, t_.rows() - 1);
+      map_t_to_mobilizer_.emplace(t_(t_.rows() - 1).get_id(), mobilizer);
+      map_mobilizer_to_t_index_.emplace(mobilizer, t_.rows() - 1);
     } else if (dynamic_cast<const internal::WeldMobilizer<double>*>(
                    mobilizer) != nullptr) {
     } else if (dynamic_cast<const internal::SpaceXYZMobilizer<double>*>(
@@ -257,8 +259,9 @@ RationalForwardKinematics::CalcLinkPosesAsMultilinearPolynomials(
         nullptr) {
       const internal::RevoluteMobilizer<double>* revolute_mobilizer =
           dynamic_cast<const internal::RevoluteMobilizer<double>*>(mobilizer);
-      const int q_index = revolute_mobilizer->get_topology().positions_start;
-      const int t_angle_index = map_t_index_to_angle_index_.at(q_index);
+      const int t_index = map_mobilizer_to_t_index_.at(mobilizer);
+      const int q_index = revolute_mobilizer->position_start_in_q();
+      const int t_angle_index = map_t_index_to_angle_index_.at(t_index);
       CalcLinkPoseAsMultilinearPolynomialWithRevoluteJoint(
           revolute_mobilizer, poses_poly[parent_index], q_star(q_index),
           cos_delta_(t_angle_index), sin_delta_(t_angle_index),

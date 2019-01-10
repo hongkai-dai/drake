@@ -81,6 +81,13 @@ class RationalForwardKinematics {
 
   const VectorX<symbolic::Variable>& t() const { return t_; }
 
+  // Each t(i) is associated with a mobilizer.
+  const std::unordered_map<symbolic::Variable::Id,
+                           const internal::Mobilizer<double>*>&
+  map_t_to_mobilizer() const {
+    return map_t_to_mobilizer_;
+  }
+
  private:
   // Compute the pose of the link, connected to its parent link through a
   // revolute joint.
@@ -111,6 +118,13 @@ class RationalForwardKinematics {
   // The variables used in computing the pose as rational functions. t_ are the
   // indeterminates in the rational functions.
   VectorX<symbolic::Variable> t_;
+  // Each t(i) is associated with a mobilizer.
+  std::unordered_map<symbolic::Variable::Id, const internal::Mobilizer<double>*>
+      map_t_to_mobilizer_;
+  // Given a mobilizer, returns the index of the mobilizer's slack variable in
+  // t_.
+  std::unordered_map<const internal::Mobilizer<double>*, int>
+      map_mobilizer_to_t_index_;
 
   // The variables used to represent tan(θ / 2).
   VectorX<symbolic::Variable> t_angles_;
@@ -120,6 +134,8 @@ class RationalForwardKinematics {
 
   VectorX<symbolic::Variable> cos_delta_;
   VectorX<symbolic::Variable> sin_delta_;
+  // t could contain both prismatic t and angle t.
+  // t_angles_[map_t_index_to_angle_index_[i]] = t_[i]
   std::unordered_map<int, int> map_t_index_to_angle_index_;
   std::unordered_map<int, int> map_angle_index_to_t_index_;
   symbolic::Variables t_variables_;

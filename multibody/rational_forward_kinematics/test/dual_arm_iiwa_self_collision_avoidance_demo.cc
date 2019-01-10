@@ -162,11 +162,21 @@ int DoMain() {
   // left_iiwa_t contains the indeterminates t on the left IIWA. right_iiwa_t
   // contains the indeterminates t on the right IIWA.
   symbolic::Variables left_iiwa_t, right_iiwa_t;
-  std::array<int, 7> left_iiwa_t_index = {0, 2, 4, 6, 8, 10, 12};
-  std::array<int, 7> right_iiwa_t_index = {1, 3, 5, 7, 9, 11, 13};
-  for (int i = 0; i < 7; ++i) {
-    left_iiwa_t.insert(rational_forward_kinematics.t()(left_iiwa_t_index[i]));
-    right_iiwa_t.insert(rational_forward_kinematics.t()(right_iiwa_t_index[i]));
+  std::vector<int> left_iiwa_t_index, right_iiwa_t_index;
+  left_iiwa_t_index.reserve(7);
+  right_iiwa_t_index.reserve(7);
+  for (int i = 0; i < 14; ++i) {
+    const auto ti_model_instance =
+        rational_forward_kinematics.map_t_to_mobilizer()
+            .at(rational_forward_kinematics.t()(i).get_id())
+            ->model_instance();
+    if (ti_model_instance == left_iiwa_instance) {
+      left_iiwa_t.insert(rational_forward_kinematics.t()(i));
+      left_iiwa_t_index.emplace_back(i);
+    } else {
+      right_iiwa_t.insert(rational_forward_kinematics.t()(i));
+      right_iiwa_t_index.emplace_back(i);
+    }
   }
 
   Eigen::Matrix<double, 7, 1> t_right_iiwa_upper, t_right_iiwa_lower,

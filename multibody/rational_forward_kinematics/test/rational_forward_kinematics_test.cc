@@ -221,11 +221,11 @@ GTEST_TEST(RationalForwardKinematicsTest, CalcLinkPosesForDualArmIiwa) {
     iiwa_plant->SetPositions(context.get(), left_iiwa_instance, q_left_star);
     iiwa_plant->SetPositions(context.get(), right_iiwa_instance, q_right_star);
     q_star_val = iiwa_plant->GetPositions(*context);
-    const std::array<int, 7> t_left_iiwa_idx = {0, 2, 4, 6, 8, 10, 12};
-    const std::array<int, 7> t_right_iiwa_idx = {1, 3, 5, 7, 9, 11, 13};
-    for (int i = 0; i < 7; ++i) {
-      t_val(t_left_iiwa_idx[i]) = std::tan((q_left(i) - q_left_star(i)) / 2);
-      t_val(t_right_iiwa_idx[i]) = std::tan((q_right(i) - q_right_star(i)) / 2);
+    for (int i = 0; i < 14; ++i) {
+      const int q_index = rational_forward_kinematics.map_t_to_mobilizer()
+                              .at(rational_forward_kinematics.t()(i).get_id())
+                              ->position_start_in_q();
+      t_val(i) = std::tan((q_val(q_index) - q_star_val(q_index)) / 2);
     }
   };
 

@@ -37,7 +37,6 @@ void AddChildrenToReshuffledBody(const MultibodyPlant<double>& plant,
   }
 }
 
-/*
 void ReshuffleKinematicsTree(const MultibodyPlant<double>& plant,
                              ReshuffledBody* root) {
   DRAKE_DEMAND(root->parent == nullptr);
@@ -45,14 +44,20 @@ void ReshuffleKinematicsTree(const MultibodyPlant<double>& plant,
   root->children.clear();
   std::unordered_set<BodyIndex> visited;
   visited.emplace(root->body_index);
-  std::queue<BodyIndex> queue_bodies;
-  queue_bodies.push(root->body_index);
+  std::queue<ReshuffledBody*> queue_bodies;
+  queue_bodies.push(root);
   while (!queue_bodies.empty()) {
-    const int body_index = queue_bodies.front();
+    ReshuffledBody* reshuffled_body = queue_bodies.front();
     queue_bodies.pop();
-
+    AddChildrenToReshuffledBody(plant, reshuffled_body, &visited);
+    if (!reshuffled_body->children.empty()) {
+      for (int i = 0; i < static_cast<int>(reshuffled_body->children.size());
+           ++i) {
+        queue_bodies.push(reshuffled_body->children[i].get());
+      }
+    }
   }
-}*/
+}
 }
 }  // namespace multibody
 }  // namespace drake

@@ -38,106 +38,170 @@ void CheckChildInReshuffledBody(const MultibodyTree<double>& tree,
             GetInboardMobilizer(tree, inboard_mobilizer_body));
 }
 
-GTEST_TEST(TestAddChildrenToReshuffledBody, IiwaReshuffleAtWorld) {
-  auto iiwa = ConstructIiwaPlant("iiwa14_no_collision.sdf");
-  const auto& iiwa_tree = GetInternalTree(*iiwa);
-  const BodyIndex world_index = iiwa->world_body().index();
-  ReshuffledBody reshuffled_world(world_index, nullptr, nullptr);
+class IiwaTest : public ::testing::Test {
+ public:
+  IiwaTest()
+      : iiwa_(ConstructIiwaPlant("iiwa14_no_collision.sdf")),
+        iiwa_tree_(GetInternalTree(*iiwa_)),
+        world_(iiwa_->world_body().index()) {
+    for (int i = 0; i < 8; ++i) {
+      iiwa_link_[i] =
+          iiwa_->GetBodyByName("iiwa_link_" + std::to_string(i)).index();
+    }
+  }
+
+ protected:
+  std::unique_ptr<MultibodyPlant<double>> iiwa_;
+  const internal::MultibodyTree<double>& iiwa_tree_;
+  const BodyIndex world_;
+  std::array<BodyIndex, 8> iiwa_link_;
+};
+
+TEST_F(IiwaTest, TestAddChildrenToReshuffledBodyWithWorldAsRoot) {
+  ReshuffledBody reshuffled_world(world_, nullptr, nullptr);
   std::unordered_set<BodyIndex> visited;
-  visited.emplace(world_index);
+  visited.emplace(world_);
   // Add children of the world.
-  AddChildrenToReshuffledBody(*iiwa, &reshuffled_world, &visited);
-  const BodyIndex iiwa_link_0 = iiwa->GetBodyByName("iiwa_link_0").index();
+  AddChildrenToReshuffledBody(*iiwa_, &reshuffled_world, &visited);
   EXPECT_EQ(reshuffled_world.children.size(), 1);
-  CheckChildInReshuffledBody(iiwa_tree, reshuffled_world, 0, iiwa_link_0);
+  CheckChildInReshuffledBody(iiwa_tree_, reshuffled_world, 0, iiwa_link_[0]);
   EXPECT_EQ(visited.size(), 2);
-  EXPECT_EQ(visited, std::unordered_set<BodyIndex>({world_index, iiwa_link_0}));
+  EXPECT_EQ(visited, std::unordered_set<BodyIndex>({world_, iiwa_link_[0]}));
 
   ReshuffledBody* reshuffled_link_0 = reshuffled_world.children[0].get();
 
   // Continue to add children of link 0
-  AddChildrenToReshuffledBody(*iiwa, reshuffled_link_0, &visited);
+  AddChildrenToReshuffledBody(*iiwa_, reshuffled_link_0, &visited);
   EXPECT_EQ(reshuffled_world.children.size(), 1);
   EXPECT_EQ(reshuffled_link_0->children.size(), 1);
-  const BodyIndex iiwa_link_1 = iiwa->GetBodyByName("iiwa_link_1").index();
-  CheckChildInReshuffledBody(iiwa_tree, *reshuffled_link_0, 0, iiwa_link_1);
+  CheckChildInReshuffledBody(iiwa_tree_, *reshuffled_link_0, 0, iiwa_link_[1]);
   EXPECT_EQ(visited.size(), 3);
   EXPECT_EQ(visited, std::unordered_set<BodyIndex>(
-                         {world_index, iiwa_link_0, iiwa_link_1}));
+                         {world_, iiwa_link_[0], iiwa_link_[1]}));
 
   // Continue to add children of link 1
   ReshuffledBody* reshuffled_link_1 = reshuffled_link_0->children[0].get();
-  AddChildrenToReshuffledBody(*iiwa, reshuffled_link_1, &visited);
+  AddChildrenToReshuffledBody(*iiwa_, reshuffled_link_1, &visited);
   EXPECT_EQ(reshuffled_link_1->children.size(), 1);
-  const BodyIndex iiwa_link_2 = iiwa->GetBodyByName("iiwa_link_2").index();
-  CheckChildInReshuffledBody(iiwa_tree, *reshuffled_link_1, 0, iiwa_link_2);
-  EXPECT_EQ(reshuffled_link_1->children[0]->body_index, iiwa_link_2);
+  CheckChildInReshuffledBody(iiwa_tree_, *reshuffled_link_1, 0, iiwa_link_[2]);
+  EXPECT_EQ(reshuffled_link_1->children[0]->body_index, iiwa_link_[2]);
   EXPECT_EQ(reshuffled_link_1->children[0]->parent, reshuffled_link_1);
   EXPECT_EQ(reshuffled_link_1->children[0]->mobilizer,
-            GetInboardMobilizer(iiwa_tree, iiwa_link_2));
+            GetInboardMobilizer(iiwa_tree_, iiwa_link_[2]));
   EXPECT_EQ(visited.size(), 4);
-  EXPECT_EQ(visited, std::unordered_set<BodyIndex>(
-                         {world_index, iiwa_link_0, iiwa_link_1, iiwa_link_2}));
+  EXPECT_EQ(visited,
+            std::unordered_set<BodyIndex>(
+                {world_, iiwa_link_[0], iiwa_link_[1], iiwa_link_[2]}));
 }
 
-GTEST_TEST(TestAddChildrenToReshuffledBody, IiwaReshufflAtLink3) {
-  auto iiwa = ConstructIiwaPlant("iiwa14_no_collision.sdf");
-  const auto& iiwa_tree = GetInternalTree(*iiwa);
-  const BodyIndex iiwa_link_3 = iiwa->GetBodyByName("iiwa_link_3").index();
-  ReshuffledBody reshuffled_link_3(iiwa_link_3, nullptr, nullptr);
+TEST_F(IiwaTest, TestAddChildrenToReshuffledBodyWithLink3AsRoot) {
+  ReshuffledBody reshuffled_link_3(iiwa_link_[3], nullptr, nullptr);
   std::unordered_set<BodyIndex> visited;
-  visited.insert(iiwa_link_3);
-  AddChildrenToReshuffledBody(*iiwa, &reshuffled_link_3, &visited);
+  visited.insert(iiwa_link_[3]);
+  AddChildrenToReshuffledBody(*iiwa_, &reshuffled_link_3, &visited);
   EXPECT_EQ(reshuffled_link_3.children.size(), 2);
-  const BodyIndex iiwa_link_2 = iiwa->GetBodyByName("iiwa_link_2").index();
-  CheckChildInReshuffledBody(iiwa_tree, reshuffled_link_3, 0, iiwa_link_2);
-  const BodyIndex iiwa_link_4 = iiwa->GetBodyByName("iiwa_link_4").index();
-  CheckChildInReshuffledBody(iiwa_tree, reshuffled_link_3, 1, iiwa_link_4);
+  CheckChildInReshuffledBody(iiwa_tree_, reshuffled_link_3, 0, iiwa_link_[2]);
+  CheckChildInReshuffledBody(iiwa_tree_, reshuffled_link_3, 1, iiwa_link_[4]);
   EXPECT_EQ(visited.size(), 3);
   EXPECT_EQ(visited, std::unordered_set<BodyIndex>(
-                         {iiwa_link_2, iiwa_link_3, iiwa_link_4}));
+                         {iiwa_link_[2], iiwa_link_[3], iiwa_link_[4]}));
 
   // Continue to add children of iiwa_link_2
   ReshuffledBody* reshuffled_link_2 = reshuffled_link_3.children[0].get();
-  AddChildrenToReshuffledBody(*iiwa, reshuffled_link_2, &visited);
+  AddChildrenToReshuffledBody(*iiwa_, reshuffled_link_2, &visited);
   EXPECT_EQ(reshuffled_link_2->children.size(), 1);
-  EXPECT_EQ(reshuffled_link_2->parent->body_index, iiwa_link_3);
-  const BodyIndex iiwa_link_1 = iiwa->GetBodyByName("iiwa_link_1").index();
-  CheckChildInReshuffledBody(iiwa_tree, *reshuffled_link_2, 0, iiwa_link_1);
+  EXPECT_EQ(reshuffled_link_2->parent->body_index, iiwa_link_[3]);
+  CheckChildInReshuffledBody(iiwa_tree_, *reshuffled_link_2, 0, iiwa_link_[1]);
   EXPECT_EQ(visited.size(), 4);
-  EXPECT_EQ(visited, std::unordered_set<BodyIndex>(
-                         {iiwa_link_1, iiwa_link_2, iiwa_link_3, iiwa_link_4}));
+  EXPECT_EQ(visited,
+            std::unordered_set<BodyIndex>(
+                {iiwa_link_[1], iiwa_link_[2], iiwa_link_[3], iiwa_link_[4]}));
 
   // Continue to add children of iiwa_link_1
   ReshuffledBody* reshuffled_link_1 = reshuffled_link_2->children[0].get();
-  AddChildrenToReshuffledBody(*iiwa, reshuffled_link_1, &visited);
+  AddChildrenToReshuffledBody(*iiwa_, reshuffled_link_1, &visited);
   EXPECT_EQ(reshuffled_link_1->children.size(), 1);
-  const BodyIndex iiwa_link_0 = iiwa->GetBodyByName("iiwa_link_0").index();
-  CheckChildInReshuffledBody(iiwa_tree, *reshuffled_link_1, 0, iiwa_link_0);
+  CheckChildInReshuffledBody(iiwa_tree_, *reshuffled_link_1, 0, iiwa_link_[0]);
   EXPECT_EQ(visited.size(), 5);
-  EXPECT_EQ(visited, std::unordered_set<BodyIndex>({iiwa_link_0, iiwa_link_1,
-                                                    iiwa_link_2, iiwa_link_3,
-                                                    iiwa_link_4}));
+  EXPECT_EQ(visited, std::unordered_set<BodyIndex>(
+                         {iiwa_link_[0], iiwa_link_[1], iiwa_link_[2],
+                          iiwa_link_[3], iiwa_link_[4]}));
 
   // Continue to add children of iiwa_link_0
   ReshuffledBody* reshuffled_link_0 = reshuffled_link_1->children[0].get();
-  AddChildrenToReshuffledBody(*iiwa, reshuffled_link_0, &visited);
+  AddChildrenToReshuffledBody(*iiwa_, reshuffled_link_0, &visited);
   EXPECT_EQ(reshuffled_link_0->children.size(), 1);
-  const BodyIndex world = iiwa->world_body().index();
-  CheckChildInReshuffledBody(iiwa_tree, *reshuffled_link_0, 0, world);
+  CheckChildInReshuffledBody(iiwa_tree_, *reshuffled_link_0, 0, world_);
   EXPECT_EQ(visited.size(), 6);
-  EXPECT_EQ(visited, std::unordered_set<BodyIndex>({world, iiwa_link_0,
-                                                    iiwa_link_1, iiwa_link_2,
-                                                    iiwa_link_3, iiwa_link_4}));
+  EXPECT_EQ(visited, std::unordered_set<BodyIndex>(
+                         {world_, iiwa_link_[0], iiwa_link_[1], iiwa_link_[2],
+                          iiwa_link_[3], iiwa_link_[4]}));
 
   // Continue to add children of world.
   ReshuffledBody* reshuffled_world = reshuffled_link_0->children[0].get();
-  AddChildrenToReshuffledBody(*iiwa, reshuffled_world, &visited);
+  AddChildrenToReshuffledBody(*iiwa_, reshuffled_world, &visited);
   EXPECT_TRUE(reshuffled_world->children.empty());
   EXPECT_EQ(visited.size(), 6);
-  EXPECT_EQ(visited, std::unordered_set<BodyIndex>({world, iiwa_link_0,
-                                                    iiwa_link_1, iiwa_link_2,
-                                                    iiwa_link_3, iiwa_link_4}));
+  EXPECT_EQ(visited, std::unordered_set<BodyIndex>(
+                         {world_, iiwa_link_[0], iiwa_link_[1], iiwa_link_[2],
+                          iiwa_link_[3], iiwa_link_[4]}));
+}
+
+TEST_F(IiwaTest, TestReshuffleKinematicsTreeWithWorldAsRoot) {
+  ReshuffledBody reshuffled_world(world_, nullptr, nullptr);
+  ReshuffleKinematicsTree(*iiwa_, &reshuffled_world);
+
+  // Check world after reshuffling.
+  EXPECT_EQ(reshuffled_world.parent, nullptr);
+  EXPECT_EQ(reshuffled_world.body_index, world_);
+  EXPECT_EQ(reshuffled_world.mobilizer, nullptr);
+
+  // Check the children of world.
+  EXPECT_EQ(reshuffled_world.children.size(), 1);
+  CheckChildInReshuffledBody(iiwa_tree_, reshuffled_world, 0, iiwa_link_[0]);
+  ReshuffledBody* reshuffled_link_0 = reshuffled_world.children[0].get();
+
+  ReshuffledBody* reshuffled_link_i = reshuffled_link_0;
+  for (int i = 0; i < 7; ++i) {
+    EXPECT_EQ(reshuffled_link_i->children.size(), 1);
+    CheckChildInReshuffledBody(iiwa_tree_, *reshuffled_link_i, 0,
+                               iiwa_link_[i + 1]);
+    reshuffled_link_i = reshuffled_link_i->children[0].get();
+  }
+
+  // Now check the children of reshuffled_link_7
+  EXPECT_EQ(reshuffled_link_i->children.size(), 0);
+}
+
+TEST_F(IiwaTest, TestReshuffleKinematicsTreeWithLink3AsRoot) {
+  ReshuffledBody reshuffled_link_3(iiwa_link_[3], nullptr, nullptr);
+  ReshuffleKinematicsTree(*iiwa_, &reshuffled_link_3);
+  EXPECT_EQ(reshuffled_link_3.body_index, iiwa_link_[3]);
+  EXPECT_EQ(reshuffled_link_3.parent, nullptr);
+  EXPECT_EQ(reshuffled_link_3.mobilizer, nullptr);
+  EXPECT_EQ(reshuffled_link_3.children.size(), 2);
+  CheckChildInReshuffledBody(iiwa_tree_, reshuffled_link_3, 0, iiwa_link_[2]);
+  CheckChildInReshuffledBody(iiwa_tree_, reshuffled_link_3, 1, iiwa_link_[4]);
+
+  ReshuffledBody* reshuffled_link_i = reshuffled_link_3.children[0].get();
+  for (int i = 2; i >= 0; --i) {
+    EXPECT_EQ(reshuffled_link_i->children.size(), 1);
+    const BodyIndex child_index = i > 0 ? iiwa_link_[i - 1] : world_;
+    CheckChildInReshuffledBody(iiwa_tree_, *reshuffled_link_i, 0, child_index);
+    reshuffled_link_i = reshuffled_link_i->children[0].get();
+  }
+  // Now the reshuffled world.
+  EXPECT_EQ(reshuffled_link_i->children.size(), 0);
+
+  reshuffled_link_i = reshuffled_link_3.children[1].get();
+  for (int i = 4; i < 7; ++i) {
+    EXPECT_EQ(reshuffled_link_i->children.size(), 1);
+    CheckChildInReshuffledBody(iiwa_tree_, *reshuffled_link_i, 0,
+                               iiwa_link_[i + 1]);
+    reshuffled_link_i = reshuffled_link_i->children[0].get();
+  }
+  // Now check the reshuffled_link_7.
+  EXPECT_EQ(reshuffled_link_i->children.size(), 0);
 }
 }  // namespace internal
 }  // namespace multibody

@@ -25,13 +25,18 @@ void CheckChildInReshuffledBody(const MultibodyTree<double>& tree,
   EXPECT_EQ(reshuffled_body.children[child_index]->parent->body_index,
             reshuffled_body.body_index);
   BodyIndex inboard_mobilizer_body;
-  if (tree.get_topology().get_body(reshuffled_body.body_index).parent_body ==
-      child_body_index_expected) {
+  const BodyIndex reshuffled_body_parent =
+      tree.get_topology().get_body(reshuffled_body.body_index).parent_body;
+  if (reshuffled_body_parent.is_valid() &&
+      reshuffled_body_parent == child_body_index_expected) {
     inboard_mobilizer_body = reshuffled_body.body_index;
-  } else if (tree.get_topology()
-                 .get_body(child_body_index_expected)
-                 .parent_body == reshuffled_body.body_index) {
-    inboard_mobilizer_body = child_body_index_expected;
+  } else {
+    const BodyIndex child_body_parent =
+        tree.get_topology().get_body(child_body_index_expected).parent_body;
+    if (child_body_parent.is_valid() &&
+        child_body_parent == reshuffled_body.body_index) {
+      inboard_mobilizer_body = child_body_index_expected;
+    }
   }
 
   EXPECT_EQ(reshuffled_body.children[child_index]->mobilizer,
@@ -202,6 +207,30 @@ TEST_F(IiwaTest, TestReshuffleKinematicsTreeWithLink3AsRoot) {
   }
   // Now check the reshuffled_link_7.
   EXPECT_EQ(reshuffled_link_i->children.size(), 0);
+}
+
+TEST_F(IiwaTest, FindShortestPath) {
+  auto path = FindShortestPath(*iiwa_, world_, iiwa_link_[7]);
+  EXPECT_EQ(path, std::vector<BodyIndex>({world_, iiwa_link_[0], iiwa_link_[1],
+                                          iiwa_link_[2], iiwa_link_[3],
+                                          iiwa_link_[4], iiwa_link_[5],
+                                          iiwa_link_[6], iiwa_link_[7]}));
+
+  path = FindShortestPath(*iiwa_, iiwa_link_[7], world_);
+  EXPECT_EQ(path,
+            std::vector<BodyIndex>({iiwa_link_[7], iiwa_link_[6], iiwa_link_[5],
+                                    iiwa_link_[4], iiwa_link_[3], iiwa_link_[2],
+                                    iiwa_link_[1], iiwa_link_[0], world_}));
+
+  path = FindShortestPath(*iiwa_, iiwa_link_[3], iiwa_link_[7]);
+  EXPECT_EQ(path,
+            std::vector<BodyIndex>({iiwa_link_[3], iiwa_link_[4], iiwa_link_[5],
+                                    iiwa_link_[6], iiwa_link_[7]}));
+
+  path = FindShortestPath(*iiwa_, iiwa_link_[3], world_);
+  EXPECT_EQ(path,
+            std::vector<BodyIndex>({iiwa_link_[3], iiwa_link_[2], iiwa_link_[1],
+                                    iiwa_link_[0], world_}));
 }
 }  // namespace internal
 }  // namespace multibody

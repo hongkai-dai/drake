@@ -44,6 +44,12 @@ void ReshuffleKinematicsTree(const MultibodyPlant<double>& plant,
 void AddChildrenToReshuffledBody(const MultibodyPlant<double>& plant,
                                  ReshuffledBody* body,
                                  std::unordered_set<BodyIndex>* visited);
+
+/**
+ * Find the shortest path on the kinematics tree from start to the end.
+ */
+std::vector<BodyIndex> FindShortestPath(const MultibodyPlant<double>& plant,
+                                        BodyIndex start, BodyIndex end);
 }  // namespace internal
 }  // namespace multibody
 }  // namespace drake

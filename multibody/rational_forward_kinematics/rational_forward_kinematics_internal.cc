@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <queue>
 
+#include "drake/multibody/tree/revolute_mobilizer.h"
+
 namespace drake {
 namespace multibody {
 namespace internal {
@@ -136,6 +138,45 @@ std::vector<BodyIndex> FindShortestPath(const MultibodyPlant<double>& plant,
   path.push_back(start);
   std::reverse(path.begin(), path.end());
   return path;
+}
+
+BodyIndex FindBodyInTheMiddleOfChain(const MultibodyPlant<double>& plant,
+                                     BodyIndex start, BodyIndex end) {
+  const std::vector<BodyIndex> path = FindShortestPath(plant, start, end);
+
+  // path_only_revolute goes from start to end. If path[i] and path[i-1] is
+  // connected through a prismatic joint, then path[i] is not included in
+  // path_only_revolute.
+  std::vector<BodyIndex> path_only_revolute;
+  path_only_revolute.reserve(path.size());
+  path_only_revolute.push_back(start);
+  const internal::MultibodyTree<double>& tree =
+      internal::GetInternalTree(plant);
+  for (int i = 0; i < static_cast<int>(path.size()) - 1; ++i) {
+    const BodyTopology& body_topology = tree.get_topology().get_body(path[i]);
+    MobilizerIndex mobilizer_index;
+    if (body_topology.parent_body.is_valid() &&
+        body_topology.parent_body == path[i + 1]) {
+      mobilizer_index = body_topology.inboard_mobilizer;
+    } else {
+      mobilizer_index =
+          tree.get_topology().get_body(path[i + 1]).inboard_mobilizer;
+    }
+    const Mobilizer<double>& mobilizer = tree.get_mobilizer(mobilizer_index);
+    if (dynamic_cast<const internal::RevoluteMobilizer<double>*>(&mobilizer) !=
+        nullptr) {
+      path_only_revolute.push_back(path[i + 1]);
+    } else if (dynamic_cast<const internal::WeldMobilizer<double>*>(
+                   &mobilizer) != nullptr) {
+      continue;
+    } else {
+      throw std::invalid_argument(
+          "FindBodyInTheMiddleOfChain: only allow revolute or weld mobilizer "
+          "along the path.");
+    }
+  }
+
+  return path_only_revolute[(path_only_revolute.size() / 2)];
 }
 }  // namespace internal
 }  // namespace multibody

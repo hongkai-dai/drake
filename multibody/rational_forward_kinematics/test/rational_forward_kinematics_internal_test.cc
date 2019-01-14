@@ -232,6 +232,27 @@ TEST_F(IiwaTest, FindShortestPath) {
             std::vector<BodyIndex>({iiwa_link_[3], iiwa_link_[2], iiwa_link_[1],
                                     iiwa_link_[0], world_}));
 }
+
+TEST_F(IiwaTest, FindBodyInTheMiddleOfChain) {
+  EXPECT_EQ(FindBodyInTheMiddleOfChain(*iiwa_, iiwa_link_[0], iiwa_link_[1]),
+            iiwa_link_[1]);
+  EXPECT_EQ(FindBodyInTheMiddleOfChain(*iiwa_, iiwa_link_[1], iiwa_link_[0]),
+            iiwa_link_[0]);
+  EXPECT_EQ(FindBodyInTheMiddleOfChain(*iiwa_, iiwa_link_[0], iiwa_link_[2]),
+            iiwa_link_[1]);
+  EXPECT_EQ(FindBodyInTheMiddleOfChain(*iiwa_, iiwa_link_[2], iiwa_link_[0]),
+            iiwa_link_[1]);
+  EXPECT_EQ(FindBodyInTheMiddleOfChain(*iiwa_, world_, iiwa_link_[1]),
+            iiwa_link_[1]);
+  EXPECT_EQ(FindBodyInTheMiddleOfChain(*iiwa_, world_, iiwa_link_[2]),
+            iiwa_link_[1]);
+  EXPECT_EQ(FindBodyInTheMiddleOfChain(*iiwa_, world_, iiwa_link_[3]),
+            iiwa_link_[2]);
+  EXPECT_EQ(FindBodyInTheMiddleOfChain(*iiwa_, world_, iiwa_link_[7]),
+            iiwa_link_[4]);
+  EXPECT_EQ(FindBodyInTheMiddleOfChain(*iiwa_, iiwa_link_[7], world_),
+            iiwa_link_[3]);
+}
 }  // namespace internal
 }  // namespace multibody
 }  // namespace drake

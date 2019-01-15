@@ -103,7 +103,8 @@ class RationalForwardKinematics {
   // r(x)), without handling the common factor r(x) in the denominator.
   template <typename T>
   void CalcLinkPoseAsMultilinearPolynomialWithRevoluteJoint(
-      const internal::RevoluteMobilizer<double>* revolute_mobilizer,
+      const Eigen::Ref<const Eigen::Vector3d>& axis_F,
+      const Eigen::Isometry3d& X_PF, const Eigen::Isometry3d& X_MC,
       const Pose<T>& X_AP, double theta_star,
       const symbolic::Variable& cos_delta, const symbolic::Variable& sin_delta,
       Pose<T>* X_AC) const;
@@ -111,9 +112,10 @@ class RationalForwardKinematics {
   // Compute the pose of the link, connected to its parent link through a
   // weld joint.
   template <typename T>
-  void CalcLinkPoseWithWeldJoint(
-      const internal::WeldMobilizer<double>* weld_mobilizer,
-      const Pose<T>& X_AP, Pose<T>* X_AC) const;
+  void CalcLinkPoseWithWeldJoint(const Eigen::Isometry3d& X_FM,
+                                 const Eigen::Isometry3d& X_PF,
+                                 const Eigen::Isometry3d& X_MC,
+                                 const Pose<T>& X_AP, Pose<T>* X_AC) const;
 
   const MultibodyPlant<double>& plant_;
   // The variables used in computing the pose as rational functions. t_ are the

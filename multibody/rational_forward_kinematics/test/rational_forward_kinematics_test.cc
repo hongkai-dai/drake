@@ -158,14 +158,10 @@ void CheckLinkKinematics(
                   poses[i].p_AB(m).denominator().Evaluate(env);
     }
 
-    EXPECT_TRUE(CompareMatrices(
-        R_AB_i,
-        (X_WB_expected[expressed_body_index] * X_WB_expected[i]).linear(),
-        tol));
-    EXPECT_TRUE(CompareMatrices(
-        p_AB_i,
-        (X_WB_expected[expressed_body_index] * X_WB_expected[i]).translation(),
-        tol));
+    const Eigen::Isometry3d X_AB_expected =
+        X_WB_expected[expressed_body_index].inverse() * X_WB_expected[i];
+    EXPECT_TRUE(CompareMatrices(R_AB_i, X_AB_expected.linear(), tol));
+    EXPECT_TRUE(CompareMatrices(p_AB_i, X_AB_expected.translation(), tol));
   }
 }
 
@@ -175,22 +171,46 @@ GTEST_TEST(RationalForwardKinematicsTest, CalcLinkPoses) {
   EXPECT_EQ(rational_forward_kinematics.t().rows(), 7);
 
   const BodyIndex world_index = iiwa_plant->world_body().index();
+  std::array<BodyIndex, 8> iiwa_link;
+  for (int i = 0; i < 8; ++i) {
+    iiwa_link[i] =
+        iiwa_plant->GetBodyByName("iiwa_link_" + std::to_string(i)).index();
+  }
+  // q_val = 0 and q* = 0.
   CheckLinkKinematics(rational_forward_kinematics, Eigen::VectorXd::Zero(7),
                       Eigen::VectorXd::Zero(7), Eigen::VectorXd::Zero(7),
                       world_index);
+  // Compute the pose in the iiwa_link[i]'s frame.
+  for (int i = 0; i < 8; ++i) {
+    CheckLinkKinematics(rational_forward_kinematics, Eigen::VectorXd::Zero(7),
+                        Eigen::VectorXd::Zero(7), Eigen::VectorXd::Zero(7),
+                        iiwa_link[i]);
+  }
 
+  // Non-zero q_val and zero q_star_val.
   Eigen::VectorXd q_val(7);
   // arbitrary value
   q_val << 0.2, 0.3, 0.5, -0.1, 1.2, 2.3, -0.5;
   Eigen::VectorXd t_val = (q_val / 2).array().tan().matrix();
   CheckLinkKinematics(rational_forward_kinematics, q_val,
                       Eigen::VectorXd::Zero(7), t_val, world_index);
+  // Compute the pose in the iiwa_link[i]'s frame.
+  for (int i = 0; i < 8; ++i) {
+    CheckLinkKinematics(rational_forward_kinematics, q_val,
+                        Eigen::VectorXd::Zero(7), t_val, iiwa_link[i]);
+  }
 
+  // Non-zero q_val and non-zero q_star_val.
   Eigen::VectorXd q_star_val(7);
   q_star_val << 1.2, -0.4, 0.3, -0.5, 0.4, 1, 0.2;
   t_val = ((q_val - q_star_val) / 2).array().tan().matrix();
   CheckLinkKinematics(rational_forward_kinematics, q_val, q_star_val, t_val,
                       world_index);
+  // Compute the pose in the iiwa_link[i]'s frame.
+  for (int i = 0; i < 8; ++i) {
+    CheckLinkKinematics(rational_forward_kinematics, q_val, q_star_val, t_val,
+                        iiwa_link[i]);
+  }
 }
 
 GTEST_TEST(RationalForwardKinematicsTest, CalcLinkPosesForDualArmIiwa) {

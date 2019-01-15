@@ -1,5 +1,6 @@
 #include "drake/multibody/rational_forward_kinematics/rational_forward_kinematics.h"
 
+#include <queue>
 #include <set>
 
 #include "drake/multibody/rational_forward_kinematics/rational_forward_kinematics_internal.h"
@@ -161,15 +162,11 @@ RationalForwardKinematics::RationalForwardKinematics(
 
 template <typename Scalar1, typename Scalar2>
 void CalcChildPose(const Matrix3<Scalar2>& R_WP, const Vector3<Scalar2>& p_WP,
-                   const internal::Mobilizer<double>& mobilizer,
+                   const Isometry3<double>& X_PF, const Isometry3<double>& X_MC,
                    const Matrix3<Scalar1>& R_FM, const Vector3<Scalar1>& p_FM,
                    Matrix3<Scalar2>* R_WC, Vector3<Scalar2>* p_WC) {
   // Frame F is the inboard frame (attached to the parent link), and frame
   // M is the outboard frame (attached to the child link).
-  const Frame<double>& frame_F = mobilizer.inboard_frame();
-  const Frame<double>& frame_M = mobilizer.outboard_frame();
-  const Isometry3<double> X_PF = frame_F.GetFixedPoseInBodyFrame();
-  const Isometry3<double> X_MC = frame_M.GetFixedPoseInBodyFrame();
   const Matrix3<Scalar2> R_WF = R_WP * X_PF.linear();
   const Vector3<Scalar2> p_WF = R_WP * X_PF.translation() + p_WP;
   const Matrix3<Scalar2> R_WM = R_WF * R_FM;
@@ -183,11 +180,11 @@ void CalcChildPose(const Matrix3<Scalar2>& R_WP, const Vector3<Scalar2>& p_WP,
 template <typename T>
 void RationalForwardKinematics::
     CalcLinkPoseAsMultilinearPolynomialWithRevoluteJoint(
-        const internal::RevoluteMobilizer<double>* revolute_mobilizer,
+        const Eigen::Ref<const Eigen::Vector3d>& axis_F,
+        const Eigen::Isometry3d& X_PF, const Eigen::Isometry3d& X_MC,
         const Pose<T>& X_AP, double theta_star,
         const symbolic::Variable& cos_delta_theta,
         const symbolic::Variable& sin_delta_theta, Pose<T>* X_AC) const {
-  const Eigen::Vector3d& axis_F = revolute_mobilizer->revolute_axis();
   // clang-format off
       const Eigen::Matrix3d A_F =
           (Eigen::Matrix3d() << 0, -axis_F(2), axis_F(1),
@@ -210,20 +207,19 @@ void RationalForwardKinematics::
                                              (1 - cos_angle) * A_F * A_F;
   const symbolic::Polynomial poly_zero{};
   const Vector3<symbolic::Polynomial> p_FM(poly_zero, poly_zero, poly_zero);
-  CalcChildPose(X_AP.R_AB, X_AP.p_AB, *revolute_mobilizer, R_FM, p_FM,
-                &(X_AC->R_AB), &(X_AC->p_AB));
+  CalcChildPose(X_AP.R_AB, X_AP.p_AB, X_PF, X_MC, R_FM, p_FM, &(X_AC->R_AB),
+                &(X_AC->p_AB));
   X_AC->frame_A_index = X_AP.frame_A_index;
 }
 
 template <typename T>
 void RationalForwardKinematics::CalcLinkPoseWithWeldJoint(
-    const internal::WeldMobilizer<double>* weld_mobilizer, const Pose<T>& X_AP,
-    Pose<T>* X_AC) const {
-  const Isometry3<double> X_FM = weld_mobilizer->get_X_FM();
+    const Eigen::Isometry3d& X_FM, const Eigen::Isometry3d& X_PF,
+    const Eigen::Isometry3d& X_MC, const Pose<T>& X_AP, Pose<T>* X_AC) const {
   const Matrix3<double> R_FM = X_FM.linear();
   const Vector3<double> p_FM = X_FM.translation();
-  CalcChildPose(X_AP.R_AB, X_AP.p_AB, *weld_mobilizer, R_FM, p_FM,
-                &(X_AC->R_AB), &(X_AC->p_AB));
+  CalcChildPose(X_AP.R_AB, X_AP.p_AB, X_PF, X_MC, R_FM, p_FM, &(X_AC->R_AB),
+                &(X_AC->p_AB));
   X_AC->frame_A_index = X_AP.frame_A_index;
 }
 
@@ -231,7 +227,6 @@ std::vector<RationalForwardKinematics::Pose<Polynomial>>
 RationalForwardKinematics::CalcLinkPosesAsMultilinearPolynomials(
     const Eigen::Ref<const Eigen::VectorXd>& q_star,
     BodyIndex expressed_body_index) const {
-  // TODO(hongkai.dai): support expressed frame not in the world.
   // We need to change the frame in which the link pose is expressed. To do so,
   // we will reshuffle the tree structure in the MultibodyPlant, namely if we
   // express the pose in link A's frame, we will treat A as the root of the
@@ -249,47 +244,97 @@ RationalForwardKinematics::CalcLinkPosesAsMultilinearPolynomials(
   poses_poly[expressed_body_index].p_AB << poly_zero, poly_zero, poly_zero;
   // clang-format on
   poses_poly[expressed_body_index].frame_A_index = expressed_body_index;
-  const auto& tree = internal::GetInternalTree(plant_);
-  std::unordered_set<BodyIndex> visited_body;
-  visited_body.insert(expressed_body_index);
-  // Find the child links of the expressed body
-  for (BodyIndex body_index(1); body_index < plant_.num_bodies();
-       ++body_index) {
-    const auto& body_topology = tree.get_topology().get_body(body_index);
-    const auto mobilizer =
-        &(tree.get_mobilizer(body_topology.inboard_mobilizer));
-    const BodyIndex parent_index =
-        tree.get_topology().get_body(body_index).parent_body;
-    if (dynamic_cast<const internal::RevoluteMobilizer<double>*>(mobilizer) !=
-        nullptr) {
-      const internal::RevoluteMobilizer<double>* revolute_mobilizer =
-          dynamic_cast<const internal::RevoluteMobilizer<double>*>(mobilizer);
-      const int t_index = map_mobilizer_to_t_index_.at(mobilizer);
-      const int q_index = revolute_mobilizer->position_start_in_q();
-      const int t_angle_index = map_t_index_to_angle_index_.at(t_index);
-      CalcLinkPoseAsMultilinearPolynomialWithRevoluteJoint(
-          revolute_mobilizer, poses_poly[parent_index], q_star(q_index),
-          cos_delta_(t_angle_index), sin_delta_(t_angle_index),
-          &(poses_poly[body_index]));
-    } else if (dynamic_cast<const internal::PrismaticMobilizer<double>*>(
-                   mobilizer) != nullptr) {
-      throw std::runtime_error("Prismatic joint has not been handled yet.");
-    } else if (dynamic_cast<const internal::WeldMobilizer<double>*>(
-                   mobilizer) != nullptr) {
-      const internal::WeldMobilizer<double>* weld_mobilizer =
-          dynamic_cast<const internal::WeldMobilizer<double>*>(mobilizer);
-      CalcLinkPoseWithWeldJoint(weld_mobilizer, poses_poly[parent_index],
-                                &(poses_poly[body_index]));
-    } else if (dynamic_cast<const internal::SpaceXYZMobilizer<double>*>(
-                   mobilizer) != nullptr) {
-      throw std::runtime_error("Gimbal joint has not been handled yet.");
-    } else if (dynamic_cast<
-                   const internal::QuaternionFloatingMobilizer<double>*>(
-                   mobilizer) != nullptr) {
-      throw std::runtime_error("Free floating joint has not been handled yet.");
-    } else {
-      throw std::runtime_error(
-          "RationalForwardKinematics: Can't handle this mobilizer.");
+  // In the reshuffled tree, the expressed body is the root. We will compute the
+  // pose of each link w.r.t this root link.
+  internal::ReshuffledBody reshuffled_expressed_body(expressed_body_index,
+                                                     nullptr, nullptr);
+  internal::ReshuffleKinematicsTree(plant_, &reshuffled_expressed_body);
+  // Now do a breadth-first-search on this reshuffled tree, to compute the pose
+  // of each link w.r.t the root.
+  std::queue<internal::ReshuffledBody*> bfs_queue;
+  bfs_queue.push(&reshuffled_expressed_body);
+  while (!bfs_queue.empty()) {
+    const internal::ReshuffledBody* reshuffled_body = bfs_queue.front();
+    if (reshuffled_body->parent != nullptr) {
+      const internal::Mobilizer<double>* mobilizer = reshuffled_body->mobilizer;
+      // if reshuffled_body was a child of reshuffled_body->parent in the
+      // original tree before reshuffling, then is_order_reversed = false;
+      // otherwise it is true.
+      // If we denote the frames related to the two adjacent bodies connected
+      // by a mobilizer in the original tree as P->F->M->C, then after reversing
+      // the order, the new frames should reverse the order, namely
+      // P' = C, F' = M, M' = F, C' = P, and hence we know that
+      // X_P'F' = X_MC.inverse()
+      // X_F'M' = X_FM.inverse()
+      // X_M'C' = X_PF.inverse()
+      const bool is_order_reversed =
+          mobilizer->inboard_body().index() == reshuffled_body->body_index;
+      if (dynamic_cast<const internal::RevoluteMobilizer<double>*>(mobilizer) !=
+          nullptr) {
+        // A revolute joint.
+        const internal::RevoluteMobilizer<double>* revolute_mobilizer =
+            dynamic_cast<const internal::RevoluteMobilizer<double>*>(mobilizer);
+        const int t_index = map_mobilizer_to_t_index_.at(mobilizer);
+        const int q_index = revolute_mobilizer->position_start_in_q();
+        const int t_angle_index = map_t_index_to_angle_index_.at(t_index);
+        Eigen::Vector3d axis_F;
+        Eigen::Isometry3d X_PF, X_MC;
+        if (!is_order_reversed) {
+          axis_F = revolute_mobilizer->revolute_axis();
+          const Frame<double>& frame_F = mobilizer->inboard_frame();
+          const Frame<double>& frame_M = mobilizer->outboard_frame();
+          X_PF = frame_F.GetFixedPoseInBodyFrame();
+          X_MC = frame_M.GetFixedPoseInBodyFrame();
+        } else {
+          // By negating the revolute axis, we know that R(a, θ)⁻¹ = R(-a, θ)
+          axis_F = -revolute_mobilizer->revolute_axis();
+          X_PF =
+              mobilizer->outboard_frame().GetFixedPoseInBodyFrame().inverse();
+          X_MC = mobilizer->inboard_frame().GetFixedPoseInBodyFrame().inverse();
+        }
+        CalcLinkPoseAsMultilinearPolynomialWithRevoluteJoint(
+            axis_F, X_PF, X_MC, poses_poly[reshuffled_body->parent->body_index],
+            q_star(q_index), cos_delta_(t_angle_index),
+            sin_delta_(t_angle_index),
+            &(poses_poly[reshuffled_body->body_index]));
+      } else if (dynamic_cast<const internal::PrismaticMobilizer<double>*>(
+                     mobilizer) != nullptr) {
+        throw std::runtime_error(
+            "RationalForwardKinematics: prismatic joint is not supported yet.");
+      } else if (dynamic_cast<const internal::WeldMobilizer<double>*>(
+                     mobilizer) != nullptr) {
+        const internal::WeldMobilizer<double>* weld_mobilizer =
+            dynamic_cast<const internal::WeldMobilizer<double>*>(mobilizer);
+        Eigen::Isometry3d X_FM, X_PF, X_MC;
+        if (!is_order_reversed) {
+          X_FM = weld_mobilizer->get_X_FM();
+          X_PF = mobilizer->inboard_frame().GetFixedPoseInBodyFrame();
+          X_MC = mobilizer->outboard_frame().GetFixedPoseInBodyFrame();
+        } else {
+          X_FM = weld_mobilizer->get_X_FM().inverse();
+          X_PF =
+              mobilizer->outboard_frame().GetFixedPoseInBodyFrame().inverse();
+          X_MC = mobilizer->inboard_frame().GetFixedPoseInBodyFrame().inverse();
+        }
+        CalcLinkPoseWithWeldJoint(
+            X_FM, X_PF, X_MC, poses_poly[reshuffled_body->parent->body_index],
+            &(poses_poly[reshuffled_body->body_index]));
+      } else if (dynamic_cast<const internal::SpaceXYZMobilizer<double>*>(
+                     mobilizer) != nullptr) {
+        throw std::runtime_error("Gimbal joint has not been handled yet.");
+      } else if (dynamic_cast<
+                     const internal::QuaternionFloatingMobilizer<double>*>(
+                     mobilizer) != nullptr) {
+        throw std::runtime_error(
+            "Free floating joint has not been handled yet.");
+      } else {
+        throw std::runtime_error(
+            "RationalForwardKinematics: Can't handle this mobilizer.");
+      }
+    }
+    bfs_queue.pop();
+    for (const auto& reshuffled_child : reshuffled_body->children) {
+      bfs_queue.push(reshuffled_child.get());
     }
   }
   return poses_poly;
@@ -352,6 +397,7 @@ RationalForwardKinematics::CalcLinkPoses(
       poses[body_index].p_AB(i) =
           ConvertMultilinearPolynomialToRationalFunction(
               poses_poly[body_index].p_AB(i));
+      poses[body_index].frame_A_index = expressed_body_index;
     }
   }
   return poses;

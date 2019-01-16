@@ -74,6 +74,17 @@ class RationalForwardKinematics {
       const Eigen::Ref<const Eigen::VectorXd>& q_star,
       BodyIndex expressed_body_index) const;
 
+  /**
+   * Compute the pose X_AB as a multilinear polynomial function.
+   * @param q_star The nominal posture
+   * @param link_index Frame B, the link whose pose is computed.
+   * @param expressed_body_index Frame A, the link in whose frame the pose is
+   * expressed.
+   */
+  Pose<symbolic::Polynomial> CalcLinkPoseAsMultilinearPolynomial(
+      const Eigen::Ref<const Eigen::VectorXd>& q_star, BodyIndex link_index,
+      BodyIndex expressed_body_index) const;
+
   symbolic::RationalFunction ConvertMultilinearPolynomialToRationalFunction(
       const symbolic::Polynomial& e) const;
 
@@ -116,6 +127,12 @@ class RationalForwardKinematics {
                                  const Eigen::Isometry3d& X_PF,
                                  const Eigen::Isometry3d& X_MC,
                                  const Pose<T>& X_AP, Pose<T>* X_AC) const;
+
+  void CalcReshuffledChildLinkPoseAsMultilinearPolynomial(
+      const Eigen::Ref<const Eigen::VectorXd>& q_star,
+      BodyIndex reshuffled_parent, BodyIndex reshuffled_child,
+      const Pose<symbolic::Polynomial>& X_AP,
+      Pose<symbolic::Polynomial>* X_AC) const;
 
   const MultibodyPlant<double>& plant_;
   // The variables used in computing the pose as rational functions. t_ are the

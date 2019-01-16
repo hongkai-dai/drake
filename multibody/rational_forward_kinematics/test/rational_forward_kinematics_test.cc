@@ -145,7 +145,7 @@ void CheckLinkKinematics(
       q_star_val, expressed_body_index);
 
   const double tol{1E-12};
-  for (int i = 1; i < rational_forward_kinematics.plant().num_bodies(); ++i) {
+  for (int i = 0; i < rational_forward_kinematics.plant().num_bodies(); ++i) {
     EXPECT_EQ(poses[i].frame_A_index, expressed_body_index);
     Matrix3<double> R_AB_i;
     Vector3<double> p_AB_i;
@@ -160,6 +160,31 @@ void CheckLinkKinematics(
 
     const Eigen::Isometry3d X_AB_expected =
         X_WB_expected[expressed_body_index].inverse() * X_WB_expected[i];
+    EXPECT_TRUE(CompareMatrices(R_AB_i, X_AB_expected.linear(), tol));
+    EXPECT_TRUE(CompareMatrices(p_AB_i, X_AB_expected.translation(), tol));
+
+    // Now check CalcLinkPoseAsMultilinearPolynomial, namely to compute a single
+    // link pose.
+    const RationalForwardKinematics::Pose<symbolic::Polynomial> pose_poly_i =
+        rational_forward_kinematics.CalcLinkPoseAsMultilinearPolynomial(
+            q_star_val, BodyIndex(i), expressed_body_index);
+    EXPECT_EQ(pose_poly_i.frame_A_index, expressed_body_index);
+    for (int m = 0; m < 3; ++m) {
+      for (int n = 0; n < 3; ++n) {
+        const auto R_AB_i_mn_rational =
+            rational_forward_kinematics
+                .ConvertMultilinearPolynomialToRationalFunction(
+                    pose_poly_i.R_AB(m, n));
+        R_AB_i(m, n) = R_AB_i_mn_rational.numerator().Evaluate(env) /
+                       R_AB_i_mn_rational.denominator().Evaluate(env);
+      }
+      const auto p_AB_i_m_rational =
+          rational_forward_kinematics
+              .ConvertMultilinearPolynomialToRationalFunction(
+                  pose_poly_i.p_AB(m));
+      p_AB_i(m) = p_AB_i_m_rational.numerator().Evaluate(env) /
+                  p_AB_i_m_rational.denominator().Evaluate(env);
+    }
     EXPECT_TRUE(CompareMatrices(R_AB_i, X_AB_expected.linear(), tol));
     EXPECT_TRUE(CompareMatrices(p_AB_i, X_AB_expected.translation(), tol));
   }

@@ -134,6 +134,16 @@ drake_cc_binary(
     ]
 )
 
+drake_cc_binary(
+    name = "iiwa_two_boxes_reshuffled_tree_demo",
+    testonly = 1,
+    srcs = ["test/iiwa_two_boxes_reshuffled_tree_demo.cc"],
+    deps = [
+        ":rational_forward_kinematics_test_utilities",
+        "//solvers:mathematical_program",
+        "@gflags",
+    ],
+)
 drake_cc_googletest(
     name = "convex_geometry_test",
     deps = [

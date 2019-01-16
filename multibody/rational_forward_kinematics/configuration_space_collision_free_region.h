@@ -210,5 +210,40 @@ class ConfigurationSpaceCollisionFreeRegion {
   std::vector<std::vector<std::vector<Vector3<symbolic::Variable>>>>
       a_hyperplane_;
 };
+
+/** For a plane aᵀx = b, we denote the side {x | aᵀx ≥ b} as "positive" side of
+ * the plane, as it is on the same direction of the plane normal vector a. The
+ * side { x |aᵀx ≤ b} as the "negative" side of the plane.
+ */
+enum class PlaneSide {
+  kPositive,
+  kNegative,
+};
+
+/**
+ * Generate the rational functions a_A.dot(p_AVi(t) - p_AC) <= 1 (or >= 1) which
+ * represents that the link (whose vertex Vi has position p_AVi in frame A) is
+ * on the negative (or positive, respectively) side of the hyperplane.
+ * @param rational_forward_kinematics The utility class that computes the
+ * position of Vi in A's frame as a rational function of t.
+ * @param link_polytope The polytopic representation of the link collision
+ * geometry, Vi is the i'th vertex of the polytope.
+ * @param q_star The nominal configuration.
+ * @param expressed_body_index Frame A in the documentation above. The body in
+ * which the position is expressed in.
+ * @param a_A The normal vector of the plane. This vector is expressed in frame
+ * A.
+ * @param p_AC The point within the interior of the negative side of the plane.
+ * @param plane_side Whether the link is on the positive or the negative side of
+ * the plane.
+ */
+std::vector<symbolic::RationalFunction>
+GenerateLinkOnOneSideOfPlaneRationalFunction(
+    const RationalForwardKinematics& rational_forward_kinematics,
+    const ConfigurationSpaceCollisionFreeRegion::Polytope& link_polytope,
+    const Eigen::Ref<const Eigen::VectorXd>& q_star,
+    BodyIndex expressed_body_index,
+    const Eigen::Ref<const Vector3<symbolic::Variable>>& a_A,
+    const Eigen::Ref<const Eigen::Vector3d>& p_AC, PlaneSide plane_side);
 }  // namespace multibody
 }  // namespace drake

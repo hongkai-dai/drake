@@ -23,12 +23,12 @@ class ConfigurationSpaceCollisionFreeRegion {
   DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(ConfigurationSpaceCollisionFreeRegion)
 
   struct Polytope {
-    Polytope(int m_body_index,
+    Polytope(BodyIndex m_body_index,
              const Eigen::Ref<const Eigen::Matrix3Xd>& m_vertices)
         : body_index{m_body_index}, vertices{m_vertices} {
       DRAKE_ASSERT(vertices.cols() > 0);
     }
-    int body_index;
+    BodyIndex body_index;
     Eigen::Matrix3Xd vertices;
   };
 
@@ -236,6 +236,10 @@ enum class PlaneSide {
  * @param p_AC The point within the interior of the negative side of the plane.
  * @param plane_side Whether the link is on the positive or the negative side of
  * the plane.
+ * @return rational_fun rational_fun[i] should be non-negative to represent that
+ * the vertiex i is on the correct side of the plane. rational_fun[i] =
+ * a_A.dot(p_AVi(t) - p_AC) - 1 if @p plane_side = kPositive, rational_fun[i] =
+ * 1 - a_A.dot(p_AVi(t) - p_AC) if @p plane_side = kNegative.
  */
 std::vector<symbolic::RationalFunction>
 GenerateLinkOnOneSideOfPlaneRationalFunction(

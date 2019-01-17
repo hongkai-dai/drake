@@ -346,5 +346,57 @@ ConfigurationSpaceCollisionFreeRegion::
                static_cast<int>(links_outside_halfspace.size()));
   return lagrangians_pairs;
 }
+
+std::vector<symbolic::RationalFunction>
+GenerateLinkOnOneSideOfPlaneRationalFunction(
+    const RationalForwardKinematics& rational_forward_kinematics,
+    const ConfigurationSpaceCollisionFreeRegion::Polytope& link_polytope,
+    const Eigen::Ref<const Eigen::VectorXd>& q_star,
+    BodyIndex expressed_body_index,
+    const Eigen::Ref<const Vector3<symbolic::Variable>>& a_A,
+    const Eigen::Ref<const Eigen::Vector3d>& p_AC, PlaneSide plane_side) {
+  // Steps:
+  // 1. Compute the pose of the link as a multilinear function.
+  // 2. Compute the vertices position p_AVi as a multilinear function.
+  // 3. Compute a_A.dot(p_AVi - p_AC)
+  // 4. Convert a_A.dot(p_AVi - p_AC) - 1 or 1 - a_A.dot(p_AVi - p_AC) as a
+  // rational function of t
+
+  // Step 1: Compute the link pose
+  const auto X_AB =
+      rational_forward_kinematics.CalcLinkPoseAsMultilinearPolynomial(
+          q_star, link_polytope.body_index, expressed_body_index);
+
+  std::vector<symbolic::RationalFunction> rational_fun;
+  rational_fun.reserve(link_polytope.vertices.cols());
+  const symbolic::Monomial monomial_one{};
+  Vector3<symbolic::Polynomial> a_A_poly;
+  for (int i = 0; i < 3; ++i) {
+    a_A_poly(i) = symbolic::Polynomial({{monomial_one, a_A(i)}});
+  }
+  for (int i = 0; i < link_polytope.vertices.cols(); ++i) {
+    // Step 2: Compute vertex position.
+    const Vector3<symbolic::Polynomial> p_AVi =
+        X_AB.p_AB + X_AB.R_AB * link_polytope.vertices.col(i);
+
+    // Step 3: Compute a_A.dot(p_AVi - p_AC)
+    const symbolic::Polynomial point_on_hyperplane_side =
+        a_A_poly.dot(p_AVi - p_AC);
+
+    // Step 4: Convert the multilinear polynomial to rational function.
+    if (plane_side == PlaneSide::kPositive) {
+      rational_fun.push_back(
+          rational_forward_kinematics
+              .ConvertMultilinearPolynomialToRationalFunction(
+                  point_on_hyperplane_side - 1));
+    } else {
+      rational_fun.push_back(
+          rational_forward_kinematics
+              .ConvertMultilinearPolynomialToRationalFunction(
+                  1 - point_on_hyperplane_side));
+    }
+  }
+  return rational_fun;
+}
 }  // namespace multibody
 }  // namespace drake

@@ -43,25 +43,6 @@ void CheckChildInReshuffledBody(const MultibodyTree<double>& tree,
             GetInboardMobilizer(tree, inboard_mobilizer_body));
 }
 
-class IiwaTest : public ::testing::Test {
- public:
-  IiwaTest()
-      : iiwa_(ConstructIiwaPlant("iiwa14_no_collision.sdf")),
-        iiwa_tree_(GetInternalTree(*iiwa_)),
-        world_(iiwa_->world_body().index()) {
-    for (int i = 0; i < 8; ++i) {
-      iiwa_link_[i] =
-          iiwa_->GetBodyByName("iiwa_link_" + std::to_string(i)).index();
-    }
-  }
-
- protected:
-  std::unique_ptr<MultibodyPlant<double>> iiwa_;
-  const internal::MultibodyTree<double>& iiwa_tree_;
-  const BodyIndex world_;
-  std::array<BodyIndex, 8> iiwa_link_;
-};
-
 TEST_F(IiwaTest, TestAddChildrenToReshuffledBodyWithWorldAsRoot) {
   ReshuffledBody reshuffled_world(world_, nullptr, nullptr);
   std::unordered_set<BodyIndex> visited;
@@ -253,6 +234,27 @@ TEST_F(IiwaTest, FindBodyInTheMiddleOfChain) {
   EXPECT_EQ(FindBodyInTheMiddleOfChain(*iiwa_, iiwa_link_[7], world_),
             iiwa_link_[3]);
 }
+
+TEST_F(IiwaTest, FindMobilizersOnShortestPath) {
+  EXPECT_EQ(FindMobilizersOnShortestPath(*iiwa_, iiwa_link_[0], iiwa_link_[1]),
+            std::vector<MobilizerIndex>({iiwa_joint_[1]}));
+
+  EXPECT_EQ(FindMobilizersOnShortestPath(*iiwa_, iiwa_link_[1], iiwa_link_[0]),
+            std::vector<MobilizerIndex>({iiwa_joint_[1]}));
+
+  EXPECT_EQ(FindMobilizersOnShortestPath(*iiwa_, iiwa_link_[0], iiwa_link_[5]),
+            std::vector<MobilizerIndex>({iiwa_joint_[1], iiwa_joint_[2],
+                                         iiwa_joint_[3], iiwa_joint_[4],
+                                         iiwa_joint_[5]}));
+  EXPECT_EQ(FindMobilizersOnShortestPath(*iiwa_, world_, iiwa_link_[3]),
+            std::vector<MobilizerIndex>({iiwa_joint_[0], iiwa_joint_[1],
+                                         iiwa_joint_[2], iiwa_joint_[3]}));
+
+  EXPECT_EQ(FindMobilizersOnShortestPath(*iiwa_, iiwa_link_[2], world_),
+            std::vector<MobilizerIndex>(
+                {iiwa_joint_[2], iiwa_joint_[1], iiwa_joint_[0]}));
+}
+
 }  // namespace internal
 }  // namespace multibody
 }  // namespace drake

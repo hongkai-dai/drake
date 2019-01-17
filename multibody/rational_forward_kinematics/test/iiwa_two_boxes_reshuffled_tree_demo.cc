@@ -19,10 +19,11 @@ int DoMain() {
   Eigen::Isometry3d box2_pose = Eigen::Isometry3d::Identity();
   box2_pose.translation() << 0.5, 0, 0.5;
   std::vector<ConfigurationSpaceCollisionFreeRegion::Polytope> obstacle_boxes;
+  const BodyIndex world = plant->world_body().index();
   obstacle_boxes.emplace_back(
-      0, GenerateBoxVertices(Eigen::Vector3d(0.4, 0.6, 1), box1_pose));
+      world, GenerateBoxVertices(Eigen::Vector3d(0.4, 0.6, 1), box1_pose));
   obstacle_boxes.emplace_back(
-      0, GenerateBoxVertices(Eigen::Vector3d(0.4, 0.6, 1), box2_pose));
+      world, GenerateBoxVertices(Eigen::Vector3d(0.4, 0.6, 1), box2_pose));
 
   Eigen::VectorXd q_star(7);
   q_star.setZero();

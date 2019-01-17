@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <string>
+#include <gtest/gtest.h>
 
 #include "drake/multibody/plant/multibody_plant.h"
 #include "drake/multibody/rational_forward_kinematics/configuration_space_collision_free_region.h"
@@ -22,6 +23,18 @@ std::unique_ptr<MultibodyPlant<double>> ConstructDualArmIiwaPlant(
     const std::string& iiwa_sdf_name, const Eigen::Isometry3d& X_WL,
     const Eigen::Isometry3d& X_WR, ModelInstanceIndex* left_iiwa_instance,
     ModelInstanceIndex* right_iiwa_instance);
+
+class IiwaTest : public ::testing::Test {
+ public:
+  IiwaTest();
+
+ protected:
+  std::unique_ptr<MultibodyPlant<double>> iiwa_;
+  const internal::MultibodyTree<double>& iiwa_tree_;
+  const BodyIndex world_;
+  std::array<BodyIndex, 8> iiwa_link_;
+  std::array<internal::MobilizerIndex, 8> iiwa_joint_;
+};
 
 /*
 std::unique_ptr<RigidBodyTreed> ConstructKukaRBT();

@@ -201,6 +201,17 @@ GTEST_TEST(RationalForwardKinematicsTest, CalcLinkPoses) {
     iiwa_link[i] =
         iiwa_plant->GetBodyByName("iiwa_link_" + std::to_string(i)).index();
   }
+
+  // Call CalcLinkPosesAsMultilinearPolynomial to make sure the expressed link
+  // index is correct in each pose.
+  {
+    const auto poses =
+        rational_forward_kinematics.CalcLinkPosesAsMultilinearPolynomials(
+            Eigen::VectorXd::Zero(7), iiwa_link[2]);
+    for (const auto& pose : poses) {
+      EXPECT_EQ(pose.frame_A_index, iiwa_link[2]);
+    }
+  }
   // q_val = 0 and q* = 0.
   CheckLinkKinematics(rational_forward_kinematics, Eigen::VectorXd::Zero(7),
                       Eigen::VectorXd::Zero(7), Eigen::VectorXd::Zero(7),
@@ -270,12 +281,8 @@ GTEST_TEST(RationalForwardKinematicsTest, CalcLinkPosesForDualArmIiwa) {
     iiwa_plant->SetPositions(context.get(), left_iiwa_instance, q_left_star);
     iiwa_plant->SetPositions(context.get(), right_iiwa_instance, q_right_star);
     q_star_val = iiwa_plant->GetPositions(*context);
-    for (int i = 0; i < 14; ++i) {
-      const int q_index = rational_forward_kinematics.map_t_to_mobilizer()
-                              .at(rational_forward_kinematics.t()(i).get_id())
-                              ->position_start_in_q();
-      t_val(i) = std::tan((q_val(q_index) - q_star_val(q_index)) / 2);
-    }
+
+    t_val = rational_forward_kinematics.ComputeTValue(q_val, q_star_val);
   };
 
   const BodyIndex world_index = iiwa_plant->world_body().index();

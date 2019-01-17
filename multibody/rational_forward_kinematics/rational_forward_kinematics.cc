@@ -134,8 +134,9 @@ RationalForwardKinematics::RationalForwardKinematics(
       num_t += 1;
       map_t_index_to_angle_index_.emplace(t_.rows() - 1, t_angles_.rows() - 1);
       map_angle_index_to_t_index_.emplace(t_angles_.rows() - 1, t_.rows() - 1);
-      map_t_to_mobilizer_.emplace(t_(t_.rows() - 1).get_id(), mobilizer);
-      map_mobilizer_to_t_index_.emplace(mobilizer, t_.rows() - 1);
+      map_t_to_mobilizer_.emplace(t_(t_.rows() - 1).get_id(),
+                                  mobilizer->index());
+      map_mobilizer_to_t_index_.emplace(mobilizer->index(), t_.rows() - 1);
     } else if (dynamic_cast<const internal::WeldMobilizer<double>*>(
                    mobilizer) != nullptr) {
     } else if (dynamic_cast<const internal::SpaceXYZMobilizer<double>*>(
@@ -278,7 +279,7 @@ void RationalForwardKinematics::
     // A revolute joint.
     const internal::RevoluteMobilizer<double>* revolute_mobilizer =
         dynamic_cast<const internal::RevoluteMobilizer<double>*>(mobilizer);
-    const int t_index = map_mobilizer_to_t_index_.at(mobilizer);
+    const int t_index = map_mobilizer_to_t_index_.at(mobilizer->index());
     const int q_index = revolute_mobilizer->position_start_in_q();
     const int t_angle_index = map_t_index_to_angle_index_.at(t_index);
     Eigen::Vector3d axis_F;
@@ -450,6 +451,41 @@ RationalForwardKinematics::CalcLinkPoses(
     }
   }
   return poses;
+}
+
+Eigen::VectorXd RationalForwardKinematics::ComputeTValue(
+    const Eigen::Ref<const Eigen::VectorXd>& q_val,
+    const Eigen::Ref<const Eigen::VectorXd>& q_star_val) const {
+  Eigen::VectorXd t_val(t_.size());
+  for (int i = 0; i < t_val.size(); ++i) {
+    const internal::Mobilizer<double>& mobilizer =
+        internal::GetInternalTree(plant_).get_mobilizer(
+            map_t_to_mobilizer_.at(t_(i).get_id()));
+    if (dynamic_cast<const internal::RevoluteMobilizer<double>*>(&mobilizer) !=
+        nullptr) {
+      const int q_index = mobilizer.position_start_in_q();
+      t_val(i) = std::tan((q_val(q_index) - q_star_val(q_index)) / 2);
+    } else {
+      throw std::runtime_error("Other joint types are not supported yet.");
+    }
+  }
+  return t_val;
+}
+
+VectorX<symbolic::Variable> RationalForwardKinematics::FindTOnPath(
+    BodyIndex start, BodyIndex end) const {
+  const std::vector<internal::MobilizerIndex> mobilizers =
+      FindMobilizersOnShortestPath(plant_, start, end);
+  VectorX<symbolic::Variable> t_on_path;
+  for (int i = 0; i < static_cast<int>(mobilizers.size()); ++i) {
+    auto it = map_mobilizer_to_t_index_.find(mobilizers[i]);
+    if (it != map_mobilizer_to_t_index_.end()) {
+      t_on_path.conservativeResize(t_on_path.size() + 1);
+      t_on_path(t_on_path.size() - 1) = t_(it->second);
+    }
+  }
+
+  return t_on_path;
 }
 }  // namespace multibody
 }  // namespace drake

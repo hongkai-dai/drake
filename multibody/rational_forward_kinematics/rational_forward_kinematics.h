@@ -94,11 +94,17 @@ class RationalForwardKinematics {
 
   /** Each t(i) is associated with a mobilizer.
    */
-  const std::unordered_map<symbolic::Variable::Id,
-                           const internal::Mobilizer<double>*>&
+  const std::unordered_map<symbolic::Variable::Id, internal::MobilizerIndex>&
   map_t_to_mobilizer() const {
     return map_t_to_mobilizer_;
   }
+
+  Eigen::VectorXd ComputeTValue(
+      const Eigen::Ref<const Eigen::VectorXd>& q_val,
+      const Eigen::Ref<const Eigen::VectorXd>& q_star_val) const;
+
+  // Return the indeterminates t on the path from start to the end.
+  VectorX<symbolic::Variable> FindTOnPath(BodyIndex start, BodyIndex end) const;
 
  private:
   // Compute the pose of the link, connected to its parent link through a
@@ -139,12 +145,11 @@ class RationalForwardKinematics {
   // indeterminates in the rational functions.
   VectorX<symbolic::Variable> t_;
   // Each t(i) is associated with a mobilizer.
-  std::unordered_map<symbolic::Variable::Id, const internal::Mobilizer<double>*>
+  std::unordered_map<symbolic::Variable::Id, internal::MobilizerIndex>
       map_t_to_mobilizer_;
   // Given a mobilizer, returns the index of the mobilizer's slack variable in
   // t_.
-  std::unordered_map<const internal::Mobilizer<double>*, int>
-      map_mobilizer_to_t_index_;
+  std::unordered_map<internal::MobilizerIndex, int> map_mobilizer_to_t_index_;
 
   // The variables used to represent tan(θ / 2).
   VectorX<symbolic::Variable> t_angles_;

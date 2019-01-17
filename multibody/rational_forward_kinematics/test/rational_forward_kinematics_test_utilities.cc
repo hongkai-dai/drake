@@ -39,7 +39,7 @@ Eigen::Matrix<double, 3, 8> GenerateBoxVertices(const Eigen::Vector3d& size,
 std::vector<ConfigurationSpaceCollisionFreeRegion::Polytope>
 GenerateIiwaLinkPolytopes(const MultibodyPlant<double>& iiwa) {
   std::vector<ConfigurationSpaceCollisionFreeRegion::Polytope> link_polytopes;
-  const int link7_idx = iiwa.GetBodyByName("iiwa_link_7").node_index();
+  const BodyIndex link7_idx = iiwa.GetBodyByName("iiwa_link_7").index();
   Eigen::Isometry3d link7_box_pose = Eigen::Isometry3d::Identity();
   link7_box_pose.translation() << 0, 0, 0.05;
   Eigen::Matrix<double, 3, 8> link7_pts =
@@ -70,6 +70,18 @@ std::unique_ptr<MultibodyPlant<double>> ConstructDualArmIiwaPlant(
 
   plant->Finalize();
   return plant;
+}
+
+IiwaTest::IiwaTest()
+    : iiwa_(ConstructIiwaPlant("iiwa14_no_collision.sdf")),
+      iiwa_tree_(internal::GetInternalTree(*iiwa_)),
+      world_{iiwa_->world_body().index()} {
+  for (int i = 0; i < 8; ++i) {
+    iiwa_link_[i] =
+        iiwa_->GetBodyByName("iiwa_link_" + std::to_string(i)).index();
+    iiwa_joint_[i] =
+        iiwa_tree_.get_topology().get_body(iiwa_link_[i]).inboard_mobilizer;
+  }
 }
 
 /*

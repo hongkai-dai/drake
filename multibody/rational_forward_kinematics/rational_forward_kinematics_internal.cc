@@ -75,20 +75,6 @@ struct BodyOnPath {
   BodyOnPath* parent;
 };
 
-struct BodyOnPathHash {
- public:
-  size_t operator()(const BodyOnPath& body) const {
-    return std::hash<BodyIndex>()(body.index);
-  }
-};
-
-struct BodyOnPathEqual {
- public:
-  bool operator()(const BodyOnPath& body1, const BodyOnPath& body2) const {
-    return body1.index == body2.index;
-  };
-};
-
 std::vector<BodyIndex> FindShortestPath(const MultibodyPlant<double>& plant,
                                         BodyIndex start, BodyIndex end) {
   DRAKE_ASSERT(start.is_valid() && end.is_valid());
@@ -140,6 +126,24 @@ std::vector<BodyIndex> FindShortestPath(const MultibodyPlant<double>& plant,
   return path;
 }
 
+std::vector<MobilizerIndex> FindMobilizersOnShortestPath(
+    const MultibodyPlant<double>& plant, BodyIndex start, BodyIndex end) {
+  const std::vector<BodyIndex> path = FindShortestPath(plant, start, end);
+  std::vector<MobilizerIndex> mobilizers_on_path;
+  mobilizers_on_path.reserve(path.size() - 1);
+  const internal::MultibodyTree<double>& tree = GetInternalTree(plant);
+  for (int i = 0; i < static_cast<int>(path.size()) - 1; ++i) {
+    const BodyTopology& body_topology = tree.get_topology().get_body(path[i]);
+    if (body_topology.parent_body == path[i + 1]) {
+      mobilizers_on_path.push_back(body_topology.inboard_mobilizer);
+    } else {
+      mobilizers_on_path.push_back(
+          tree.get_topology().get_body(path[i + 1]).inboard_mobilizer);
+    }
+  }
+  return mobilizers_on_path;
+}
+
 BodyIndex FindBodyInTheMiddleOfChain(const MultibodyPlant<double>& plant,
                                      BodyIndex start, BodyIndex end) {
   const std::vector<BodyIndex> path = FindShortestPath(plant, start, end);
@@ -178,6 +182,7 @@ BodyIndex FindBodyInTheMiddleOfChain(const MultibodyPlant<double>& plant,
 
   return path_only_revolute[(path_only_revolute.size() / 2)];
 }
+
 }  // namespace internal
 }  // namespace multibody
 }  // namespace drake

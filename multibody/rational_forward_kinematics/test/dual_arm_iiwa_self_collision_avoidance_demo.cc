@@ -167,9 +167,10 @@ int DoMain() {
   right_iiwa_t_index.reserve(7);
   for (int i = 0; i < 14; ++i) {
     const auto ti_model_instance =
-        rational_forward_kinematics.map_t_to_mobilizer()
-            .at(rational_forward_kinematics.t()(i).get_id())
-            ->model_instance();
+        internal::GetInternalTree(rational_forward_kinematics.plant())
+            .get_mobilizer(rational_forward_kinematics.map_t_to_mobilizer().at(
+                rational_forward_kinematics.t()(i).get_id()))
+            .model_instance();
     if (ti_model_instance == left_iiwa_instance) {
       left_iiwa_t.insert(rational_forward_kinematics.t()(i));
       left_iiwa_t_index.emplace_back(i);

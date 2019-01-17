@@ -51,6 +51,9 @@ void AddChildrenToReshuffledBody(const MultibodyPlant<double>& plant,
 std::vector<BodyIndex> FindShortestPath(const MultibodyPlant<double>& plant,
                                         BodyIndex start, BodyIndex end);
 
+std::vector<MobilizerIndex> FindMobilizersOnShortestPath(
+    const MultibodyPlant<double>& plant, BodyIndex start, BodyIndex end);
+
 /**
  * Find the body in the middle of the kinematics chain that goes from the start
  * to the end. Notice that we ignore the welded joint, and only count revolute

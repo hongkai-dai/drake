@@ -163,8 +163,8 @@ void CheckLinkKinematics(
     EXPECT_TRUE(CompareMatrices(R_AB_i, X_AB_expected.linear(), tol));
     EXPECT_TRUE(CompareMatrices(p_AB_i, X_AB_expected.translation(), tol));
 
-    // Now check CalcLinkPoseAsMultilinearPolynomial, namely to compute a single
-    // link pose.
+    // Now check CalcLinkPoseAsMultilinearPolynomial, namely to compute a
+    // single link pose.
     const RationalForwardKinematics::Pose<symbolic::Polynomial> pose_poly_i =
         rational_forward_kinematics.CalcLinkPoseAsMultilinearPolynomial(
             q_star_val, BodyIndex(i), expressed_body_index);
@@ -190,37 +190,29 @@ void CheckLinkKinematics(
   }
 }
 
-GTEST_TEST(RationalForwardKinematicsTest, CalcLinkPoses) {
-  auto iiwa_plant = ConstructIiwaPlant("iiwa14_no_collision.sdf");
-  RationalForwardKinematics rational_forward_kinematics(*iiwa_plant);
+TEST_F(IiwaTest, CalcLinkPoses) {
+  RationalForwardKinematics rational_forward_kinematics(*iiwa_);
   EXPECT_EQ(rational_forward_kinematics.t().rows(), 7);
-
-  const BodyIndex world_index = iiwa_plant->world_body().index();
-  std::array<BodyIndex, 8> iiwa_link;
-  for (int i = 0; i < 8; ++i) {
-    iiwa_link[i] =
-        iiwa_plant->GetBodyByName("iiwa_link_" + std::to_string(i)).index();
-  }
 
   // Call CalcLinkPosesAsMultilinearPolynomial to make sure the expressed link
   // index is correct in each pose.
   {
     const auto poses =
         rational_forward_kinematics.CalcLinkPosesAsMultilinearPolynomials(
-            Eigen::VectorXd::Zero(7), iiwa_link[2]);
+            Eigen::VectorXd::Zero(7), iiwa_link_[2]);
     for (const auto& pose : poses) {
-      EXPECT_EQ(pose.frame_A_index, iiwa_link[2]);
+      EXPECT_EQ(pose.frame_A_index, iiwa_link_[2]);
     }
   }
   // q_val = 0 and q* = 0.
   CheckLinkKinematics(rational_forward_kinematics, Eigen::VectorXd::Zero(7),
                       Eigen::VectorXd::Zero(7), Eigen::VectorXd::Zero(7),
-                      world_index);
+                      world_);
   // Compute the pose in the iiwa_link[i]'s frame.
   for (int i = 0; i < 8; ++i) {
     CheckLinkKinematics(rational_forward_kinematics, Eigen::VectorXd::Zero(7),
                         Eigen::VectorXd::Zero(7), Eigen::VectorXd::Zero(7),
-                        iiwa_link[i]);
+                        iiwa_link_[i]);
   }
 
   // Non-zero q_val and zero q_star_val.
@@ -229,11 +221,11 @@ GTEST_TEST(RationalForwardKinematicsTest, CalcLinkPoses) {
   q_val << 0.2, 0.3, 0.5, -0.1, 1.2, 2.3, -0.5;
   Eigen::VectorXd t_val = (q_val / 2).array().tan().matrix();
   CheckLinkKinematics(rational_forward_kinematics, q_val,
-                      Eigen::VectorXd::Zero(7), t_val, world_index);
+                      Eigen::VectorXd::Zero(7), t_val, world_);
   // Compute the pose in the iiwa_link[i]'s frame.
   for (int i = 0; i < 8; ++i) {
     CheckLinkKinematics(rational_forward_kinematics, q_val,
-                        Eigen::VectorXd::Zero(7), t_val, iiwa_link[i]);
+                        Eigen::VectorXd::Zero(7), t_val, iiwa_link_[i]);
   }
 
   // Non-zero q_val and non-zero q_star_val.
@@ -241,11 +233,11 @@ GTEST_TEST(RationalForwardKinematicsTest, CalcLinkPoses) {
   q_star_val << 1.2, -0.4, 0.3, -0.5, 0.4, 1, 0.2;
   t_val = ((q_val - q_star_val) / 2).array().tan().matrix();
   CheckLinkKinematics(rational_forward_kinematics, q_val, q_star_val, t_val,
-                      world_index);
+                      world_);
   // Compute the pose in the iiwa_link[i]'s frame.
   for (int i = 0; i < 8; ++i) {
     CheckLinkKinematics(rational_forward_kinematics, q_val, q_star_val, t_val,
-                        iiwa_link[i]);
+                        iiwa_link_[i]);
   }
 }
 
@@ -306,6 +298,41 @@ GTEST_TEST(RationalForwardKinematicsTest, CalcLinkPosesForDualArmIiwa) {
   set_t_val(q_left, q_right, q_left_star, q_right_star);
   CheckLinkKinematics(rational_forward_kinematics, q_val, q_star_val, t_val,
                       world_index);
+}
+
+void CheckFindTOnPath(
+    const RationalForwardKinematics& rational_forward_kinematics,
+    BodyIndex start, BodyIndex end,
+    const std::vector<internal::MobilizerIndex>& mobilizers) {
+  const VectorX<symbolic::Variable> t =
+      rational_forward_kinematics.FindTOnPath(start, end);
+  EXPECT_EQ(t.size(), mobilizers.size());
+  for (int i = 0; i < t.size(); ++i) {
+    EXPECT_EQ(
+        rational_forward_kinematics.map_t_to_mobilizer().at(t(i).get_id()),
+        mobilizers[i]);
+  }
+}
+
+TEST_F(IiwaTest, FindTOnPath) {
+  RationalForwardKinematics rational_forward_kinematics(*iiwa_);
+
+  CheckFindTOnPath(rational_forward_kinematics, world_, iiwa_link_[0], {});
+  CheckFindTOnPath(rational_forward_kinematics, iiwa_link_[0], world_, {});
+  CheckFindTOnPath(rational_forward_kinematics, world_, iiwa_link_[1],
+                   {iiwa_joint_[1]});
+  CheckFindTOnPath(rational_forward_kinematics, iiwa_link_[1], world_,
+                   {iiwa_joint_[1]});
+  CheckFindTOnPath(
+      rational_forward_kinematics, world_, iiwa_link_[4],
+      {iiwa_joint_[1], iiwa_joint_[2], iiwa_joint_[3], iiwa_joint_[4]});
+  CheckFindTOnPath(
+      rational_forward_kinematics, iiwa_link_[4], world_,
+      {iiwa_joint_[4], iiwa_joint_[3], iiwa_joint_[2], iiwa_joint_[1]});
+  CheckFindTOnPath(rational_forward_kinematics, iiwa_link_[1], iiwa_link_[4],
+                   {iiwa_joint_[2], iiwa_joint_[3], iiwa_joint_[4]});
+  CheckFindTOnPath(rational_forward_kinematics, iiwa_link_[4], iiwa_link_[1],
+                   {iiwa_joint_[4], iiwa_joint_[3], iiwa_joint_[2]});
 }
 
 }  // namespace

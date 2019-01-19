@@ -47,6 +47,7 @@ drake_cc_library(
     srcs = ["configuration_space_collision_free_region.cc"],
     hdrs = ["configuration_space_collision_free_region.h"],
     deps = [
+        ":convex_geometry",
         ":generate_monomial_basis_util",
         ":rational_forward_kinematics",
         "//solvers:mathematical_program",
@@ -59,6 +60,7 @@ drake_cc_library(
     hdrs = ["convex_geometry.h"],
     deps = [
         "//solvers:mathematical_program",
+        "//multibody/tree:tree",
     ],
 )
 

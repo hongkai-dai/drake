@@ -61,7 +61,7 @@ class CylinderTest : public ::testing::Test {
 };
 
 TEST_F(CylinderTest, AddInsideHalfspaceConstraint) {
-  const Cylinder cylinder(0, p_BO_, a_B_, radius_);
+  const Cylinder cylinder(BodyIndex(0), p_BO_, a_B_, radius_);
   solvers::MathematicalProgram prog;
   auto n_B = prog.NewContinuousVariables<3>();
   const Eigen::Vector3d p_BC = p_BO_ + 0.1 * a_B_;
@@ -114,7 +114,7 @@ TEST_F(CylinderTest, AddPointInsideGeometryConstraint) {
                       .toRotationMatrix();
   X_AB.translation() << 0.2, 0.3, 0.4;
 
-  const Cylinder cylinder(0, p_BO_, a_B_, radius_);
+  const Cylinder cylinder(BodyIndex(0), p_BO_, a_B_, radius_);
   cylinder.AddPointInsideGeometryConstraint(X_AB, p_AQ, &prog);
 
   auto is_inside_cylinder = [&prog](

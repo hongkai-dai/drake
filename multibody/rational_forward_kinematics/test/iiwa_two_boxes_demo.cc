@@ -16,14 +16,14 @@ namespace multibody {
 int DoMain() {
   auto plant = ConstructIiwaPlant("iiwa14_no_collision.sdf");
 
-  const std::vector<ConfigurationSpaceCollisionFreeRegion::Polytope>
-      link_polytopes = GenerateIiwaLinkPolytopes(*plant);
+  const std::vector<ConvexPolytope> link_polytopes =
+      GenerateIiwaLinkPolytopes(*plant);
 
   Eigen::Isometry3d box1_pose = Eigen::Isometry3d::Identity();
   box1_pose.translation() << -0.5, 0, 0.5;
   Eigen::Isometry3d box2_pose = Eigen::Isometry3d::Identity();
   box2_pose.translation() << 0.5, 0, 0.5;
-  std::vector<ConfigurationSpaceCollisionFreeRegion::Polytope> obstacle_boxes;
+  std::vector<ConvexPolytope> obstacle_boxes;
   const BodyIndex world = plant->world_body().index();
   obstacle_boxes.emplace_back(
       world, GenerateBoxVertices(Eigen::Vector3d(0.4, 0.6, 1), box1_pose));

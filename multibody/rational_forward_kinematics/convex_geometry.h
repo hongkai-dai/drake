@@ -1,4 +1,6 @@
+#include "drake/multibody/tree/multibody_tree_indexes.h"
 #include "drake/solvers/mathematical_program.h"
+
 namespace drake {
 namespace multibody {
 enum class ConvexGeometryType {
@@ -11,7 +13,7 @@ class ConvexGeometry {
  public:
   ConvexGeometryType type() const { return type_; }
 
-  int body_index() const { return body_index_; }
+  BodyIndex body_index() const { return body_index_; }
 
   virtual ~ConvexGeometry() {}
 
@@ -37,21 +39,21 @@ class ConvexGeometry {
       solvers::MathematicalProgram* prog) const = 0;
 
  protected:
-  ConvexGeometry(ConvexGeometryType type, int body_index)
+  ConvexGeometry(ConvexGeometryType type, BodyIndex body_index)
       : type_{type}, body_index_{body_index} {}
 
  private:
   const ConvexGeometryType type_;
   // The index of the body that this geometry is attached to.
-  const int body_index_;
+  const BodyIndex body_index_;
 };
 
 class ConvexPolytope : public ConvexGeometry {
  public:
-  ConvexPolytope(int body_index,
+  ConvexPolytope(BodyIndex body_index,
                  const Eigen::Ref<const Eigen::Matrix3Xd>& vertices);
 
-  const Eigen::Matrix3Xd p_BV() const { return p_BV_; }
+  const Eigen::Matrix3Xd& p_BV() const { return p_BV_; }
 
   void AddInsideHalfspaceConstraint(
       const Eigen::Ref<const Eigen::Vector3d>& p_BC,
@@ -76,7 +78,7 @@ class Cylinder : public ConvexGeometry {
    * of the cylinder is 2 * |a_B|
    * @param radius The radius of the cylinder.
    */
-  Cylinder(int body_index, const Eigen::Ref<const Eigen::Vector3d>& p_BO,
+  Cylinder(BodyIndex body_index, const Eigen::Ref<const Eigen::Vector3d>& p_BO,
            const Eigen::Ref<const Eigen::Vector3d>& a_B, double radius);
 
   void AddInsideHalfspaceConstraint(

@@ -36,9 +36,9 @@ Eigen::Matrix<double, 3, 8> GenerateBoxVertices(const Eigen::Vector3d& size,
   return vertices;
 }
 
-std::vector<ConfigurationSpaceCollisionFreeRegion::Polytope>
-GenerateIiwaLinkPolytopes(const MultibodyPlant<double>& iiwa) {
-  std::vector<ConfigurationSpaceCollisionFreeRegion::Polytope> link_polytopes;
+std::vector<ConvexPolytope> GenerateIiwaLinkPolytopes(
+    const MultibodyPlant<double>& iiwa) {
+  std::vector<ConvexPolytope> link_polytopes;
   const BodyIndex link7_idx = iiwa.GetBodyByName("iiwa_link_7").index();
   Eigen::Isometry3d link7_box_pose = Eigen::Isometry3d::Identity();
   link7_box_pose.translation() << 0, 0, 0.05;

@@ -26,11 +26,9 @@ class ConfigurationSpaceCollisionFreeRegionTester {
   const ConfigurationSpaceCollisionFreeRegion* dut_;
 };
 
-void ComparePolytopes(
-    const ConfigurationSpaceCollisionFreeRegion::Polytope& p1,
-    const ConfigurationSpaceCollisionFreeRegion::Polytope& p2) {
-  EXPECT_EQ(p1.body_index, p2.body_index);
-  EXPECT_TRUE(CompareMatrices(p1.vertices, p2.vertices));
+void ComparePolytopes(const ConvexPolytope& p1, const ConvexPolytope& p2) {
+  EXPECT_EQ(p1.body_index(), p2.body_index());
+  EXPECT_TRUE(CompareMatrices(p1.p_BV(), p2.p_BV()));
 }
 
 void CheckGenerateLinkOutsideHalfspacePolynomials(
@@ -57,10 +55,10 @@ void CheckGenerateLinkOutsideHalfspacePolynomials(
          j < static_cast<int>(tester.dut().link_polytopes()[i].size()); ++j) {
       const Eigen::Matrix3Xd p_WV_ij =
           X_WB_expected[i].linear() *
-              tester.dut().link_polytopes()[i][j].vertices +
+              tester.dut().link_polytopes()[i][j].p_BV() +
           X_WB_expected[i].translation() *
               Eigen::RowVectorXd::Ones(
-                  1, tester.dut().link_polytopes()[i][j].vertices.cols());
+                  1, tester.dut().link_polytopes()[i][j].p_BV().cols());
       for (int k = 0; k < static_cast<int>(tester.dut().obstacles().size());
            ++k) {
         for (int l = 0; l < p_WV_ij.cols(); ++l) {
@@ -108,7 +106,7 @@ void CheckGenerateLinkOutsideHalfspacePolynomials(
 }
 
 TEST_F(IiwaTest, GenerateLinkOutsideHalfspaceRationalFunction) {
-  std::vector<ConfigurationSpaceCollisionFreeRegion::Polytope> link_polytopes;
+  std::vector<ConvexPolytope> link_polytopes;
   link_polytopes.emplace_back(
       iiwa_link_[4], (Eigen::Matrix<double, 3, 4>() << 0.1, 0.1, 0, -0.1, 0.2,
                       -0.2, 0, 0.3, 0, -0.3, 0.2, 0.1)
@@ -122,7 +120,7 @@ TEST_F(IiwaTest, GenerateLinkOutsideHalfspaceRationalFunction) {
                       0.2, 0.1, 0.2, 0.2, 0.3, 0.3, 0.1, 0.4)
                          .finished());
 
-  std::vector<ConfigurationSpaceCollisionFreeRegion::Polytope> obstacles;
+  std::vector<ConvexPolytope> obstacles;
   Eigen::Isometry3d obstacle_pose;
   obstacle_pose.setIdentity();
   obstacle_pose.translation() << 0.4, 0.5, 0.2;
@@ -189,7 +187,7 @@ TEST_F(IiwaTest, GenerateLinkOutsideHalfspaceRationalFunction) {
 
 void CheckGenerateLinkOnOneSideOfPlaneRationalFunction(
     const RationalForwardKinematics& rational_forward_kinematics,
-    const ConfigurationSpaceCollisionFreeRegion::Polytope& link_polytope,
+    const ConvexPolytope& link_polytope,
     const Eigen::Ref<const Eigen::VectorXd>& q_star,
     const Eigen::Ref<const Eigen::VectorXd>& q_val,
     BodyIndex expressed_body_index,
@@ -214,24 +212,24 @@ void CheckGenerateLinkOnOneSideOfPlaneRationalFunction(
   // Compute link points position in the expressed body.
   auto context = rational_forward_kinematics.plant().CreateDefaultContext();
   rational_forward_kinematics.plant().SetPositions(context.get(), q_val);
-  Eigen::Matrix3Xd p_AV_expected(3, link_polytope.vertices.cols());
+  Eigen::Matrix3Xd p_AV_expected(3, link_polytope.p_BV().cols());
   rational_forward_kinematics.plant().CalcPointsPositions(
       *context, rational_forward_kinematics.plant()
-                    .get_body(link_polytope.body_index)
+                    .get_body(link_polytope.body_index())
                     .body_frame(),
-      link_polytope.vertices, rational_forward_kinematics.plant()
-                                  .get_body(expressed_body_index)
-                                  .body_frame(),
+      link_polytope.p_BV(), rational_forward_kinematics.plant()
+                                .get_body(expressed_body_index)
+                                .body_frame(),
       &p_AV_expected);
 
   const VectorX<symbolic::Variable> t_on_path =
       rational_forward_kinematics.FindTOnPath(expressed_body_index,
-                                              link_polytope.body_index);
+                                              link_polytope.body_index());
   const symbolic::Variables t_on_path_set(t_on_path);
 
-  EXPECT_EQ(rational_fun.size(), link_polytope.vertices.cols());
+  EXPECT_EQ(rational_fun.size(), link_polytope.p_BV().cols());
   const double tol{1E-12};
-  for (int i = 0; i < link_polytope.vertices.cols(); ++i) {
+  for (int i = 0; i < link_polytope.p_BV().cols(); ++i) {
     EXPECT_TRUE(
         rational_fun[i].numerator().indeterminates().IsSubsetOf(t_on_path_set));
     // Check that rational_fun[i] only contains the right t.
@@ -255,8 +253,7 @@ TEST_F(IiwaTest, GenerateLinkOnOneSideOfPlaneRationalFunction1) {
           .toRotationMatrix();
   X_6V.translation() << 0.2, -0.1, 0.3;
   const auto p_6V = GenerateBoxVertices(Eigen::Vector3d(0.1, 0.2, 0.3), X_6V);
-  ConfigurationSpaceCollisionFreeRegion::Polytope link6_polytope(iiwa_link_[6],
-                                                                 p_6V);
+  ConvexPolytope link6_polytope(iiwa_link_[6], p_6V);
 
   Eigen::VectorXd q(7);
   q.setZero();
@@ -285,8 +282,7 @@ TEST_F(IiwaTest, GenerateLinkOnOneSideOfPlaneRationalFunction2) {
           .toRotationMatrix();
   X_3V.translation() << -0.2, -0.1, 0.3;
   const auto p_3V = GenerateBoxVertices(Eigen::Vector3d(0.1, 0.2, 0.3), X_3V);
-  ConfigurationSpaceCollisionFreeRegion::Polytope link3_polytope(iiwa_link_[3],
-                                                                 p_3V);
+  ConvexPolytope link3_polytope(iiwa_link_[3], p_3V);
 
   Eigen::VectorXd q(7);
   q.setZero();

@@ -8,10 +8,8 @@ using symbolic::RationalFunction;
 
 ConfigurationSpaceCollisionFreeRegion::ConfigurationSpaceCollisionFreeRegion(
     const MultibodyPlant<double>& plant,
-    const std::vector<ConfigurationSpaceCollisionFreeRegion::Polytope>&
-        link_polytopes,
-    const std::vector<ConfigurationSpaceCollisionFreeRegion::Polytope>&
-        obstacles)
+    const std::vector<ConvexPolytope>& link_polytopes,
+    const std::vector<ConvexPolytope>& obstacles)
     : rational_forward_kinematics_{plant},
       link_polytopes_{static_cast<size_t>(plant.num_bodies())},
       obstacles_{obstacles},
@@ -22,11 +20,11 @@ ConfigurationSpaceCollisionFreeRegion::ConfigurationSpaceCollisionFreeRegion(
   DRAKE_DEMAND(num_obstacles > 0);
   DRAKE_DEMAND(static_cast<int>(link_polytopes_.size()) == num_links);
   for (const auto& obstacle : obstacles_) {
-    DRAKE_ASSERT(obstacle.body_index == 0);
+    DRAKE_ASSERT(obstacle.body_index() == 0);
   }
   for (const auto& link_polytope : link_polytopes) {
-    DRAKE_ASSERT(link_polytope.body_index != 0);
-    link_polytopes_[link_polytope.body_index].push_back(link_polytope);
+    DRAKE_ASSERT(link_polytope.body_index() != 0);
+    link_polytopes_[link_polytope.body_index()].push_back(link_polytope);
   }
   for (int i = 1; i < num_links; ++i) {
     const int num_link_polytopes = static_cast<int>(link_polytopes_[i].size());
@@ -46,7 +44,7 @@ ConfigurationSpaceCollisionFreeRegion::ConfigurationSpaceCollisionFreeRegion(
   }
   for (int i = 0; i < num_obstacles; ++i) {
     obstacle_center_[i] =
-        obstacles_[i].vertices.rowwise().sum() / obstacles_[i].vertices.cols();
+        obstacles_[i].p_BV().rowwise().sum() / obstacles_[i].p_BV().cols();
   }
 }
 
@@ -61,12 +59,12 @@ std::vector<symbolic::RationalFunction> ConfigurationSpaceCollisionFreeRegion::
   const symbolic::Monomial monomial_one{};
   for (int i = 1; i < rational_forward_kinematics_.plant().num_bodies(); ++i) {
     for (int j = 0; j < static_cast<int>(link_polytopes_[i].size()); ++j) {
-      const int num_polytope_vertices = link_polytopes_[i][j].vertices.cols();
+      const int num_polytope_vertices = link_polytopes_[i][j].p_BV().cols();
       Matrix3X<symbolic::Polynomial> p_WV(3, num_polytope_vertices);
       for (int l = 0; l < num_polytope_vertices; ++l) {
         p_WV.col(l) =
             link_poses_poly[i].p_AB +
-            link_poses_poly[i].R_AB * link_polytopes_[i][j].vertices.col(l);
+            link_poses_poly[i].R_AB * link_polytopes_[i][j].p_BV().col(l);
       }
       for (int k = 0; k < static_cast<int>(obstacles_.size()); ++k) {
         // For each pair of link polytope and obstacle polytope, we need to
@@ -83,7 +81,7 @@ std::vector<symbolic::RationalFunction> ConfigurationSpaceCollisionFreeRegion::
           a_poly(idx) = symbolic::Polynomial(
               {{monomial_one, a_hyperplane_[i][j][k](idx)}});
         }
-        for (int l = 0; l < link_polytopes_[i][j].vertices.cols(); ++l) {
+        for (int l = 0; l < link_polytopes_[i][j].p_BV().cols(); ++l) {
           const symbolic::Polynomial outside_hyperplane_poly =
               a_poly.dot(p_WV.col(l) - obstacle_center_[k]) - 1;
           const symbolic::Polynomial outside_hyperplane_poly_trimmed =
@@ -119,9 +117,9 @@ std::vector<symbolic::Expression> ConfigurationSpaceCollisionFreeRegion::
   for (int i = 1; i < rational_forward_kinematics_.plant().num_bodies(); ++i) {
     for (int j = 0; j < static_cast<int>(link_polytopes_[i].size()); ++j) {
       for (int k = 0; k < static_cast<int>(obstacles_.size()); ++k) {
-        for (int l = 0; l < obstacles_[k].vertices.cols(); ++l) {
+        for (int l = 0; l < obstacles_[k].p_BV().cols(); ++l) {
           exprs.push_back(
-              a_hyperplane_[i][j][k].dot(obstacles_[k].vertices.col(l) -
+              a_hyperplane_[i][j][k].dot(obstacles_[k].p_BV().col(l) -
                                          obstacle_center_[k]) -
               1);
         }
@@ -350,7 +348,7 @@ ConfigurationSpaceCollisionFreeRegion::
 std::vector<symbolic::RationalFunction>
 GenerateLinkOnOneSideOfPlaneRationalFunction(
     const RationalForwardKinematics& rational_forward_kinematics,
-    const ConfigurationSpaceCollisionFreeRegion::Polytope& link_polytope,
+    const ConvexPolytope& link_polytope,
     const Eigen::Ref<const Eigen::VectorXd>& q_star,
     BodyIndex expressed_body_index,
     const Eigen::Ref<const Vector3<symbolic::Variable>>& a_A,
@@ -365,19 +363,19 @@ GenerateLinkOnOneSideOfPlaneRationalFunction(
   // Step 1: Compute the link pose
   const auto X_AB =
       rational_forward_kinematics.CalcLinkPoseAsMultilinearPolynomial(
-          q_star, link_polytope.body_index, expressed_body_index);
+          q_star, link_polytope.body_index(), expressed_body_index);
 
   std::vector<symbolic::RationalFunction> rational_fun;
-  rational_fun.reserve(link_polytope.vertices.cols());
+  rational_fun.reserve(link_polytope.p_BV().cols());
   const symbolic::Monomial monomial_one{};
   Vector3<symbolic::Polynomial> a_A_poly;
   for (int i = 0; i < 3; ++i) {
     a_A_poly(i) = symbolic::Polynomial({{monomial_one, a_A(i)}});
   }
-  for (int i = 0; i < link_polytope.vertices.cols(); ++i) {
+  for (int i = 0; i < link_polytope.p_BV().cols(); ++i) {
     // Step 2: Compute vertex position.
     const Vector3<symbolic::Polynomial> p_AVi =
-        X_AB.p_AB + X_AB.R_AB * link_polytope.vertices.col(i);
+        X_AB.p_AB + X_AB.R_AB * link_polytope.p_BV().col(i);
 
     // Step 3: Compute a_A.dot(p_AVi - p_AC)
     const symbolic::Polynomial point_on_hyperplane_side =

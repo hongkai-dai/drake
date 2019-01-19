@@ -2,7 +2,7 @@
 
 namespace drake {
 namespace multibody {
-ConvexPolytope::ConvexPolytope(int body_index,
+ConvexPolytope::ConvexPolytope(BodyIndex body_index,
                                const Eigen::Ref<const Eigen::Matrix3Xd>& p_BV)
     : ConvexGeometry(ConvexGeometryType::kPolytope, body_index), p_BV_{p_BV} {}
 
@@ -34,7 +34,7 @@ void ConvexPolytope::AddPointInsideGeometryConstraint(
                                     w);
 }
 
-Cylinder::Cylinder(int body_index,
+Cylinder::Cylinder(BodyIndex body_index,
                    const Eigen::Ref<const Eigen::Vector3d>& p_BO,
                    const Eigen::Ref<const Eigen::Vector3d>& a_B, double radius)
     : ConvexGeometry(ConvexGeometryType::kCylinder, body_index),

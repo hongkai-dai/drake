@@ -54,16 +54,16 @@ void AddNonnegativeConstraintForPolytopeOnOneSideOfPlane(
 int DoMain() {
   auto plant = ConstructIiwaPlant("iiwa14_no_collision.sdf");
 
-  const std::vector<ConfigurationSpaceCollisionFreeRegion::Polytope>
-      link_polytopes = GenerateIiwaLinkPolytopes(*plant);
-  DRAKE_DEMAND(link_polytopes[0].body_index ==
+  const std::vector<ConvexPolytope> link_polytopes =
+      GenerateIiwaLinkPolytopes(*plant);
+  DRAKE_DEMAND(link_polytopes[0].body_index() ==
                plant->GetBodyByName("iiwa_link_7").index());
 
   Eigen::Isometry3d box0_pose = Eigen::Isometry3d::Identity();
   box0_pose.translation() << -0.5, 0, 0.5;
   Eigen::Isometry3d box1_pose = Eigen::Isometry3d::Identity();
   box1_pose.translation() << 0.5, 0, 0.5;
-  std::vector<ConfigurationSpaceCollisionFreeRegion::Polytope> obstacle_boxes;
+  std::vector<ConvexPolytope> obstacle_boxes;
   const BodyIndex world = plant->world_body().index();
   obstacle_boxes.emplace_back(
       world, GenerateBoxVertices(Eigen::Vector3d(0.4, 0.6, 1), box0_pose));

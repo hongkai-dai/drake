@@ -3,6 +3,7 @@
 #include <string>
 
 #include "drake/common/drake_copyable.h"
+#include "drake/multibody/rational_forward_kinematics/convex_geometry.h"
 #include "drake/multibody/rational_forward_kinematics/rational_forward_kinematics.h"
 #include "drake/solvers/mathematical_program.h"
 
@@ -22,16 +23,6 @@ class ConfigurationSpaceCollisionFreeRegion {
  public:
   DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(ConfigurationSpaceCollisionFreeRegion)
 
-  struct Polytope {
-    Polytope(BodyIndex m_body_index,
-             const Eigen::Ref<const Eigen::Matrix3Xd>& m_vertices)
-        : body_index{m_body_index}, vertices{m_vertices} {
-      DRAKE_ASSERT(vertices.cols() > 0);
-    }
-    BodyIndex body_index;
-    Eigen::Matrix3Xd vertices;
-  };
-
   /**
    * Verify the collision free configuration space for the given robot. The
    * geometry of each robot link is represented as a union of polytopes. The
@@ -39,16 +30,16 @@ class ConfigurationSpaceCollisionFreeRegion {
    */
   ConfigurationSpaceCollisionFreeRegion(
       const MultibodyPlant<double>& plant,
-      const std::vector<Polytope>& link_polytopes,
-      const std::vector<Polytope>& obstacles);
+      const std::vector<ConvexPolytope>& link_polytopes,
+      const std::vector<ConvexPolytope>& obstacles);
 
   const RationalForwardKinematics& rational_forward_kinematics() const {
     return rational_forward_kinematics_;
   }
 
-  const std::vector<Polytope>& obstacles() const { return obstacles_; }
+  const std::vector<ConvexPolytope>& obstacles() const { return obstacles_; }
 
-  const std::vector<std::vector<Polytope>>& link_polytopes() const {
+  const std::vector<std::vector<ConvexPolytope>>& link_polytopes() const {
     return link_polytopes_;
   }
 
@@ -196,9 +187,9 @@ class ConfigurationSpaceCollisionFreeRegion {
 
   RationalForwardKinematics rational_forward_kinematics_;
   // link_polytopes_[i] contains all the polytopes fixed to the i'th link
-  std::vector<std::vector<Polytope>> link_polytopes_;
+  std::vector<std::vector<ConvexPolytope>> link_polytopes_;
   // obstacles_[i] is the i'th polytope, fixed to the world.
-  std::vector<Polytope> obstacles_;
+  std::vector<ConvexPolytope> obstacles_;
   // We need a point p inside the obstacle to parameterize the hyperplane {x:
   // aᵀ(x-p) = 1}. We choose the average of all the vertices as this point, and
   // call it the obstacle center.
@@ -244,7 +235,7 @@ enum class PlaneSide {
 std::vector<symbolic::RationalFunction>
 GenerateLinkOnOneSideOfPlaneRationalFunction(
     const RationalForwardKinematics& rational_forward_kinematics,
-    const ConfigurationSpaceCollisionFreeRegion::Polytope& link_polytope,
+    const ConvexPolytope& link_polytope,
     const Eigen::Ref<const Eigen::VectorXd>& q_star,
     BodyIndex expressed_body_index,
     const Eigen::Ref<const Vector3<symbolic::Variable>>& a_A,

@@ -9,48 +9,6 @@
 
 namespace drake {
 namespace multibody {
-// Impose the constraint that
-// l_lower(t) >= 0
-// l_upper(t) >= 0
-// p(t) - l_lower(t) * (t - t_lower) - l_upper(t) (t_upper - t) >= 0
-// where p(t) is the numerator of @p polytope_on_one_side_rational
-void AddNonnegativeConstraintForPolytopeOnOneSideOfPlane(
-    solvers::MathematicalProgram* prog,
-    const symbolic::RationalFunction& polytope_on_one_side_rational,
-    const Eigen::Ref<const VectorX<symbolic::Polynomial>>& t_minus_t_lower,
-    const Eigen::Ref<const VectorX<symbolic::Polynomial>>& t_upper_minus_t,
-    const Eigen::Ref<const VectorX<symbolic::Monomial>>& monomial_basis) {
-  DRAKE_DEMAND(t_minus_t_lower.size() == t_upper_minus_t.size());
-  symbolic::Polynomial verified_polynomial =
-      polytope_on_one_side_rational.numerator();
-  for (int i = 0; i < t_minus_t_lower.size(); ++i) {
-    const auto l_lower =
-        prog->NewNonnegativePolynomial(
-                monomial_basis,
-                solvers::MathematicalProgram::NonnegativePolynomial::kSos)
-            .first;
-    const auto l_upper =
-        prog->NewNonnegativePolynomial(
-                monomial_basis,
-                solvers::MathematicalProgram::NonnegativePolynomial::kSos)
-            .first;
-    verified_polynomial -= l_lower * t_minus_t_lower(i);
-    verified_polynomial -= l_upper * t_upper_minus_t(i);
-  }
-  // Replace the following lines with prog->AddSosConstraint when we resolve the
-  // speed issue.
-  const symbolic::Polynomial verified_polynomial_expected =
-      prog->NewNonnegativePolynomial(
-              monomial_basis,
-              solvers::MathematicalProgram::NonnegativePolynomial::kSos)
-          .first;
-  const symbolic::Polynomial poly_diff{verified_polynomial -
-                                       verified_polynomial_expected};
-  for (const auto& item : poly_diff.monomial_to_coefficient_map()) {
-    prog->AddLinearEqualityConstraint(item.second, 0);
-  }
-}
-
 int DoMain() {
   auto plant = ConstructIiwaPlant("iiwa14_no_collision.sdf");
 
@@ -59,6 +17,7 @@ int DoMain() {
   DRAKE_DEMAND(link_polytopes[0].body_index() ==
                plant->GetBodyByName("iiwa_link_7").index());
 
+  // Add obstacles (two boxes) to the world.
   Eigen::Isometry3d box0_pose = Eigen::Isometry3d::Identity();
   box0_pose.translation() << -0.5, 0, 0.5;
   Eigen::Isometry3d box1_pose = Eigen::Isometry3d::Identity();
@@ -108,6 +67,7 @@ int DoMain() {
         symbolic::Polynomial({{monomial_one, t_upper(i)}, {ti_monomial, -1}});
   }
 
+  const BodyIndex expressed_body_index = iiwa_link_3;
   const VectorX<symbolic::Monomial> link3_to_7_monomial_basis =
       GenerateMonomialBasisWithOrderUpToOne(symbolic::Variables{
           rational_forward_kinematics.FindTOnPath(iiwa_link_3, iiwa_link_7)});
@@ -115,40 +75,44 @@ int DoMain() {
       GenerateMonomialBasisWithOrderUpToOne(symbolic::Variables{
           rational_forward_kinematics.FindTOnPath(world, iiwa_link_3)});
 
-  std::vector<symbolic::RationalFunction> link7_on_positive_side_a0_rational =
-      GenerateLinkOnOneSideOfPlaneRationalFunction(
-          rational_forward_kinematics, link_polytopes[0], q_star, iiwa_link_3,
-          a0, p_3C0_star, PlaneSide::kPositive);
+  const std::vector<symbolic::RationalFunction>
+      link7_on_positive_side_a0_rational =
+          GenerateLinkOnOneSideOfPlaneRationalFunction(
+              rational_forward_kinematics, link_polytopes[0], q_star,
+              expressed_body_index, a0, p_3C0_star, PlaneSide::kPositive);
   for (const auto& rational : link7_on_positive_side_a0_rational) {
     AddNonnegativeConstraintForPolytopeOnOneSideOfPlane(
         &prog, rational, t_minus_t_lower.tail<4>(), t_upper_minus_t.tail<4>(),
         link3_to_7_monomial_basis);
   }
 
-  std::vector<symbolic::RationalFunction> box0_on_negative_side_a0_rational =
-      GenerateLinkOnOneSideOfPlaneRationalFunction(
-          rational_forward_kinematics, obstacle_boxes[0], q_star, iiwa_link_3,
-          a0, p_3C0_star, PlaneSide::kNegative);
+  const std::vector<symbolic::RationalFunction>
+      box0_on_negative_side_a0_rational =
+          GenerateLinkOnOneSideOfPlaneRationalFunction(
+              rational_forward_kinematics, obstacle_boxes[0], q_star,
+              expressed_body_index, a0, p_3C0_star, PlaneSide::kNegative);
   for (const auto& rational : box0_on_negative_side_a0_rational) {
     AddNonnegativeConstraintForPolytopeOnOneSideOfPlane(
         &prog, rational, t_minus_t_lower.head<3>(), t_upper_minus_t.head<3>(),
         world_to_link3_monomial_basis);
   }
 
-  std::vector<symbolic::RationalFunction> link7_on_positive_side_a1_rational =
-      GenerateLinkOnOneSideOfPlaneRationalFunction(
-          rational_forward_kinematics, link_polytopes[0], q_star, iiwa_link_3,
-          a1, p_3C1_star, PlaneSide::kPositive);
+  const std::vector<symbolic::RationalFunction>
+      link7_on_positive_side_a1_rational =
+          GenerateLinkOnOneSideOfPlaneRationalFunction(
+              rational_forward_kinematics, link_polytopes[0], q_star,
+              expressed_body_index, a1, p_3C1_star, PlaneSide::kPositive);
   for (const auto& rational : link7_on_positive_side_a1_rational) {
     AddNonnegativeConstraintForPolytopeOnOneSideOfPlane(
         &prog, rational, t_minus_t_lower.tail<4>(), t_upper_minus_t.tail<4>(),
         link3_to_7_monomial_basis);
   }
 
-  std::vector<symbolic::RationalFunction> box1_on_negative_side_a1_rational =
-      GenerateLinkOnOneSideOfPlaneRationalFunction(
-          rational_forward_kinematics, obstacle_boxes[1], q_star, iiwa_link_3,
-          a1, p_3C1_star, PlaneSide::kNegative);
+  const std::vector<symbolic::RationalFunction>
+      box1_on_negative_side_a1_rational =
+          GenerateLinkOnOneSideOfPlaneRationalFunction(
+              rational_forward_kinematics, obstacle_boxes[1], q_star,
+              expressed_body_index, a1, p_3C1_star, PlaneSide::kNegative);
   for (const auto& rational : box1_on_negative_side_a1_rational) {
     AddNonnegativeConstraintForPolytopeOnOneSideOfPlane(
         &prog, rational, t_minus_t_lower.head<3>(), t_upper_minus_t.head<3>(),

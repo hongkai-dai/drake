@@ -1,3 +1,6 @@
+#pragma once
+
+#include "drake/multibody/rational_forward_kinematics/plane_side.h"
 #include "drake/multibody/tree/multibody_tree_indexes.h"
 #include "drake/solvers/mathematical_program.h"
 
@@ -17,8 +20,8 @@ class ConvexGeometry {
 
   virtual ~ConvexGeometry() {}
 
-  /** Add the constraint that the geometry is in the inner side of the halfspace
-   * nᵀ(x-c) ≤ 1. Namely nᵀ(x-c) ≤ 1 ∀ x within the convex geometry.
+  /** Add the constraint that the geometry is on one side of the plane
+   * nᵀ(x-c) = 1. Namely nᵀ(x-c) ≤ 1 ∀ x within the convex geometry.
    * Here we assume that n is expressed in the same body frame as the geometry.
    */
   virtual void AddInsideHalfspaceConstraint(
@@ -37,6 +40,8 @@ class ConvexGeometry {
       const Eigen::Isometry3d& X_AB,
       const Eigen::Ref<const Vector3<symbolic::Variable>>& p_AQ,
       solvers::MathematicalProgram* prog) const = 0;
+
+  virtual const Eigen::Vector3d& p_BC() const = 0;
 
  protected:
   ConvexGeometry(ConvexGeometryType type, BodyIndex body_index)
@@ -65,9 +70,13 @@ class ConvexPolytope : public ConvexGeometry {
       const Eigen::Ref<const Vector3<symbolic::Variable>>& p_AQ,
       solvers::MathematicalProgram* prog) const override;
 
+  const Eigen::Vector3d& p_BC() const override { return p_BC_; }
+
  private:
   // position of all vertices V in the body frame B.
   const Eigen::Matrix3Xd p_BV_;
+  // The position of the geometry center in the body frame.
+  Eigen::Vector3d p_BC_;
 };
 
 class Cylinder : public ConvexGeometry {
@@ -96,6 +105,8 @@ class Cylinder : public ConvexGeometry {
   const Eigen::Vector3d& a_B() const { return a_B_; }
 
   double radius() const { return radius_; }
+
+  const Eigen::Vector3d& p_BC() const override { return p_BO_; }
 
  private:
   // The position of the cylinder center O in the body frame B.

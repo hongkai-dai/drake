@@ -4,7 +4,9 @@ namespace drake {
 namespace multibody {
 ConvexPolytope::ConvexPolytope(BodyIndex body_index,
                                const Eigen::Ref<const Eigen::Matrix3Xd>& p_BV)
-    : ConvexGeometry(ConvexGeometryType::kPolytope, body_index), p_BV_{p_BV} {}
+    : ConvexGeometry(ConvexGeometryType::kPolytope, body_index),
+      p_BV_{p_BV},
+      p_BC_{p_BV_.rowwise().sum() / p_BV_.cols()} {}
 
 // All vertices should satisfy the constraint aᵀ(vᵢ-c) ≤ 1 ∀ i
 void ConvexPolytope::AddInsideHalfspaceConstraint(

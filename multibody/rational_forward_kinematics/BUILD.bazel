@@ -49,6 +49,7 @@ drake_cc_library(
     deps = [
         ":convex_geometry",
         ":generate_monomial_basis_util",
+        ":plane_side",
         ":rational_forward_kinematics",
         "//solvers:mathematical_program",
     ],
@@ -59,9 +60,17 @@ drake_cc_library(
     srcs = ["convex_geometry.cc"],
     hdrs = ["convex_geometry.h"],
     deps = [
+        ":plane_side",
         "//solvers:mathematical_program",
         "//multibody/tree:tree",
     ],
+)
+
+drake_cc_library(
+    name = "plane_side",
+    srcs = ["plane_side.cc"],
+    hdrs = ["plane_side.h"],
+    deps = [],
 )
 
 drake_cc_library(

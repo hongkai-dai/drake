@@ -2,8 +2,22 @@
 
 #include <gtest/gtest.h>
 
+#include "drake/common/test_utilities/eigen_matrix_compare.h"
+
 namespace drake {
 namespace multibody {
+GTEST_TEST(PolytopeTest, Test) {
+  // A tetrahedron.
+  Eigen::Matrix<double, 3, 4> p_BV;
+  // clang-format off
+  p_BV << 1, -1, 0, 0,
+          0, 0, 1, 0,
+          0, 0, 0, 1;
+  // clang-format on
+  ConvexPolytope polytope(BodyIndex{0}, p_BV);
+  EXPECT_TRUE(CompareMatrices(polytope.p_BC(), Eigen::Vector3d(0, 0.25, 0.25)));
+}
+
 template <typename C>
 bool CheckSatisfied(const solvers::Binding<C>& constraint,
                     const Eigen::Ref<const Eigen::VectorXd>& x, double tol) {

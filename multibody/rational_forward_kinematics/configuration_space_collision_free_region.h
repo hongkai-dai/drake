@@ -4,6 +4,7 @@
 
 #include "drake/common/drake_copyable.h"
 #include "drake/multibody/rational_forward_kinematics/convex_geometry.h"
+#include "drake/multibody/rational_forward_kinematics/plane_side.h"
 #include "drake/multibody/rational_forward_kinematics/rational_forward_kinematics.h"
 #include "drake/solvers/mathematical_program.h"
 
@@ -202,15 +203,6 @@ class ConfigurationSpaceCollisionFreeRegion {
       a_hyperplane_;
 };
 
-/** For a plane aᵀx = b, we denote the side {x | aᵀx ≥ b} as "positive" side of
- * the plane, as it is on the same direction of the plane normal vector a. The
- * side { x |aᵀx ≤ b} as the "negative" side of the plane.
- */
-enum class PlaneSide {
-  kPositive,
-  kNegative,
-};
-
 /**
  * Generate the rational functions a_A.dot(p_AVi(t) - p_AC) <= 1 (or >= 1) which
  * represents that the link (whose vertex Vi has position p_AVi in frame A) is
@@ -240,5 +232,53 @@ GenerateLinkOnOneSideOfPlaneRationalFunction(
     BodyIndex expressed_body_index,
     const Eigen::Ref<const Vector3<symbolic::Variable>>& a_A,
     const Eigen::Ref<const Eigen::Vector3d>& p_AC, PlaneSide plane_side);
+
+/**
+ * Overloaded GenerateLinkOnOnseSideOfPlaneRationalFunction, except X_AB, i.e.,
+ * the pose of the link polytope in the expressed_frame is given.
+ * @param X_AB_multilinear The pose of the link polytope frame B in the
+ * expressed body frame A. Note that this pose is a multilinear function of
+ * sinθ and cosθ.
+ */
+std::vector<symbolic::RationalFunction>
+GenerateLinkOnOneSideOfPlaneRationalFunction(
+    const RationalForwardKinematics& rational_forward_kinematics,
+    const ConvexPolytope& link_polytope,
+    const RationalForwardKinematics::Pose<symbolic::Polynomial>&
+        X_AB_multilinear,
+    const Eigen::Ref<const Vector3<symbolic::Variable>>& a_A,
+    const Eigen::Ref<const Eigen::Vector3d>& p_AC, PlaneSide plane_side);
+
+/** We need to verify that these polynomials are non-negative
+ * Lagrangians l_lower(t) >= 0, l_upper(t) >= 0
+ * Link polynomial p(t) - l_lower(t) * (t - t_lower) - l_upper(t)(t_upper_t) >=
+ * 0
+ */
+struct VerificationOption {
+  VerificationOption()
+      : link_polynomial_type{solvers::MathematicalProgram::
+                                 NonnegativePolynomial::kSos},
+        lagrangian_type{
+            solvers::MathematicalProgram::NonnegativePolynomial::kSos} {}
+
+  solvers::MathematicalProgram::NonnegativePolynomial link_polynomial_type;
+  solvers::MathematicalProgram::NonnegativePolynomial lagrangian_type;
+};
+
+/** Impose the constraint that
+ * l_lower(t) >= 0                                                         (1)
+ * l_upper(t) >= 0                                                         (2)
+ * p(t) - l_lower(t) * (t - t_lower) - l_upper(t) (t_upper - t) >= 0       (3)
+ * where p(t) is the numerator of @p polytope_on_one_side_rational
+ * @param monomial_basis The basis for the monomial of p(t), l_lower(t),
+ * l_upper(t) and the polynomial (3) above.
+ */
+void AddNonnegativeConstraintForPolytopeOnOneSideOfPlane(
+    solvers::MathematicalProgram* prog,
+    const symbolic::RationalFunction& polytope_on_one_side_rational,
+    const Eigen::Ref<const VectorX<symbolic::Polynomial>>& t_minus_t_lower,
+    const Eigen::Ref<const VectorX<symbolic::Polynomial>>& t_upper_minus_t,
+    const Eigen::Ref<const VectorX<symbolic::Monomial>>& monomial_basis,
+    const VerificationOption& verification_option = {});
 }  // namespace multibody
 }  // namespace drake

@@ -353,18 +353,23 @@ GenerateLinkOnOneSideOfPlaneRationalFunction(
     BodyIndex expressed_body_index,
     const Eigen::Ref<const Vector3<symbolic::Variable>>& a_A,
     const Eigen::Ref<const Eigen::Vector3d>& p_AC, PlaneSide plane_side) {
-  // Steps:
-  // 1. Compute the pose of the link as a multilinear function.
-  // 2. Compute the vertices position p_AVi as a multilinear function.
-  // 3. Compute a_A.dot(p_AVi - p_AC)
-  // 4. Convert a_A.dot(p_AVi - p_AC) - 1 or 1 - a_A.dot(p_AVi - p_AC) as a
-  // rational function of t
-
-  // Step 1: Compute the link pose
+  // Compute the link pose
   const auto X_AB =
       rational_forward_kinematics.CalcLinkPoseAsMultilinearPolynomial(
           q_star, link_polytope.body_index(), expressed_body_index);
 
+  return GenerateLinkOnOneSideOfPlaneRationalFunction(
+      rational_forward_kinematics, link_polytope, X_AB, a_A, p_AC, plane_side);
+}
+
+std::vector<symbolic::RationalFunction>
+GenerateLinkOnOneSideOfPlaneRationalFunction(
+    const RationalForwardKinematics& rational_forward_kinematics,
+    const ConvexPolytope& link_polytope,
+    const RationalForwardKinematics::Pose<symbolic::Polynomial>&
+        X_AB_multilinear,
+    const Eigen::Ref<const Vector3<symbolic::Variable>>& a_A,
+    const Eigen::Ref<const Eigen::Vector3d>& p_AC, PlaneSide plane_side) {
   std::vector<symbolic::RationalFunction> rational_fun;
   rational_fun.reserve(link_polytope.p_BV().cols());
   const symbolic::Monomial monomial_one{};
@@ -373,15 +378,16 @@ GenerateLinkOnOneSideOfPlaneRationalFunction(
     a_A_poly(i) = symbolic::Polynomial({{monomial_one, a_A(i)}});
   }
   for (int i = 0; i < link_polytope.p_BV().cols(); ++i) {
-    // Step 2: Compute vertex position.
+    // Step 1: Compute vertex position.
     const Vector3<symbolic::Polynomial> p_AVi =
-        X_AB.p_AB + X_AB.R_AB * link_polytope.p_BV().col(i);
+        X_AB_multilinear.p_AB +
+        X_AB_multilinear.R_AB * link_polytope.p_BV().col(i);
 
-    // Step 3: Compute a_A.dot(p_AVi - p_AC)
+    // Step 2: Compute a_A.dot(p_AVi - p_AC)
     const symbolic::Polynomial point_on_hyperplane_side =
         a_A_poly.dot(p_AVi - p_AC);
 
-    // Step 4: Convert the multilinear polynomial to rational function.
+    // Step 3: Convert the multilinear polynomial to rational function.
     if (plane_side == PlaneSide::kPositive) {
       rational_fun.push_back(
           rational_forward_kinematics
@@ -395,6 +401,41 @@ GenerateLinkOnOneSideOfPlaneRationalFunction(
     }
   }
   return rational_fun;
+}
+
+void AddNonnegativeConstraintForPolytopeOnOneSideOfPlane(
+    solvers::MathematicalProgram* prog,
+    const symbolic::RationalFunction& polytope_on_one_side_rational,
+    const Eigen::Ref<const VectorX<symbolic::Polynomial>>& t_minus_t_lower,
+    const Eigen::Ref<const VectorX<symbolic::Polynomial>>& t_upper_minus_t,
+    const Eigen::Ref<const VectorX<symbolic::Monomial>>& monomial_basis,
+    const VerificationOption& verification_option) {
+  DRAKE_DEMAND(t_minus_t_lower.size() == t_upper_minus_t.size());
+  symbolic::Polynomial verified_polynomial =
+      polytope_on_one_side_rational.numerator();
+  for (int i = 0; i < t_minus_t_lower.size(); ++i) {
+    const auto l_lower =
+        prog->NewNonnegativePolynomial(monomial_basis,
+                                       verification_option.lagrangian_type)
+            .first;
+    const auto l_upper =
+        prog->NewNonnegativePolynomial(monomial_basis,
+                                       verification_option.lagrangian_type)
+            .first;
+    verified_polynomial -= l_lower * t_minus_t_lower(i);
+    verified_polynomial -= l_upper * t_upper_minus_t(i);
+  }
+  // Replace the following lines with prog->AddSosConstraint when we resolve the
+  // speed issue.
+  const symbolic::Polynomial verified_polynomial_expected =
+      prog->NewNonnegativePolynomial(monomial_basis,
+                                     verification_option.link_polynomial_type)
+          .first;
+  const symbolic::Polynomial poly_diff{verified_polynomial -
+                                       verified_polynomial_expected};
+  for (const auto& item : poly_diff.monomial_to_coefficient_map()) {
+    prog->AddLinearEqualityConstraint(item.second, 0);
+  }
 }
 }  // namespace multibody
 }  // namespace drake

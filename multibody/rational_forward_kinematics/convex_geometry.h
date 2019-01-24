@@ -14,6 +14,8 @@ enum class ConvexGeometryType {
 
 class ConvexGeometry {
  public:
+  typedef size_t Id;
+
   ConvexGeometryType type() const { return type_; }
 
   BodyIndex body_index() const { return body_index_; }
@@ -43,14 +45,17 @@ class ConvexGeometry {
 
   virtual const Eigen::Vector3d& p_BC() const = 0;
 
+  Id get_id() const { return id_; }
+
  protected:
-  ConvexGeometry(ConvexGeometryType type, BodyIndex body_index)
-      : type_{type}, body_index_{body_index} {}
+  ConvexGeometry(ConvexGeometryType type, BodyIndex body_index);
 
  private:
+  static Id get_next_id();
   const ConvexGeometryType type_;
   // The index of the body that this geometry is attached to.
   const BodyIndex body_index_;
+  const Id id_;
 };
 
 class ConvexPolytope : public ConvexGeometry {

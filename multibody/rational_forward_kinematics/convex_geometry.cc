@@ -1,7 +1,21 @@
 #include "drake/multibody/rational_forward_kinematics/convex_geometry.h"
 
+#include <atomic>
+
+#include "drake/common/never_destroyed.h"
+
+using std::atomic;
+
 namespace drake {
 namespace multibody {
+ConvexGeometry::Id ConvexGeometry::get_next_id() {
+  static never_destroyed<atomic<ConvexGeometry::Id>> next_id(1);
+  return next_id.access()++;
+}
+
+ConvexGeometry::ConvexGeometry(ConvexGeometryType type, BodyIndex body_index)
+    : type_{type}, body_index_{body_index}, id_{get_next_id()} {}
+
 ConvexPolytope::ConvexPolytope(BodyIndex body_index,
                                const Eigen::Ref<const Eigen::Matrix3Xd>& p_BV)
     : ConvexGeometry(ConvexGeometryType::kPolytope, body_index),

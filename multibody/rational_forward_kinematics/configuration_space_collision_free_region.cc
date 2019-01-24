@@ -1,11 +1,61 @@
 #include "drake/multibody/rational_forward_kinematics/configuration_space_collision_free_region.h"
 
 #include "drake/multibody/rational_forward_kinematics/generate_monomial_basis_util.h"
+#include "drake/multibody/rational_forward_kinematics/rational_forward_kinematics_internal.h"
 
 namespace drake {
 namespace multibody {
 using symbolic::RationalFunction;
 
+ConfigurationSpaceCollisionFreeRegion::ConfigurationSpaceCollisionFreeRegion(
+    const MultibodyPlant<double>& plant,
+    const std::vector<ConvexPolytope>& link_polytopes,
+    const std::vector<ConvexPolytope>& obstacles,
+    const std::unordered_set<std::pair<ConvexGeometry::Id, ConvexGeometry::Id>,
+                             GeometryIdPairHash>& filtered_collision_pairs)
+    : rational_forward_kinematics_(plant), obstacles_{obstacles} {
+  // First group the link polytopes by the attached link.
+  for (const auto& link_polytope : link_polytopes) {
+    DRAKE_DEMAND(link_polytope.body_index() != plant.world_body().index());
+    const auto it = link_polytopes_.find(link_polytope.body_index());
+    if (it == link_polytopes_.end()) {
+      link_polytopes_.emplace_hint(
+          it, std::make_pair(link_polytope.body_index(),
+                             std::vector<ConvexPolytope>({link_polytope})));
+    } else {
+      it->second.push_back(link_polytope);
+    }
+  }
+  // Now create the separation planes.
+  // By default, we only consider the pairs between a link polytope and a world
+  // obstacle.
+  separation_planes_.reserve(link_polytopes.size() * obstacles.size());
+  for (const ConvexPolytope& obstacle : obstacles_) {
+    DRAKE_DEMAND(obstacle.body_index() == plant.world_body().index());
+    for (const auto& link_polytope_pairs : link_polytopes_) {
+      for (const ConvexPolytope& link_polytope : link_polytope_pairs.second) {
+        if (filtered_collision_pairs.count(std::make_pair(
+                obstacle.get_id(), link_polytope.get_id())) == 0 &&
+            filtered_collision_pairs.count(std::make_pair(
+                link_polytope.get_id(), obstacle.get_id())) == 0) {
+          Vector3<symbolic::Variable> a;
+          for (int i = 0; i < 3; ++i) {
+            a(i) = symbolic::Variable(
+                "a" + std::to_string(separation_planes_.size() * 3 + i));
+          }
+          // Expressed body is the middle link in the chain from the world to
+          // the link_polytope.
+          separation_planes_.emplace_back(
+              a, &link_polytope, &obstacle,
+              internal::FindBodyInTheMiddleOfChain(plant, obstacle.body_index(),
+                                                   link_polytope.body_index()));
+        }
+      }
+    }
+  }
+}
+
+/*
 ConfigurationSpaceCollisionFreeRegion::ConfigurationSpaceCollisionFreeRegion(
     const MultibodyPlant<double>& plant,
     const std::vector<ConvexPolytope>& link_polytopes,
@@ -27,7 +77,8 @@ ConfigurationSpaceCollisionFreeRegion::ConfigurationSpaceCollisionFreeRegion(
     link_polytopes_[link_polytope.body_index()].push_back(link_polytope);
   }
   for (int i = 1; i < num_links; ++i) {
-    const int num_link_polytopes = static_cast<int>(link_polytopes_[i].size());
+    const int num_link_polytopes =
+static_cast<int>(link_polytopes_[i].size());
     a_hyperplane_[i].resize(num_link_polytopes);
     for (int j = 0; j < num_link_polytopes; ++j) {
       a_hyperplane_[i][j].resize(num_obstacles);
@@ -48,7 +99,8 @@ ConfigurationSpaceCollisionFreeRegion::ConfigurationSpaceCollisionFreeRegion(
   }
 }
 
-std::vector<symbolic::RationalFunction> ConfigurationSpaceCollisionFreeRegion::
+std::vector<symbolic::RationalFunction>
+ConfigurationSpaceCollisionFreeRegion::
     GenerateLinkOutsideHalfspaceRationalFunction(
         const Eigen::VectorXd& q_star) const {
   const std::vector<RationalForwardKinematics::Pose<symbolic::Polynomial>>
@@ -57,7 +109,8 @@ std::vector<symbolic::RationalFunction> ConfigurationSpaceCollisionFreeRegion::
               q_star, BodyIndex{0});
   std::vector<symbolic::RationalFunction> collision_free_rationals;
   const symbolic::Monomial monomial_one{};
-  for (int i = 1; i < rational_forward_kinematics_.plant().num_bodies(); ++i) {
+  for (int i = 1; i < rational_forward_kinematics_.plant().num_bodies();
+++i) {
     for (int j = 0; j < static_cast<int>(link_polytopes_[i].size()); ++j) {
       const int num_polytope_vertices = link_polytopes_[i][j].p_BV().cols();
       Matrix3X<symbolic::Polynomial> p_WV(3, num_polytope_vertices);
@@ -68,11 +121,14 @@ std::vector<symbolic::RationalFunction> ConfigurationSpaceCollisionFreeRegion::
       }
       for (int k = 0; k < static_cast<int>(obstacles_.size()); ++k) {
         // For each pair of link polytope and obstacle polytope, we need to
-        // impose the constraint that all vertices of the link polytope are on
+        // impose the constraint that all vertices of the link polytope are
+on
         // the "outer" side of the hyperplane. So each vertex of the link
-        // polytope will introduce one polynomial. Likewise, we will impose the
+        // polytope will introduce one polynomial. Likewise, we will impose
+the
         // constraint that each vertex of the obstacle polytope is in the
-        // "inner" side of the hyperplane. This will be some linear constraints
+        // "inner" side of the hyperplane. This will be some linear
+constraints
         // on the hyperplane parameter a.
         // We want to impose the constraint a_hyperplane[i][j]k]ᵀ (p_WV -
         // p_WB_center) >= 1
@@ -114,7 +170,8 @@ ConfigurationSpaceCollisionFreeRegion::GenerateLinkOutsideHalfspacePolynomials(
 std::vector<symbolic::Expression> ConfigurationSpaceCollisionFreeRegion::
     GenerateObstacleInsideHalfspaceExpression() const {
   std::vector<symbolic::Expression> exprs;
-  for (int i = 1; i < rational_forward_kinematics_.plant().num_bodies(); ++i) {
+  for (int i = 1; i < rational_forward_kinematics_.plant().num_bodies();
+++i) {
     for (int j = 0; j < static_cast<int>(link_polytopes_[i].size()); ++j) {
       for (int k = 0; k < static_cast<int>(obstacles_.size()); ++k) {
         for (int l = 0; l < obstacles_[k].p_BV().cols(); ++l) {
@@ -142,7 +199,8 @@ void ConfigurationSpaceCollisionFreeRegion::
   // The separating hyperplanes are the decision variables.
   for (int i = 1; i < static_cast<int>(a_hyperplane_.size()); ++i) {
     for (int j = 0; j < static_cast<int>(a_hyperplane_[i].size()); ++j) {
-      for (int k = 0; k < static_cast<int>(a_hyperplane_[i][j].size()); ++k) {
+      for (int k = 0; k < static_cast<int>(a_hyperplane_[i][j].size()); ++k)
+{
         prog->AddDecisionVariables(a_hyperplane_[i][j][k]);
       }
     }
@@ -173,10 +231,14 @@ void ConfigurationSpaceCollisionFreeRegion::
       GenerateLinkOutsideHalfspacePolynomials(q_star);
   const symbolic::Monomial monomial_one{};
   using MonomialBasis = VectorX<symbolic::Monomial>;
-  // For each variables t, we need two monomial basis. The first one is for the
-  // Lagrangian multiplier, which contains all monomials of form ∏tᵢⁿⁱ, where
-  // nᵢ <= 1. The second one is for the verified polynomial with the lagrangian
-  // multiplier, containing all monomials of order all up to 1, except one may
+  // For each variables t, we need two monomial basis. The first one is for
+the
+  // Lagrangian multiplier, which contains all monomials of form ∏tᵢⁿⁱ,
+where
+  // nᵢ <= 1. The second one is for the verified polynomial with the
+lagrangian
+  // multiplier, containing all monomials of order all up to 1, except one
+may
   // up to 2. The value contains (ρ - ∑ᵢ wᵢtᵢ², lagrangian_monomial_basis,
   // link_outside_monomial_basis).
   std::unordered_map<
@@ -193,7 +255,8 @@ void ConfigurationSpaceCollisionFreeRegion::
     MonomialBasis lagrangian_monomial_basis, link_outside_monomial_basis;
     auto it = map_variables_to_indeterminate_bound_and_monomial_basis.find(
         t_indeterminates);
-    if (it == map_variables_to_indeterminate_bound_and_monomial_basis.end()) {
+    if (it == map_variables_to_indeterminate_bound_and_monomial_basis.end())
+{
       // Compute the neighbourhood polynomial ρ - ∑ᵢ wᵢtᵢ².
       symbolic::Polynomial::MapType neighbourhood_poly_map;
       neighbourhood_poly_map.emplace(monomial_one, rho);
@@ -243,14 +306,16 @@ void ConfigurationSpaceCollisionFreeRegion::
     const symbolic::Polynomial diff_poly{
         link_outside_verification_poly -
         link_outside_verification_poly_expected};
-    for (const auto& diff_poly_item : diff_poly.monomial_to_coefficient_map()) {
+    for (const auto& diff_poly_item :
+diff_poly.monomial_to_coefficient_map()) {
       prog->AddLinearEqualityConstraint(diff_poly_item.second == 0);
     }
     std::cout << "Add sos constraint.\n";
   }
 }
 
-std::vector<std::vector<std::pair<symbolic::Polynomial, symbolic::Polynomial>>>
+std::vector<std::vector<std::pair<symbolic::Polynomial,
+symbolic::Polynomial>>>
 ConfigurationSpaceCollisionFreeRegion::
     ConstructProgramToVerifyBoxFreeRegionAroundPosture(
         const Eigen::Ref<const Eigen::VectorXd>& q_star,
@@ -301,7 +366,8 @@ ConfigurationSpaceCollisionFreeRegion::
       lagrangian_monomial_basis = it->second;
     }
 
-    // Computes the sum between lagrangian multipliers and the box condition as
+    // Computes the sum between lagrangian multipliers and the box condition
+as
     // sum (t_upper(j) - t(j)) * l1j(t) + (t(j) - t_lower(j)) * l2j(t)
     symbolic::Polynomial sum_lagrangian_times_condition{};
     for (const auto& ti : t_indeterminates) {
@@ -332,7 +398,8 @@ ConfigurationSpaceCollisionFreeRegion::
 
     const symbolic::Polynomial diff_poly{aggregated_polynomial -
                                          aggregated_polynomial_expected};
-    for (const auto& diff_poly_item : diff_poly.monomial_to_coefficient_map()) {
+    for (const auto& diff_poly_item :
+diff_poly.monomial_to_coefficient_map()) {
       prog->AddLinearEqualityConstraint(diff_poly_item.second == 0);
     }
 
@@ -343,7 +410,7 @@ ConfigurationSpaceCollisionFreeRegion::
   DRAKE_DEMAND(link_outside_halfspace_count ==
                static_cast<int>(links_outside_halfspace.size()));
   return lagrangians_pairs;
-}
+}*/
 
 std::vector<symbolic::RationalFunction>
 GenerateLinkOnOneSideOfPlaneRationalFunction(

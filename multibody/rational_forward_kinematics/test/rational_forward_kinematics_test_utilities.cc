@@ -36,15 +36,16 @@ Eigen::Matrix<double, 3, 8> GenerateBoxVertices(const Eigen::Vector3d& size,
   return vertices;
 }
 
-std::vector<ConvexPolytope> GenerateIiwaLinkPolytopes(
+std::vector<std::shared_ptr<const ConvexPolytope>> GenerateIiwaLinkPolytopes(
     const MultibodyPlant<double>& iiwa) {
-  std::vector<ConvexPolytope> link_polytopes;
+  std::vector<std::shared_ptr<const ConvexPolytope>> link_polytopes;
   const BodyIndex link7_idx = iiwa.GetBodyByName("iiwa_link_7").index();
   Eigen::Isometry3d link7_box_pose = Eigen::Isometry3d::Identity();
   link7_box_pose.translation() << 0, 0, 0.05;
   Eigen::Matrix<double, 3, 8> link7_pts =
       GenerateBoxVertices(Eigen::Vector3d(0.04, 0.14, 0.1), link7_box_pose);
-  link_polytopes.emplace_back(link7_idx, link7_pts);
+  link_polytopes.push_back(
+      std::make_shared<const ConvexPolytope>(link7_idx, link7_pts));
   return link_polytopes;
 }
 

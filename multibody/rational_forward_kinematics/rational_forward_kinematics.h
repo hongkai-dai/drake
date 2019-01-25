@@ -40,7 +40,7 @@ class RationalForwardKinematics {
   struct Pose {
     Vector3<T> p_AB;
     Matrix3<T> R_AB;
-    int frame_A_index;
+    BodyIndex frame_A_index;
   };
 
   struct LinkPoints {

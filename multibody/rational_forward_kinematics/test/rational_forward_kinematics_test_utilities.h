@@ -16,7 +16,7 @@ std::unique_ptr<MultibodyPlant<double>> ConstructIiwaPlant(
 Eigen::Matrix<double, 3, 8> GenerateBoxVertices(const Eigen::Vector3d& size,
                                                 const Eigen::Isometry3d& pose);
 
-std::vector<ConvexPolytope> GenerateIiwaLinkPolytopes(
+std::vector<std::shared_ptr<const ConvexPolytope>> GenerateIiwaLinkPolytopes(
     const MultibodyPlant<double>& iiwa);
 
 std::unique_ptr<MultibodyPlant<double>> ConstructDualArmIiwaPlant(

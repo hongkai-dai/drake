@@ -11,7 +11,7 @@ namespace drake {
 namespace multibody {
 void CheckGenerateLinkOnOneSideOfPlaneRationalFunction(
     const RationalForwardKinematics& rational_forward_kinematics,
-    const ConvexPolytope& link_polytope,
+    const std::shared_ptr<const ConvexPolytope> link_polytope,
     const Eigen::Ref<const Eigen::VectorXd>& q_star,
     const Eigen::Ref<const Eigen::VectorXd>& q_val,
     BodyIndex expressed_body_index,
@@ -23,7 +23,7 @@ void CheckGenerateLinkOnOneSideOfPlaneRationalFunction(
     a_A(i) = symbolic::Variable("a_A(" + std::to_string(i) + ")");
     env.insert(a_A(i), a_A_val(i));
   }
-  const std::vector<symbolic::RationalFunction> rational_fun =
+  const std::vector<LinkVertexOnPlaneSideRational> rational_fun =
       GenerateLinkOnOneSideOfPlaneRationalFunction(
           rational_forward_kinematics, link_polytope, q_star,
           expressed_body_index, a_A, p_AC, plane_side);
@@ -36,29 +36,36 @@ void CheckGenerateLinkOnOneSideOfPlaneRationalFunction(
   // Compute link points position in the expressed body.
   auto context = rational_forward_kinematics.plant().CreateDefaultContext();
   rational_forward_kinematics.plant().SetPositions(context.get(), q_val);
-  Eigen::Matrix3Xd p_AV_expected(3, link_polytope.p_BV().cols());
+  Eigen::Matrix3Xd p_AV_expected(3, link_polytope->p_BV().cols());
   rational_forward_kinematics.plant().CalcPointsPositions(
       *context, rational_forward_kinematics.plant()
-                    .get_body(link_polytope.body_index())
+                    .get_body(link_polytope->body_index())
                     .body_frame(),
-      link_polytope.p_BV(), rational_forward_kinematics.plant()
-                                .get_body(expressed_body_index)
-                                .body_frame(),
+      link_polytope->p_BV(), rational_forward_kinematics.plant()
+                                 .get_body(expressed_body_index)
+                                 .body_frame(),
       &p_AV_expected);
 
   const VectorX<symbolic::Variable> t_on_path =
       rational_forward_kinematics.FindTOnPath(expressed_body_index,
-                                              link_polytope.body_index());
+                                              link_polytope->body_index());
   const symbolic::Variables t_on_path_set(t_on_path);
 
-  EXPECT_EQ(rational_fun.size(), link_polytope.p_BV().cols());
+  EXPECT_EQ(rational_fun.size(), link_polytope->p_BV().cols());
   const double tol{1E-12};
-  for (int i = 0; i < link_polytope.p_BV().cols(); ++i) {
+  for (int i = 0; i < link_polytope->p_BV().cols(); ++i) {
+    EXPECT_EQ(rational_fun[i].link_polytope, link_polytope);
+    EXPECT_EQ(rational_fun[i].expressed_body_index, expressed_body_index);
+    EXPECT_EQ(rational_fun[i].p_BV, link_polytope->p_BV().col(i));
+    EXPECT_EQ(rational_fun[i].a_A, a_A);
+    EXPECT_EQ(rational_fun[i].plane_side, plane_side);
     EXPECT_TRUE(
-        rational_fun[i].numerator().indeterminates().IsSubsetOf(t_on_path_set));
+        rational_fun[i].rational.numerator().indeterminates().IsSubsetOf(
+            t_on_path_set));
     // Check that rational_fun[i] only contains the right t.
-    const double rational_fun_val = rational_fun[i].numerator().Evaluate(env) /
-                                    rational_fun[i].denominator().Evaluate(env);
+    const double rational_fun_val =
+        rational_fun[i].rational.numerator().Evaluate(env) /
+        rational_fun[i].rational.denominator().Evaluate(env);
     const double rational_fun_val_expected =
         plane_side == PlaneSide::kPositive
             ? a_A_val.dot(p_AV_expected.col(i) - p_AC) - 1
@@ -77,7 +84,8 @@ TEST_F(IiwaTest, GenerateLinkOnOneSideOfPlaneRationalFunction1) {
           .toRotationMatrix();
   X_6V.translation() << 0.2, -0.1, 0.3;
   const auto p_6V = GenerateBoxVertices(Eigen::Vector3d(0.1, 0.2, 0.3), X_6V);
-  ConvexPolytope link6_polytope(iiwa_link_[6], p_6V);
+  auto link6_polytope =
+      std::make_shared<const ConvexPolytope>(iiwa_link_[6], p_6V);
 
   Eigen::VectorXd q(7);
   q.setZero();
@@ -106,7 +114,8 @@ TEST_F(IiwaTest, GenerateLinkOnOneSideOfPlaneRationalFunction2) {
           .toRotationMatrix();
   X_3V.translation() << -0.2, -0.1, 0.3;
   const auto p_3V = GenerateBoxVertices(Eigen::Vector3d(0.1, 0.2, 0.3), X_3V);
-  ConvexPolytope link3_polytope(iiwa_link_[3], p_3V);
+  auto link3_polytope =
+      std::make_shared<const ConvexPolytope>(iiwa_link_[3], p_3V);
 
   Eigen::VectorXd q(7);
   q.setZero();
@@ -133,42 +142,42 @@ class IiwaConfigurationSpaceTest : public IiwaTest {
  public:
   IiwaConfigurationSpaceTest() {
     // Arbitrarily add some polytopes to links
-    link7_polytopes_.emplace_back(
+    link7_polytopes_.emplace_back(std::make_shared<const ConvexPolytope>(
         iiwa_link_[7], GenerateBoxVertices(Eigen::Vector3d(0.1, 0.1, 0.2),
-                                           Eigen::Isometry3d::Identity()));
+                                           Eigen::Isometry3d::Identity())));
     Eigen::Isometry3d X_7P;
     X_7P.linear() = Eigen::AngleAxisd(0.2 * M_PI, Eigen::Vector3d::UnitX())
                         .toRotationMatrix();
     X_7P.translation() << 0.1, 0.2, -0.1;
-    link7_polytopes_.emplace_back(
+    link7_polytopes_.emplace_back(std::make_shared<const ConvexPolytope>(
         iiwa_link_[7],
-        GenerateBoxVertices(Eigen::Vector3d(0.1, 0.2, 0.1), X_7P));
+        GenerateBoxVertices(Eigen::Vector3d(0.1, 0.2, 0.1), X_7P)));
 
     Eigen::Isometry3d X_5P = X_7P;
     X_5P.translation() << -0.2, 0.1, 0;
-    link5_polytopes_.emplace_back(
+    link5_polytopes_.emplace_back(std::make_shared<const ConvexPolytope>(
         iiwa_link_[5],
-        GenerateBoxVertices(Eigen::Vector3d(0.2, 0.1, 0.2), X_5P));
+        GenerateBoxVertices(Eigen::Vector3d(0.2, 0.1, 0.2), X_5P)));
 
     Eigen::Isometry3d X_WP = X_5P * Eigen::Translation3d(0.15, -0.1, 0.05);
-    obstacles_.emplace_back(
-        world_, GenerateBoxVertices(Eigen::Vector3d(0.1, 0.2, 0.15), X_WP));
+    obstacles_.emplace_back(std::make_shared<const ConvexPolytope>(
+        world_, GenerateBoxVertices(Eigen::Vector3d(0.1, 0.2, 0.15), X_WP)));
     X_WP = X_WP * Eigen::AngleAxisd(-0.1 * M_PI, Eigen::Vector3d::UnitY());
-    obstacles_.emplace_back(
-        world_, GenerateBoxVertices(Eigen::Vector3d(0.1, 0.25, 0.15), X_WP));
+    obstacles_.emplace_back(std::make_shared<const ConvexPolytope>(
+        world_, GenerateBoxVertices(Eigen::Vector3d(0.1, 0.25, 0.15), X_WP)));
   }
 
  protected:
-  std::vector<ConvexPolytope> link7_polytopes_;
-  std::vector<ConvexPolytope> link5_polytopes_;
-  std::vector<ConvexPolytope> obstacles_;
+  std::vector<std::shared_ptr<const ConvexPolytope>> link7_polytopes_;
+  std::vector<std::shared_ptr<const ConvexPolytope>> link5_polytopes_;
+  std::vector<std::shared_ptr<const ConvexPolytope>> obstacles_;
 };
 
 TEST_F(IiwaConfigurationSpaceTest, TestConstructor) {
   ConfigurationSpaceCollisionFreeRegion dut(
       *iiwa_, {link7_polytopes_[0], link7_polytopes_[1], link5_polytopes_[0]},
       obstacles_,
-      {std::make_pair(link7_polytopes_[0].get_id(), obstacles_[0].get_id())});
+      {std::make_pair(link7_polytopes_[0]->get_id(), obstacles_[0]->get_id())});
 
   const auto& separation_planes = dut.separation_planes();
   EXPECT_EQ(separation_planes.size(), 5);
@@ -183,17 +192,35 @@ TEST_F(IiwaConfigurationSpaceTest, TestConstructor) {
     EXPECT_EQ(separation_plane.negative_side_polytope->get_id(),
               expected_negative_polytope);
     EXPECT_EQ(separation_plane.expressed_link, expressed_body_index);
+
+    EXPECT_EQ(dut.map_polytopes_to_separation_planes()
+                  .find(std::make_pair(expected_positive_polytope,
+                                       expected_negative_polytope))
+                  ->second,
+              &separation_plane);
   };
-  CheckSeparationPlane(separation_planes[0], link5_polytopes_[0].get_id(),
-                       obstacles_[0].get_id(), iiwa_link_[3]);
-  CheckSeparationPlane(separation_planes[1], link7_polytopes_[1].get_id(),
-                       obstacles_[0].get_id(), iiwa_link_[4]);
-  CheckSeparationPlane(separation_planes[2], link5_polytopes_[0].get_id(),
-                       obstacles_[1].get_id(), iiwa_link_[3]);
-  CheckSeparationPlane(separation_planes[3], link7_polytopes_[0].get_id(),
-                       obstacles_[1].get_id(), iiwa_link_[4]);
-  CheckSeparationPlane(separation_planes[4], link7_polytopes_[1].get_id(),
-                       obstacles_[1].get_id(), iiwa_link_[4]);
+
+  CheckSeparationPlane(separation_planes[0], link5_polytopes_[0]->get_id(),
+                       obstacles_[0]->get_id(), iiwa_link_[3]);
+  CheckSeparationPlane(separation_planes[1], link7_polytopes_[1]->get_id(),
+                       obstacles_[0]->get_id(), iiwa_link_[4]);
+  CheckSeparationPlane(separation_planes[2], link5_polytopes_[0]->get_id(),
+                       obstacles_[1]->get_id(), iiwa_link_[3]);
+  CheckSeparationPlane(separation_planes[3], link7_polytopes_[0]->get_id(),
+                       obstacles_[1]->get_id(), iiwa_link_[4]);
+  CheckSeparationPlane(separation_planes[4], link7_polytopes_[1]->get_id(),
+                       obstacles_[1]->get_id(), iiwa_link_[4]);
+}
+
+TEST_F(IiwaConfigurationSpaceTest, GenerateLinkOnOneSideOfPlanePolynomials) {
+  ConfigurationSpaceCollisionFreeRegion dut(
+      *iiwa_, {link7_polytopes_[0], link7_polytopes_[1], link5_polytopes_[0]},
+      obstacles_,
+      {std::make_pair(link7_polytopes_[0]->get_id(), obstacles_[0]->get_id())});
+
+  const auto rationals =
+      dut.GenerateLinkOnOneSideOfPlaneRationals(Eigen::VectorXd::Zero(7));
+  EXPECT_EQ(rationals.size(), 80);
 }
 }  // namespace multibody
 }  // namespace drake

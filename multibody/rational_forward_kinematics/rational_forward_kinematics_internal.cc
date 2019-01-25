@@ -134,7 +134,8 @@ std::vector<MobilizerIndex> FindMobilizersOnShortestPath(
   const internal::MultibodyTree<double>& tree = GetInternalTree(plant);
   for (int i = 0; i < static_cast<int>(path.size()) - 1; ++i) {
     const BodyTopology& body_topology = tree.get_topology().get_body(path[i]);
-    if (body_topology.parent_body == path[i + 1]) {
+    if (body_topology.parent_body.is_valid() &&
+        body_topology.parent_body == path[i + 1]) {
       mobilizers_on_path.push_back(body_topology.inboard_mobilizer);
     } else {
       mobilizers_on_path.push_back(

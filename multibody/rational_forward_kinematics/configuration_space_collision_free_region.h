@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <unordered_set>
 
 #include "drake/common/drake_copyable.h"
 #include "drake/multibody/rational_forward_kinematics/convex_geometry.h"
@@ -18,19 +19,64 @@ namespace multibody {
  */
 template <typename T>
 struct SeparationPlane {
-  SeparationPlane(const Vector3<T>& m_a,
-                  const ConvexPolytope* m_positive_side_polytope,
-                  const ConvexPolytope* m_negative_side_polytope,
-                  BodyIndex m_expressed_link)
+  SeparationPlane(
+      const Vector3<T>& m_a,
+      std::shared_ptr<const ConvexPolytope> m_positive_side_polytope,
+      std::shared_ptr<const ConvexPolytope> m_negative_side_polytope,
+      BodyIndex m_expressed_link)
       : a{m_a},
         positive_side_polytope{m_positive_side_polytope},
         negative_side_polytope{m_negative_side_polytope},
         expressed_link{m_expressed_link} {}
-  Vector3<T> a;
-  const ConvexPolytope* positive_side_polytope;
-  const ConvexPolytope* negative_side_polytope;
+  const Vector3<T> a;
+  std::shared_ptr<const ConvexPolytope> positive_side_polytope;
+  std::shared_ptr<const ConvexPolytope> negative_side_polytope;
   // The link frame in which a is expressed.
-  BodyIndex expressed_link;
+  const BodyIndex expressed_link;
+};
+
+/** We need to verify that these polynomials are non-negative
+ * Lagrangians l_lower(t) >= 0, l_upper(t) >= 0
+ * Link polynomial p(t) - l_lower(t) * (t - t_lower) - l_upper(t)(t_upper_t)
+ * >= 0
+ */
+struct VerificationOption {
+  VerificationOption()
+      : link_polynomial_type{solvers::MathematicalProgram::
+                                 NonnegativePolynomial::kSos},
+        lagrangian_type{
+            solvers::MathematicalProgram::NonnegativePolynomial::kSos} {}
+
+  solvers::MathematicalProgram::NonnegativePolynomial link_polynomial_type;
+  solvers::MathematicalProgram::NonnegativePolynomial lagrangian_type;
+};
+
+/**
+ * The rational function representing that a link vertex V is on the desired
+ * side of the plane.
+ * If the link is on the positive side of the plane, then the rational is
+ * aᵀ(x-c)- 1; otherwise it is 1 - aᵀ(x-c).
+ */
+struct LinkVertexOnPlaneSideRational {
+  LinkVertexOnPlaneSideRational(
+      symbolic::RationalFunction m_rational,
+      std::shared_ptr<const ConvexPolytope> m_link_polytope,
+      BodyIndex m_expressed_body_index,
+      const Eigen::Ref<const Eigen::Vector3d>& m_p_BV,
+      const Vector3<symbolic::Variable>& m_a_A, PlaneSide m_plane_side)
+      : rational(std::move(m_rational)),
+        link_polytope(m_link_polytope),
+        expressed_body_index(m_expressed_body_index),
+        p_BV(m_p_BV),
+        a_A(m_a_A),
+        plane_side(m_plane_side) {}
+  const symbolic::RationalFunction rational;
+  const std::shared_ptr<const ConvexPolytope> link_polytope;
+  const BodyIndex expressed_body_index;
+  // The position of the vertex V in link's frame B.
+  const Eigen::Vector3d p_BV;
+  const Vector3<symbolic::Variable> a_A;
+  const PlaneSide plane_side;
 };
 
 /**
@@ -50,8 +96,9 @@ class ConfigurationSpaceCollisionFreeRegion {
   struct GeometryIdPairHash {
     std::size_t operator()(
         const std::pair<ConvexGeometry::Id, ConvexGeometry::Id>& p) const {
-      return std::hash<ConvexGeometry::Id>()(p.first) +
-             std::hash<ConvexGeometry::Id>()(p.second);
+      return p.first * 100 + p.second;
+      // return std::hash<ConvexGeometry::Id>()(p.first * 100) +
+      //       std::hash<ConvexGeometry::Id>()(p.second);
     };
   };
 
@@ -62,11 +109,11 @@ class ConfigurationSpaceCollisionFreeRegion {
    */
   ConfigurationSpaceCollisionFreeRegion(
       const MultibodyPlant<double>& plant,
-      const std::vector<ConvexPolytope>& link_polytopes,
-      const std::vector<ConvexPolytope>& obstacles,
-      const std::unordered_set<
-          std::pair<ConvexGeometry::Id, ConvexGeometry::Id>,
-          GeometryIdPairHash>& filtered_collision_pairs);
+      const std::vector<std::shared_ptr<const ConvexPolytope>>& link_polytopes,
+      const std::vector<std::shared_ptr<const ConvexPolytope>>& obstacles,
+      std::unordered_set<std::pair<ConvexGeometry::Id, ConvexGeometry::Id>,
+                         GeometryIdPairHash>
+          filtered_collision_pairs);
 
   const RationalForwardKinematics& rational_forward_kinematics() const {
     return rational_forward_kinematics_;
@@ -77,16 +124,58 @@ class ConfigurationSpaceCollisionFreeRegion {
     return separation_planes_;
   }
 
+  /**
+   * Generate all the rational functions representing the the link vertices are
+   * on the correct side of the planes.
+   */
+  std::vector<LinkVertexOnPlaneSideRational>
+  GenerateLinkOnOneSideOfPlaneRationals(
+      const Eigen::Ref<const Eigen::VectorXd>& q_star) const;
+
+  const std::unordered_map<std::pair<ConvexGeometry::Id, ConvexGeometry::Id>,
+                           const SeparationPlane<symbolic::Variable>*,
+                           GeometryIdPairHash>&
+  map_polytopes_to_separation_planes() const {
+    return map_polytopes_to_separation_planes_;
+  }
+
+  /**
+   * Construct an optimization program to verify the the box region t_lower <= t
+   * <= t_upper is collision free.
+   * The program verifies that t_lower <= t <= t_upper implies @p polynomials[i]
+   * >= 0 for all i, where rationals[i] is the result of calling
+   * GenerateLinkOnOneSideOfPlaneRationals.
+   */
+  std::unique_ptr<solvers::MathematicalProgram>
+  ConstructProgramToVerifyCollisionFreeBox(
+      const std::vector<LinkVertexOnPlaneSideRational>& rationals,
+      const Eigen::Ref<const Eigen::VectorXd>& t_lower,
+      const Eigen::Ref<const Eigen::VectorXd>& t_upper,
+      const VerificationOption& verification_option = {}) const;
+
  private:
-  // forward declare the tester class.
-  friend class ConfigurationSpaceCollisionFreeRegionTester;
+  bool IsLinkPairCollisionIgnored(ConvexGeometry::Id id1,
+                                  ConvexGeometry::Id id2) const;
 
   RationalForwardKinematics rational_forward_kinematics_;
-  std::map<BodyIndex, std::vector<ConvexPolytope>> link_polytopes_;
+  std::map<BodyIndex, std::vector<std::shared_ptr<const ConvexPolytope>>>
+      link_polytopes_;
   // obstacles_[i] is the i'th polytope, fixed to the world.
-  std::vector<ConvexPolytope> obstacles_;
+  std::vector<std::shared_ptr<const ConvexPolytope>> obstacles_;
+
+  std::unordered_set<std::pair<ConvexGeometry::Id, ConvexGeometry::Id>,
+                     GeometryIdPairHash>
+      filtered_collision_pairs_;
 
   std::vector<SeparationPlane<symbolic::Variable>> separation_planes_;
+
+  // In the key, the first ConvexGeometry::Id is for the polytope on the
+  // positive side, the second ConvexGeometry::Id is for the one on the negative
+  // side.
+  std::unordered_map<std::pair<ConvexGeometry::Id, ConvexGeometry::Id>,
+                     const SeparationPlane<symbolic::Variable>*,
+                     GeometryIdPairHash>
+      map_polytopes_to_separation_planes_;
 };
 
 /**
@@ -116,10 +205,10 @@ class ConfigurationSpaceCollisionFreeRegion {
  * =
  * 1 - a_A.dot(p_AVi(t) - p_AC) if @p plane_side = kNegative.
  */
-std::vector<symbolic::RationalFunction>
+std::vector<LinkVertexOnPlaneSideRational>
 GenerateLinkOnOneSideOfPlaneRationalFunction(
     const RationalForwardKinematics& rational_forward_kinematics,
-    const ConvexPolytope& link_polytope,
+    std::shared_ptr<const ConvexPolytope> link_polytope,
     const Eigen::Ref<const Eigen::VectorXd>& q_star,
     BodyIndex expressed_body_index,
     const Eigen::Ref<const Vector3<symbolic::Variable>>& a_A,
@@ -133,31 +222,14 @@ GenerateLinkOnOneSideOfPlaneRationalFunction(
  * expressed body frame A. Note that this pose is a multilinear function of
  * sinθ and cosθ.
  */
-std::vector<symbolic::RationalFunction>
+std::vector<LinkVertexOnPlaneSideRational>
 GenerateLinkOnOneSideOfPlaneRationalFunction(
     const RationalForwardKinematics& rational_forward_kinematics,
-    const ConvexPolytope& link_polytope,
+    std::shared_ptr<const ConvexPolytope> link_polytope,
     const RationalForwardKinematics::Pose<symbolic::Polynomial>&
         X_AB_multilinear,
     const Eigen::Ref<const Vector3<symbolic::Variable>>& a_A,
     const Eigen::Ref<const Eigen::Vector3d>& p_AC, PlaneSide plane_side);
-
-/** We need to verify that these polynomials are non-negative
- * Lagrangians l_lower(t) >= 0, l_upper(t) >= 0
- * Link polynomial p(t) - l_lower(t) * (t - t_lower) - l_upper(t)(t_upper_t)
- * >=
- * 0
- */
-struct VerificationOption {
-  VerificationOption()
-      : link_polynomial_type{solvers::MathematicalProgram::
-                                 NonnegativePolynomial::kSos},
-        lagrangian_type{
-            solvers::MathematicalProgram::NonnegativePolynomial::kSos} {}
-
-  solvers::MathematicalProgram::NonnegativePolynomial link_polynomial_type;
-  solvers::MathematicalProgram::NonnegativePolynomial lagrangian_type;
-};
 
 /** Impose the constraint that
  * l_lower(t) >= 0                                                         (1)

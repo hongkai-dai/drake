@@ -19,7 +19,7 @@ namespace multibody {
 int DoMain() {
   auto plant = ConstructIiwaPlant("iiwa14_no_collision.sdf");
 
-  const std::vector<ConvexPolytope> link_polytopes =
+  const std::vector<std::shared_ptr<const ConvexPolytope>> link_polytopes =
       GenerateIiwaLinkPolytopes(*plant);
   DRAKE_DEMAND(link_polytopes.size() == 1);
 
@@ -71,9 +71,9 @@ int DoMain() {
   std::cout << "compute X_W7\n";
   const auto X_W7 =
       rational_forward_kinematics.CalcLinkPoseAsMultilinearPolynomial(
-          q_star, link_polytopes[0].body_index(), expressed_body_index);
+          q_star, link_polytopes[0]->body_index(), expressed_body_index);
   std::cout << "compute link7_on_positive_side_a0_rational\n";
-  const std::vector<symbolic::RationalFunction>
+  const std::vector<LinkVertexOnPlaneSideRational>
       link7_on_positive_side_a0_rational =
           GenerateLinkOnOneSideOfPlaneRationalFunction(
               rational_forward_kinematics, link_polytopes[0], X_W7, a0,
@@ -82,11 +82,11 @@ int DoMain() {
                "positive side of the plane between obstacle[0]\n";
   for (const auto& rational : link7_on_positive_side_a0_rational) {
     AddNonnegativeConstraintForPolytopeOnOneSideOfPlane(
-        &prog, rational, t_minus_t_lower, t_upper_minus_t,
+        &prog, rational.rational, t_minus_t_lower, t_upper_minus_t,
         world_to_link7_monomial_basis, verification_option);
   }
   std::cout << "compute link7_on_positive_side_a1_rational\n";
-  const std::vector<symbolic::RationalFunction>
+  const std::vector<LinkVertexOnPlaneSideRational>
       link7_on_positive_side_a1_rational =
           GenerateLinkOnOneSideOfPlaneRationalFunction(
               rational_forward_kinematics, link_polytopes[0], X_W7, a1,
@@ -95,7 +95,7 @@ int DoMain() {
                "positive side of the plane between obstacle[1]\n";
   for (const auto& rational : link7_on_positive_side_a1_rational) {
     AddNonnegativeConstraintForPolytopeOnOneSideOfPlane(
-        &prog, rational, t_minus_t_lower, t_upper_minus_t,
+        &prog, rational.rational, t_minus_t_lower, t_upper_minus_t,
         world_to_link7_monomial_basis, verification_option);
   }
   // Add constraint that the obstacle boxes are on the negative side of the

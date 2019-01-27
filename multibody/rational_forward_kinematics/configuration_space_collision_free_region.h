@@ -102,6 +102,10 @@ class ConfigurationSpaceCollisionFreeRegion {
     };
   };
 
+  using FilteredCollisionPairs =
+      std::unordered_set<std::pair<ConvexGeometry::Id, ConvexGeometry::Id>,
+                         GeometryIdPairHash>;
+
   /**
    * Verify the collision free configuration space for the given robot. The
    * geometry of each robot link is represented as a union of polytopes. The
@@ -110,10 +114,7 @@ class ConfigurationSpaceCollisionFreeRegion {
   ConfigurationSpaceCollisionFreeRegion(
       const MultibodyPlant<double>& plant,
       const std::vector<std::shared_ptr<const ConvexPolytope>>& link_polytopes,
-      const std::vector<std::shared_ptr<const ConvexPolytope>>& obstacles,
-      std::unordered_set<std::pair<ConvexGeometry::Id, ConvexGeometry::Id>,
-                         GeometryIdPairHash>
-          filtered_collision_pairs);
+      const std::vector<std::shared_ptr<const ConvexPolytope>>& obstacles);
 
   const RationalForwardKinematics& rational_forward_kinematics() const {
     return rational_forward_kinematics_;
@@ -130,7 +131,8 @@ class ConfigurationSpaceCollisionFreeRegion {
    */
   std::vector<LinkVertexOnPlaneSideRational>
   GenerateLinkOnOneSideOfPlaneRationals(
-      const Eigen::Ref<const Eigen::VectorXd>& q_star) const;
+      const Eigen::Ref<const Eigen::VectorXd>& q_star,
+      const FilteredCollisionPairs& filtered_collision_pairs) const;
 
   const std::unordered_map<std::pair<ConvexGeometry::Id, ConvexGeometry::Id>,
                            const SeparationPlane<symbolic::Variable>*,
@@ -151,21 +153,19 @@ class ConfigurationSpaceCollisionFreeRegion {
       const std::vector<LinkVertexOnPlaneSideRational>& rationals,
       const Eigen::Ref<const Eigen::VectorXd>& t_lower,
       const Eigen::Ref<const Eigen::VectorXd>& t_upper,
+      const FilteredCollisionPairs& filtered_collision_pairs,
       const VerificationOption& verification_option = {}) const;
 
  private:
-  bool IsLinkPairCollisionIgnored(ConvexGeometry::Id id1,
-                                  ConvexGeometry::Id id2) const;
+  bool IsLinkPairCollisionIgnored(
+      ConvexGeometry::Id id1, ConvexGeometry::Id id2,
+      const FilteredCollisionPairs& filtered_collision_pairs) const;
 
   RationalForwardKinematics rational_forward_kinematics_;
   std::map<BodyIndex, std::vector<std::shared_ptr<const ConvexPolytope>>>
       link_polytopes_;
   // obstacles_[i] is the i'th polytope, fixed to the world.
   std::vector<std::shared_ptr<const ConvexPolytope>> obstacles_;
-
-  std::unordered_set<std::pair<ConvexGeometry::Id, ConvexGeometry::Id>,
-                     GeometryIdPairHash>
-      filtered_collision_pairs_;
 
   std::vector<SeparationPlane<symbolic::Variable>> separation_planes_;
 

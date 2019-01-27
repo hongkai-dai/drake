@@ -176,11 +176,13 @@ class IiwaConfigurationSpaceTest : public IiwaTest {
 TEST_F(IiwaConfigurationSpaceTest, TestConstructor) {
   ConfigurationSpaceCollisionFreeRegion dut(
       *iiwa_, {link7_polytopes_[0], link7_polytopes_[1], link5_polytopes_[0]},
-      obstacles_,
-      {std::make_pair(link7_polytopes_[0]->get_id(), obstacles_[0]->get_id())});
+      obstacles_);
+  const ConfigurationSpaceCollisionFreeRegion::FilteredCollisionPairs
+      filtered_collision_pairs{std::make_pair(link7_polytopes_[0]->get_id(),
+                                              obstacles_[0]->get_id())};
 
   const auto& separation_planes = dut.separation_planes();
-  EXPECT_EQ(separation_planes.size(), 5);
+  EXPECT_EQ(separation_planes.size(), 6);
 
   auto CheckSeparationPlane = [&](
       const SeparationPlane<symbolic::Variable>& separation_plane,
@@ -202,24 +204,30 @@ TEST_F(IiwaConfigurationSpaceTest, TestConstructor) {
 
   CheckSeparationPlane(separation_planes[0], link5_polytopes_[0]->get_id(),
                        obstacles_[0]->get_id(), iiwa_link_[3]);
-  CheckSeparationPlane(separation_planes[1], link7_polytopes_[1]->get_id(),
+  CheckSeparationPlane(separation_planes[1], link7_polytopes_[0]->get_id(),
                        obstacles_[0]->get_id(), iiwa_link_[4]);
-  CheckSeparationPlane(separation_planes[2], link5_polytopes_[0]->get_id(),
+  CheckSeparationPlane(separation_planes[2], link7_polytopes_[1]->get_id(),
+                       obstacles_[0]->get_id(), iiwa_link_[4]);
+  CheckSeparationPlane(separation_planes[3], link5_polytopes_[0]->get_id(),
                        obstacles_[1]->get_id(), iiwa_link_[3]);
-  CheckSeparationPlane(separation_planes[3], link7_polytopes_[0]->get_id(),
+  CheckSeparationPlane(separation_planes[4], link7_polytopes_[0]->get_id(),
                        obstacles_[1]->get_id(), iiwa_link_[4]);
-  CheckSeparationPlane(separation_planes[4], link7_polytopes_[1]->get_id(),
+  CheckSeparationPlane(separation_planes[5], link7_polytopes_[1]->get_id(),
                        obstacles_[1]->get_id(), iiwa_link_[4]);
 }
 
 TEST_F(IiwaConfigurationSpaceTest, GenerateLinkOnOneSideOfPlanePolynomials) {
   ConfigurationSpaceCollisionFreeRegion dut(
       *iiwa_, {link7_polytopes_[0], link7_polytopes_[1], link5_polytopes_[0]},
-      obstacles_,
-      {std::make_pair(link7_polytopes_[0]->get_id(), obstacles_[0]->get_id())});
+      obstacles_);
 
-  const auto rationals =
-      dut.GenerateLinkOnOneSideOfPlaneRationals(Eigen::VectorXd::Zero(7));
+  EXPECT_EQ(dut.separation_planes().size(), 6);
+
+  const ConfigurationSpaceCollisionFreeRegion::FilteredCollisionPairs
+      filtered_collision_pairs{std::make_pair(link7_polytopes_[0]->get_id(),
+                                              obstacles_[0]->get_id())};
+  const auto rationals = dut.GenerateLinkOnOneSideOfPlaneRationals(
+      Eigen::VectorXd::Zero(7), filtered_collision_pairs);
   EXPECT_EQ(rationals.size(), 80);
 }
 }  // namespace multibody

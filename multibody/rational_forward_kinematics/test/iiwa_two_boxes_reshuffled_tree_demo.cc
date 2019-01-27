@@ -132,12 +132,14 @@ int DoMain() {
   //------------------------------------------------------
   // Now run this optimization using ConfigurationSpaceCollisionFreeRegion
   ConfigurationSpaceCollisionFreeRegion dut(*plant, link_polytopes,
-                                            obstacle_boxes, {});
-  const auto link_vertex_rationals =
-      dut.GenerateLinkOnOneSideOfPlaneRationals(q_star);
+                                            obstacle_boxes);
+  const ConfigurationSpaceCollisionFreeRegion::FilteredCollisionPairs
+      filtered_collision_pairs{};
+  const auto link_vertex_rationals = dut.GenerateLinkOnOneSideOfPlaneRationals(
+      q_star, filtered_collision_pairs);
 
   auto prog2 = dut.ConstructProgramToVerifyCollisionFreeBox(
-      link_vertex_rationals, t_lower, t_upper);
+      link_vertex_rationals, t_lower, t_upper, filtered_collision_pairs);
 
   mosek_solver.Solve(*prog2, {}, {}, &result);
   std::cout << result.get_solution_result() << "\n";

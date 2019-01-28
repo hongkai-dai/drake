@@ -2,6 +2,7 @@
 
 #include "drake/multibody/rational_forward_kinematics/generate_monomial_basis_util.h"
 #include "drake/multibody/rational_forward_kinematics/rational_forward_kinematics_internal.h"
+#include "drake/solvers/mosek_solver.h"
 
 namespace drake {
 namespace multibody {
@@ -239,6 +240,65 @@ ConfigurationSpaceCollisionFreeRegion::ConstructProgramToVerifyCollisionFreeBox(
   }
 
   return prog;
+}
+
+double ConfigurationSpaceCollisionFreeRegion::FindLargestBoxThroughBinarySearch(
+    const Eigen::Ref<const Eigen::VectorXd>& q_star,
+    const FilteredCollisionPairs& filtered_collision_pairs,
+    const Eigen::Ref<const Eigen::VectorXd>& negative_delta_t,
+    const Eigen::Ref<const Eigen::VectorXd>& positive_delta_t,
+    double rho_lower_initial, double rho_upper_initial, double rho_tolerance,
+    const VerificationOption& verification_option) const {
+  DRAKE_DEMAND(negative_delta_t.size() == positive_delta_t.size());
+  DRAKE_DEMAND((negative_delta_t.array() <= 0).all());
+  DRAKE_DEMAND((positive_delta_t.array() >= 0).all());
+  DRAKE_DEMAND(rho_lower_initial >= 0);
+  DRAKE_DEMAND(rho_lower_initial <= rho_upper_initial);
+  DRAKE_DEMAND(rho_tolerance > 0);
+  Eigen::VectorXd q_upper(rational_forward_kinematics_.plant().num_positions());
+  Eigen::VectorXd q_lower(rational_forward_kinematics_.plant().num_positions());
+  for (JointIndex i{0}; i < rational_forward_kinematics_.plant().num_joints();
+       ++i) {
+    const auto& joint = rational_forward_kinematics_.plant().get_joint(i);
+    q_upper.segment(joint.position_start(), joint.num_positions()) =
+        joint.position_upper_limits();
+    q_lower.segment(joint.position_start(), joint.num_positions()) =
+        joint.position_lower_limits();
+  }
+  const Eigen::VectorXd t_upper_limit =
+      rational_forward_kinematics_.ComputeTValue(q_upper, q_star);
+  const Eigen::VectorXd t_lower_limit =
+      rational_forward_kinematics_.ComputeTValue(q_lower, q_star);
+  double rho_upper = rho_upper_initial;
+  double rho_lower = rho_lower_initial;
+
+  const std::vector<LinkVertexOnPlaneSideRational> rationals =
+      GenerateLinkOnOneSideOfPlaneRationals(q_star, filtered_collision_pairs);
+  solvers::MosekSolver solver;
+  solver.set_stream_logging(true, "");
+  solvers::MathematicalProgramResult result;
+  while (rho_upper - rho_lower > rho_tolerance) {
+    const double rho = (rho_upper + rho_lower) / 2;
+    Eigen::VectorXd t_lower(rational_forward_kinematics_.t().size());
+    Eigen::VectorXd t_upper(rational_forward_kinematics_.t().size());
+    for (int i = 0; i < rational_forward_kinematics_.t().size(); ++i) {
+      t_lower(i) = std::max(rho * negative_delta_t(i), t_lower_limit(i));
+      t_upper(i) = std::min(rho * positive_delta_t(i), t_upper_limit(i));
+    }
+    auto prog = ConstructProgramToVerifyCollisionFreeBox(
+        rationals, t_lower, t_upper, filtered_collision_pairs,
+        verification_option);
+    solver.Solve(*prog, {}, {}, &result);
+    if (result.get_solution_result() ==
+        solvers::SolutionResult::kSolutionFound) {
+      // rho is feasible.
+      rho_lower = rho;
+    } else {
+      // rho is infeasible.
+      rho_upper = rho;
+    }
+  }
+  return rho_lower;
 }
 
 std::vector<LinkVertexOnPlaneSideRational>

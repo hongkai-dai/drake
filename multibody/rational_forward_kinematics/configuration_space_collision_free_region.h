@@ -156,6 +156,33 @@ class ConfigurationSpaceCollisionFreeRegion {
       const FilteredCollisionPairs& filtered_collision_pairs,
       const VerificationOption& verification_option = {}) const;
 
+  /**
+   * Find the largest box in the configuration space, that we can verify to be
+   * collision free. The box is defined as
+   * max(ρ * Δt₋, tan((θ_lower - θ*)/2)) <=
+   *                     tan((θ - θ*)/2) <=
+   *                                  min(ρ * Δt₊, tan((θ_upper - θ*) /  2))
+   * where θ_lower, θ_upper are the joint limits.
+   * @param q_star The nominal configuration around which we verify the
+   * collision free box. This nominal configuration should be collision free.
+   * @param filtered_collision_pairs The set of polytope pairs between which the
+   * collision check is ignored.
+   * @param negative_delta_t Δt₋ in the documentation above.
+   * @param positive_delta_t Δt₊ in the documentation above.
+   * @param rho_lower_initial The initial guess on the lower bound of ρ. The box
+   * defined with rho_lower_initial is collision free.
+   * @param rho_upper_initial The initial guess on the upper bound of ρ. The box
+   * defined with rho_upper_initial is not collision free.
+   * @param rho_tolerance The tolerance on ρ in the binary search.
+   */
+  double FindLargestBoxThroughBinarySearch(
+      const Eigen::Ref<const Eigen::VectorXd>& q_star,
+      const FilteredCollisionPairs& filtered_collision_pairs,
+      const Eigen::Ref<const Eigen::VectorXd>& negative_delta_t,
+      const Eigen::Ref<const Eigen::VectorXd>& positive_delta_t,
+      double rho_lower_initial, double rho_upper_initial, double rho_tolerance,
+      const VerificationOption& verification_option = {}) const;
+
  private:
   bool IsLinkPairCollisionIgnored(
       ConvexGeometry::Id id1, ConvexGeometry::Id id2,

@@ -147,6 +147,11 @@ int DoMain() {
   a1_val = prog2->GetSolution(dut.separation_planes()[1].a, result);
   std::cout << "a0: " << a0_val.transpose() << "\n";
   std::cout << "a1: " << a1_val.transpose() << "\n";
+
+  const double best_rho = dut.FindLargestBoxThroughBinarySearch(
+      q_star, filtered_collision_pairs, -Eigen::VectorXd::Ones(7),
+      Eigen::VectorXd::Ones(7), 0.15, 0.5, 0.01);
+  std::cout << "best rho is " << best_rho << "\n";
   return 0;
 }
 }  // namespace multibody

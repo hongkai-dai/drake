@@ -77,5 +77,22 @@ void MathematicalProgram::SetSolverResult(const SolverResult& solver_result) {
   }
 }
 
+std::shared_ptr<const std::unordered_map<symbolic::Variable::Id, int>>
+MathematicalProgram::decision_variable_index() const {
+  const size_t current_size = decision_variable_index_.size();
+  if (!shared_decision_variable_index_ ||
+      (shared_decision_variable_index_->size() != current_size)) {
+    // TODO(jwnimmer-tri) If this unordered_map copy operation ends up being
+    // too expensive, it should be possible to *move* the mutable map into the
+    // shared map (since the mutable map is unlikely to be used again), given
+    // appropriate care and guards for the internal uses of the mutable map.
+    // We'll defer that complexity for now.
+    shared_decision_variable_index_ =
+        std::make_shared<const std::unordered_map<symbolic::Variable::Id, int>>(
+            decision_variable_index_);
+  }
+  return shared_decision_variable_index_;
+}
+
 }  // namespace solvers
 }  // namespace drake

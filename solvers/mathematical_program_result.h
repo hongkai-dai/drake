@@ -37,9 +37,9 @@ class MathematicalProgramResult final {
    * MathematicalProgram.
    */
   void set_decision_variable_index(
-      const std::unordered_map<symbolic::Variable::Id, int>*
+      std::shared_ptr<const std::unordered_map<symbolic::Variable::Id, int>>
           decision_variable_index) {
-    decision_variable_index_ = decision_variable_index;
+    decision_variable_index_ = std::move(decision_variable_index);
   }
 
   /** Sets SolutionResult. */
@@ -124,7 +124,7 @@ class MathematicalProgramResult final {
   double GetSolution(const symbolic::Variable& var) const;
 
  private:
-  const std::unordered_map<symbolic::Variable::Id, int>*
+  std::shared_ptr<const std::unordered_map<symbolic::Variable::Id, int>>
       decision_variable_index_;
   SolutionResult solution_result_{};
   Eigen::VectorXd x_val_;

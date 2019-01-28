@@ -2843,16 +2843,19 @@ class MathematicalProgram {
     return required_capabilities_;
   }
 
-  const std::unordered_map<symbolic::Variable::Id, int>&
-  decision_variable_index() const {
-    return decision_variable_index_;
-  }
+  std::shared_ptr<const std::unordered_map<symbolic::Variable::Id, int>>
+  decision_variable_index() const;
 
  private:
   static void AppendNanToEnd(int new_var_size, Eigen::VectorXd* vector);
-  // maps the ID of a symbolic variable to the index of the variable stored in
+
+  // Maps the ID of a symbolic variable to the index of the variable stored in
   // the optimization program.
   std::unordered_map<symbolic::Variable::Id, int> decision_variable_index_{};
+  // A copy of the most recently returned value of decision_variable_index().
+  // This might not always be up-to-date with decision_variable_index_.
+  mutable std::shared_ptr<const std::unordered_map<symbolic::Variable::Id, int>>
+      shared_decision_variable_index_{};
 
   VectorXDecisionVariable decision_variables_;
 

@@ -117,6 +117,40 @@ GTEST_TEST(RationalForwardKinematics, ReplaceCosAndSinWithRationalFunction) {
           Polynomial((1 + t_angle(0) * t_angle(0)) *
                      (1 + t_angle(1) * t_angle(1)) *
                      (1 + t_angle(2) * t_angle(2)))));
+
+  // test t_angle(0)
+  CheckReplaceCosAndSinWithRationalFunction(
+      t_angle(0), cos_delta, sin_delta, t_angle, t,
+      RationalFunction(Polynomial(t_angle(0), t)));
+
+  // test t_angle(0) * cos(delta_q(0))
+  CheckReplaceCosAndSinWithRationalFunction(
+      t_angle(0) * cos_delta(0), cos_delta, sin_delta, t_angle, t,
+      RationalFunction(
+          Polynomial(t_angle(0) - t_angle(0) * t_angle(0) * t_angle(0), t),
+          Polynomial(1 + t_angle(0) * t_angle(0), t)));
+
+  // test t_angle(0) * sin(delta_q(0))
+  CheckReplaceCosAndSinWithRationalFunction(
+      t_angle(0) * sin_delta(0), cos_delta, sin_delta, t_angle, t,
+      RationalFunction(Polynomial(2 * t_angle(0) * t_angle(0), t),
+                       Polynomial(1 + t_angle(0) * t_angle(0), t)));
+
+  // test (t_angle(0) * a + t_angle(1) * b) * sin(delta_q(0)) * cos(delta_q(1))
+  // + 2 * t_angle(0) * b
+  CheckReplaceCosAndSinWithRationalFunction(
+      (t_angle(0) * a + t_angle(1) * b) * sin_delta(0) * cos_delta(1) +
+          2 * t_angle(0) * b,
+      cos_delta, sin_delta, t_angle, t,
+      RationalFunction(
+          Polynomial((a * t_angle(0) + b * t_angle(1)) * 2 * t_angle(0) *
+                             (1 - t_angle(1) * t_angle(1)) +
+                         2 * t_angle(0) * b * (1 + t_angle(0) * t_angle(0)) *
+                             (1 + t_angle(1) * t_angle(1)),
+                     t),
+          Polynomial(
+              (1 + t_angle(0) * t_angle(0)) * (1 + t_angle(1) * t_angle(1)),
+              t)));
 }
 
 void CheckLinkKinematics(

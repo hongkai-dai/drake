@@ -25,7 +25,7 @@ void ReplaceCosAndSinWithRationalFunction(
     const symbolic::Polynomial& e_poly,
     const VectorX<symbolic::Variable>& cos_delta,
     const VectorX<symbolic::Variable>& sin_delta,
-    const VectorX<symbolic::Variable>& t_angle, const symbolic::Variables&,
+    const VectorX<symbolic::Variable>& t_angle, const symbolic::Variables& t,
     const VectorX<symbolic::Polynomial>& one_plus_t_angles_squared,
     const VectorX<symbolic::Polynomial>& two_t_angles,
     const VectorX<symbolic::Polynomial>& one_minus_t_angles_squared,
@@ -50,7 +50,7 @@ void ReplaceCosAndSinWithRationalFunction(
     }
   }
   if (angle_indices.empty()) {
-    *e_rational = RationalFunction(e_poly);
+    *e_rational = RationalFunction(Polynomial(e_poly.ToExpression(), t));
     return;
   }
   const symbolic::Monomial monomial_one{};
@@ -68,19 +68,20 @@ void ReplaceCosAndSinWithRationalFunction(
     // 2 * t_angle(i).
     // Otherwise, multiplies with 1 + t_angle(i) * t_angle(i)
 
-    // We assume that t pair.second doesn't contain any indeterminates. So
-    // pair.second is the coefficient.
-    Polynomial numerator_monomial{{{monomial_one, pair.second}}};
+    // The coefficient could contain "t", (the indeterminates for e are
+    // cos_delta and sin_delta). Hence we first need to write the coefficient
+    // as a polynomial of indeterminates t.
+    Polynomial numerator_term(pair.second, t);
     for (int angle_index : angle_indices) {
       if (pair.first.degree(cos_delta(angle_index)) > 0) {
-        numerator_monomial *= one_minus_t_angles_squared[angle_index];
+        numerator_term *= one_minus_t_angles_squared[angle_index];
       } else if (pair.first.degree(sin_delta(angle_index)) > 0) {
-        numerator_monomial *= two_t_angles[angle_index];
+        numerator_term *= two_t_angles[angle_index];
       } else {
-        numerator_monomial *= one_plus_t_angles_squared[angle_index];
+        numerator_term *= one_plus_t_angles_squared[angle_index];
       }
     }
-    numerator += numerator_monomial;
+    numerator += numerator_term;
   }
 
   *e_rational = RationalFunction(numerator, denominator);

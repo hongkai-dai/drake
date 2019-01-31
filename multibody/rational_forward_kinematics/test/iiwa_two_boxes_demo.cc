@@ -73,7 +73,7 @@ int DoMain() {
       rational_forward_kinematics.CalcLinkPoseAsMultilinearPolynomial(
           q_star, link_polytopes[0]->body_index(), expressed_body_index);
   std::cout << "compute link7_on_positive_side_a0_rational\n";
-  const std::vector<LinkVertexOnPlaneSideRational>
+  const std::vector<LinkVertexOnPlaneSideRational<symbolic::Variable>>
       link7_on_positive_side_a0_rational =
           GenerateLinkOnOneSideOfPlaneRationalFunction(
               rational_forward_kinematics, link_polytopes[0], X_W7, a0,
@@ -86,7 +86,7 @@ int DoMain() {
         world_to_link7_monomial_basis, verification_option);
   }
   std::cout << "compute link7_on_positive_side_a1_rational\n";
-  const std::vector<LinkVertexOnPlaneSideRational>
+  const std::vector<LinkVertexOnPlaneSideRational<symbolic::Variable>>
       link7_on_positive_side_a1_rational =
           GenerateLinkOnOneSideOfPlaneRationalFunction(
               rational_forward_kinematics, link_polytopes[0], X_W7, a1,

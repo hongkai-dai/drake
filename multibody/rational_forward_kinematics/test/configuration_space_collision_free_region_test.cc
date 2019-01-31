@@ -23,8 +23,8 @@ void CheckGenerateLinkOnOneSideOfPlaneRationalFunction(
     a_A(i) = symbolic::Variable("a_A(" + std::to_string(i) + ")");
     env.insert(a_A(i), a_A_val(i));
   }
-  const std::vector<LinkVertexOnPlaneSideRational> rational_fun =
-      GenerateLinkOnOneSideOfPlaneRationalFunction(
+  const std::vector<LinkVertexOnPlaneSideRational<symbolic::Variable>>
+      rational_fun = GenerateLinkOnOneSideOfPlaneRationalFunction(
           rational_forward_kinematics, link_polytope, q_star,
           expressed_body_index, a_A, p_AC, plane_side);
   const Eigen::VectorXd t_val =

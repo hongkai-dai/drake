@@ -75,7 +75,7 @@ int DoMain() {
       GenerateMonomialBasisWithOrderUpToOne(symbolic::Variables{
           rational_forward_kinematics.FindTOnPath(world, iiwa_link_4)});
 
-  const std::vector<LinkVertexOnPlaneSideRational>
+  const std::vector<LinkVertexOnPlaneSideRational<symbolic::Variable>>
       link7_on_positive_side_a0_rational =
           GenerateLinkOnOneSideOfPlaneRationalFunction(
               rational_forward_kinematics, link_polytopes[0], q_star,
@@ -86,7 +86,7 @@ int DoMain() {
         t_upper_minus_t.tail<3>(), link4_to_7_monomial_basis);
   }
 
-  const std::vector<LinkVertexOnPlaneSideRational>
+  const std::vector<LinkVertexOnPlaneSideRational<symbolic::Variable>>
       box0_on_negative_side_a0_rational =
           GenerateLinkOnOneSideOfPlaneRationalFunction(
               rational_forward_kinematics, obstacle_boxes[0], q_star,
@@ -97,7 +97,7 @@ int DoMain() {
         t_upper_minus_t.head<4>(), world_to_link4_monomial_basis);
   }
 
-  const std::vector<LinkVertexOnPlaneSideRational>
+  const std::vector<LinkVertexOnPlaneSideRational<symbolic::Variable>>
       link7_on_positive_side_a1_rational =
           GenerateLinkOnOneSideOfPlaneRationalFunction(
               rational_forward_kinematics, link_polytopes[0], q_star,
@@ -108,7 +108,7 @@ int DoMain() {
         t_upper_minus_t.tail<3>(), link4_to_7_monomial_basis);
   }
 
-  const std::vector<LinkVertexOnPlaneSideRational>
+  const std::vector<LinkVertexOnPlaneSideRational<symbolic::Variable>>
       box1_on_negative_side_a1_rational =
           GenerateLinkOnOneSideOfPlaneRationalFunction(
               rational_forward_kinematics, obstacle_boxes[1], q_star,
@@ -152,6 +152,7 @@ int DoMain() {
       q_star, filtered_collision_pairs, -Eigen::VectorXd::Ones(7),
       Eigen::VectorXd::Ones(7), 0.15, 0.5, 0.01);
   std::cout << "best rho is " << best_rho << "\n";
+
   return 0;
 }
 }  // namespace multibody

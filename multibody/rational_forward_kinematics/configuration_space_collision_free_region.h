@@ -57,13 +57,14 @@ struct VerificationOption {
  * If the link is on the positive side of the plane, then the rational is
  * aᵀ(x-c)- 1; otherwise it is 1 - aᵀ(x-c).
  */
+template <typename T>
 struct LinkVertexOnPlaneSideRational {
   LinkVertexOnPlaneSideRational(
       symbolic::RationalFunction m_rational,
       std::shared_ptr<const ConvexPolytope> m_link_polytope,
       BodyIndex m_expressed_body_index,
-      const Eigen::Ref<const Eigen::Vector3d>& m_p_BV,
-      const Vector3<symbolic::Variable>& m_a_A, PlaneSide m_plane_side)
+      const Eigen::Ref<const Eigen::Vector3d>& m_p_BV, const Vector3<T>& m_a_A,
+      PlaneSide m_plane_side)
       : rational(std::move(m_rational)),
         link_polytope(m_link_polytope),
         expressed_body_index(m_expressed_body_index),
@@ -75,7 +76,7 @@ struct LinkVertexOnPlaneSideRational {
   const BodyIndex expressed_body_index;
   // The position of the vertex V in link's frame B.
   const Eigen::Vector3d p_BV;
-  const Vector3<symbolic::Variable> a_A;
+  const Vector3<T> a_A;
   const PlaneSide plane_side;
 };
 
@@ -129,7 +130,7 @@ class ConfigurationSpaceCollisionFreeRegion {
    * Generate all the rational functions representing the the link vertices are
    * on the correct side of the planes.
    */
-  std::vector<LinkVertexOnPlaneSideRational>
+  std::vector<LinkVertexOnPlaneSideRational<symbolic::Variable>>
   GenerateLinkOnOneSideOfPlaneRationals(
       const Eigen::Ref<const Eigen::VectorXd>& q_star,
       const FilteredCollisionPairs& filtered_collision_pairs) const;
@@ -150,7 +151,8 @@ class ConfigurationSpaceCollisionFreeRegion {
    */
   std::unique_ptr<solvers::MathematicalProgram>
   ConstructProgramToVerifyCollisionFreeBox(
-      const std::vector<LinkVertexOnPlaneSideRational>& rationals,
+      const std::vector<LinkVertexOnPlaneSideRational<symbolic::Variable>>&
+          rationals,
       const Eigen::Ref<const Eigen::VectorXd>& t_lower,
       const Eigen::Ref<const Eigen::VectorXd>& t_upper,
       const FilteredCollisionPairs& filtered_collision_pairs,
@@ -232,7 +234,7 @@ class ConfigurationSpaceCollisionFreeRegion {
  * =
  * 1 - a_A.dot(p_AVi(t) - p_AC) if @p plane_side = kNegative.
  */
-std::vector<LinkVertexOnPlaneSideRational>
+std::vector<LinkVertexOnPlaneSideRational<symbolic::Variable>>
 GenerateLinkOnOneSideOfPlaneRationalFunction(
     const RationalForwardKinematics& rational_forward_kinematics,
     std::shared_ptr<const ConvexPolytope> link_polytope,
@@ -249,13 +251,22 @@ GenerateLinkOnOneSideOfPlaneRationalFunction(
  * expressed body frame A. Note that this pose is a multilinear function of
  * sinθ and cosθ.
  */
-std::vector<LinkVertexOnPlaneSideRational>
+std::vector<LinkVertexOnPlaneSideRational<symbolic::Variable>>
 GenerateLinkOnOneSideOfPlaneRationalFunction(
     const RationalForwardKinematics& rational_forward_kinematics,
     std::shared_ptr<const ConvexPolytope> link_polytope,
     const RationalForwardKinematics::Pose<symbolic::Polynomial>&
         X_AB_multilinear,
     const Eigen::Ref<const Vector3<symbolic::Variable>>& a_A,
+    const Eigen::Ref<const Eigen::Vector3d>& p_AC, PlaneSide plane_side);
+
+std::vector<LinkVertexOnPlaneSideRational<symbolic::Polynomial>>
+GenerateLinkOnOneSideOfPlaneRationalFunction(
+    const RationalForwardKinematics& rational_forward_kinematics,
+    std::shared_ptr<const ConvexPolytope> link_polytope,
+    const RationalForwardKinematics::Pose<symbolic::Polynomial>&
+        X_AB_multilinear,
+    const Eigen::Ref<const Vector3<symbolic::Polynomial>>& a_A_poly,
     const Eigen::Ref<const Eigen::Vector3d>& p_AC, PlaneSide plane_side);
 
 /** Impose the constraint that

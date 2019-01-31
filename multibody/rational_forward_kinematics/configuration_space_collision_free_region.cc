@@ -60,7 +60,7 @@ bool ConfigurationSpaceCollisionFreeRegion::IsLinkPairCollisionIgnored(
          filtered_collision_pairs.count(std::make_pair(id2, id1)) > 0;
 }
 
-std::vector<LinkVertexOnPlaneSideRational>
+std::vector<LinkVertexOnPlaneSideRational<symbolic::Variable>>
 ConfigurationSpaceCollisionFreeRegion::GenerateLinkOnOneSideOfPlaneRationals(
     const Eigen::Ref<const Eigen::VectorXd>& q_star,
     const FilteredCollisionPairs& filtered_collision_pairs) const {
@@ -69,7 +69,7 @@ ConfigurationSpaceCollisionFreeRegion::GenerateLinkOnOneSideOfPlaneRationals(
 
   const BodyIndex world_index =
       rational_forward_kinematics_.plant().world_body().index();
-  std::vector<LinkVertexOnPlaneSideRational> rationals;
+  std::vector<LinkVertexOnPlaneSideRational<symbolic::Variable>> rationals;
   for (const auto& body_to_polytopes : link_polytopes_) {
     const BodyIndex expressed_body_index = internal::FindBodyInTheMiddleOfChain(
         rational_forward_kinematics_.plant(), world_index,
@@ -107,12 +107,12 @@ ConfigurationSpaceCollisionFreeRegion::GenerateLinkOnOneSideOfPlaneRationals(
                                     .get_body(expressed_body_index)
                                     .body_frame(),
               &p_AC);
-          const std::vector<LinkVertexOnPlaneSideRational>
+          const std::vector<LinkVertexOnPlaneSideRational<symbolic::Variable>>
               positive_side_rationals =
                   GenerateLinkOnOneSideOfPlaneRationalFunction(
                       rational_forward_kinematics_, link_polytope, X_AB, a_A,
                       p_AC, PlaneSide::kPositive);
-          const std::vector<LinkVertexOnPlaneSideRational>
+          const std::vector<LinkVertexOnPlaneSideRational<symbolic::Variable>>
               negative_side_rationals =
                   GenerateLinkOnOneSideOfPlaneRationalFunction(
                       rational_forward_kinematics_, obstacle, X_AW, a_A, p_AC,
@@ -161,7 +161,8 @@ struct KinematicsChainHash {
 
 std::unique_ptr<solvers::MathematicalProgram>
 ConfigurationSpaceCollisionFreeRegion::ConstructProgramToVerifyCollisionFreeBox(
-    const std::vector<LinkVertexOnPlaneSideRational>& rationals,
+    const std::vector<LinkVertexOnPlaneSideRational<symbolic::Variable>>&
+        rationals,
     const Eigen::Ref<const Eigen::VectorXd>& t_lower,
     const Eigen::Ref<const Eigen::VectorXd>& t_upper,
     const FilteredCollisionPairs& filtered_collision_pairs,
@@ -272,8 +273,9 @@ double ConfigurationSpaceCollisionFreeRegion::FindLargestBoxThroughBinarySearch(
   double rho_upper = rho_upper_initial;
   double rho_lower = rho_lower_initial;
 
-  const std::vector<LinkVertexOnPlaneSideRational> rationals =
-      GenerateLinkOnOneSideOfPlaneRationals(q_star, filtered_collision_pairs);
+  const std::vector<LinkVertexOnPlaneSideRational<symbolic::Variable>>
+      rationals = GenerateLinkOnOneSideOfPlaneRationals(
+          q_star, filtered_collision_pairs);
   solvers::MosekSolver solver;
   solver.set_stream_logging(true, "");
   solvers::MathematicalProgramResult result;
@@ -301,7 +303,7 @@ double ConfigurationSpaceCollisionFreeRegion::FindLargestBoxThroughBinarySearch(
   return rho_lower;
 }
 
-std::vector<LinkVertexOnPlaneSideRational>
+std::vector<LinkVertexOnPlaneSideRational<symbolic::Variable>>
 GenerateLinkOnOneSideOfPlaneRationalFunction(
     const RationalForwardKinematics& rational_forward_kinematics,
     std::shared_ptr<const ConvexPolytope> link_polytope,
@@ -318,21 +320,19 @@ GenerateLinkOnOneSideOfPlaneRationalFunction(
       rational_forward_kinematics, link_polytope, X_AB, a_A, p_AC, plane_side);
 }
 
-std::vector<LinkVertexOnPlaneSideRational>
+template <typename T>
+std::vector<LinkVertexOnPlaneSideRational<T>>
 GenerateLinkOnOneSideOfPlaneRationalFunction(
     const RationalForwardKinematics& rational_forward_kinematics,
     std::shared_ptr<const ConvexPolytope> link_polytope,
     const RationalForwardKinematics::Pose<symbolic::Polynomial>&
         X_AB_multilinear,
-    const Eigen::Ref<const Vector3<symbolic::Variable>>& a_A,
+    const Eigen::Ref<const Vector3<T>>& a_A,
+    const Eigen::Ref<const Vector3<symbolic::Polynomial>>& a_A_poly,
     const Eigen::Ref<const Eigen::Vector3d>& p_AC, PlaneSide plane_side) {
-  std::vector<LinkVertexOnPlaneSideRational> rational_fun;
+  std::vector<LinkVertexOnPlaneSideRational<T>> rational_fun;
   rational_fun.reserve(link_polytope->p_BV().cols());
   const symbolic::Monomial monomial_one{};
-  Vector3<symbolic::Polynomial> a_A_poly;
-  for (int i = 0; i < 3; ++i) {
-    a_A_poly(i) = symbolic::Polynomial({{monomial_one, a_A(i)}});
-  }
   for (int i = 0; i < link_polytope->p_BV().cols(); ++i) {
     // Step 1: Compute vertex position.
     const Vector3<symbolic::Polynomial> p_AVi =
@@ -354,6 +354,37 @@ GenerateLinkOnOneSideOfPlaneRationalFunction(
         link_polytope->p_BV().col(i), a_A, plane_side);
   }
   return rational_fun;
+}
+
+std::vector<LinkVertexOnPlaneSideRational<symbolic::Variable>>
+GenerateLinkOnOneSideOfPlaneRationalFunction(
+    const RationalForwardKinematics& rational_forward_kinematics,
+    std::shared_ptr<const ConvexPolytope> link_polytope,
+    const RationalForwardKinematics::Pose<symbolic::Polynomial>&
+        X_AB_multilinear,
+    const Eigen::Ref<const Vector3<symbolic::Variable>>& a_A,
+    const Eigen::Ref<const Eigen::Vector3d>& p_AC, PlaneSide plane_side) {
+  const symbolic::Monomial monomial_one{};
+  Vector3<symbolic::Polynomial> a_A_poly;
+  for (int i = 0; i < 3; ++i) {
+    a_A_poly(i) = symbolic::Polynomial({{monomial_one, a_A(i)}});
+  }
+  return GenerateLinkOnOneSideOfPlaneRationalFunction(
+      rational_forward_kinematics, link_polytope, X_AB_multilinear, a_A,
+      a_A_poly, p_AC, plane_side);
+}
+
+std::vector<LinkVertexOnPlaneSideRational<symbolic::Polynomial>>
+GenerateLinkOnOneSideOfPlaneRationalFunction(
+    const RationalForwardKinematics& rational_forward_kinematics,
+    std::shared_ptr<const ConvexPolytope> link_polytope,
+    const RationalForwardKinematics::Pose<symbolic::Polynomial>&
+        X_AB_multilinear,
+    const Eigen::Ref<const Vector3<symbolic::Polynomial>>& a_A_poly,
+    const Eigen::Ref<const Eigen::Vector3d>& p_AC, PlaneSide plane_side) {
+  return GenerateLinkOnOneSideOfPlaneRationalFunction(
+      rational_forward_kinematics, link_polytope, X_AB_multilinear, a_A_poly,
+      a_A_poly, p_AC, plane_side);
 }
 
 void AddNonnegativeConstraintForPolytopeOnOneSideOfPlane(

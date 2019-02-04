@@ -141,10 +141,10 @@ int DoMain() {
   solvers::MathematicalProgramResult result;
   mosek_solver.Solve(prog, {}, {}, &result);
   std::cout << result.get_solution_result() << "\n";
-  auto A0_val = prog.GetSolution(A0, result);
-  auto A1_val = prog.GetSolution(A1, result);
-  Eigen::Vector3d b0_val = prog.GetSolution(b0, result);
-  Eigen::Vector3d b1_val = prog.GetSolution(b1, result);
+  auto A0_val = result.GetSolution(A0);
+  auto A1_val = result.GetSolution(A1);
+  Eigen::Vector3d b0_val = result.GetSolution(b0);
+  Eigen::Vector3d b1_val = result.GetSolution(b1);
   std::cout << "A0:\n " << A0_val << "\n";
   std::cout << "b0: " << b0_val << "\n";
   std::cout << "A1:\n " << A1_val.transpose() << "\n";
@@ -165,8 +165,8 @@ int DoMain() {
 
   mosek_solver.Solve(*prog2, {}, {}, &result);
   std::cout << result.get_solution_result() << "\n";
-  auto a0_val = prog2->GetSolution(dut.separation_planes()[0].a, result);
-  auto a1_val = prog2->GetSolution(dut.separation_planes()[1].a, result);
+  auto a0_val = result.GetSolution(dut.separation_planes()[0].a);
+  auto a1_val = result.GetSolution(dut.separation_planes()[1].a);
   std::cout << "a0: " << a0_val.transpose() << "\n";
   std::cout << "a1: " << a1_val.transpose() << "\n";
 

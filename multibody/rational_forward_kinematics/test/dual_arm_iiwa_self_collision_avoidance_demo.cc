@@ -106,7 +106,7 @@ int DoMain() {
   Eigen::VectorXd ik_q_init = Eigen::VectorXd::Zero(14);
   snopt_solver.Solve(ik.prog(), ik_q_init, {}, &ik_result);
 
-  Eigen::VectorXd q0 = ik.prog().GetSolution(ik.q(), ik_result);
+  Eigen::VectorXd q0 = ik_result.GetSolution(ik.q());
   std::cout << "IK result: " << ik_result.get_solution_result() << "\n";
   //----------------------------------------------------------------
 
@@ -257,7 +257,7 @@ int DoMain() {
   std::cout << "solution status: " << mosek_solver_details.solution_status
             << "\n";
   if (result.get_solution_result() == solvers::SolutionResult::kSolutionFound) {
-    std::cout << "a: " << prog.GetSolution(a, result).transpose();
+    std::cout << "a: " << result.GetSolution(a).transpose();
   }
 
   return 0;

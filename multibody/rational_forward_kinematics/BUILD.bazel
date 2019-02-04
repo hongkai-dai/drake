@@ -96,6 +96,7 @@ drake_cc_library(
         "//multibody/benchmarks/kuka_iiwa_robot",
         "//multibody/multibody_tree/multibody_plant",
         "//multibody/parsing:parser",
+        "//systems/rendering:multibody_position_to_geometry_pose",
     ],
 )
 
@@ -174,6 +175,25 @@ drake_cc_binary(
         "//multibody/parsing:parser",
         "//multibody/inverse_kinematics:inverse_kinematics",
         "//solvers:mathematical_program",
+        "@gtest//:without_main",
+    ],
+)
+
+drake_cc_binary(
+    name = "iiwa_table_demo",
+    testonly = 1,
+    srcs = ["test/iiwa_table_demo.cc"],
+    deps = [
+        ":configuration_space_collision_free_region",
+        ":rational_forward_kinematics_test_utilities",
+        "//common:find_resource",
+        "//multibody/parsing:parser",
+        "//multibody/inverse_kinematics:inverse_kinematics",
+        "//solvers:mathematical_program",
+        "//geometry:geometry_visualization",
+        "//systems/analysis:simulator",
+        "//systems/rendering:multibody_position_to_geometry_pose",
+        "//systems/primitives:constant_vector_source",
         "@gtest//:without_main",
     ],
 )

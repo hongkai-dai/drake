@@ -156,6 +156,7 @@ int DoMain() {
                                             obstacle_boxes);
   const ConfigurationSpaceCollisionFreeRegion::FilteredCollisionPairs
       filtered_collision_pairs{};
+  q_star << 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1;
   const auto link_vertex_rationals = dut.GenerateLinkOnOneSideOfPlaneRationals(
       q_star, filtered_collision_pairs);
 

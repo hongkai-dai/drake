@@ -256,8 +256,10 @@ double ConfigurationSpaceCollisionFreeRegion::FindLargestBoxThroughBinarySearch(
   DRAKE_DEMAND(rho_lower_initial >= 0);
   DRAKE_DEMAND(rho_lower_initial <= rho_upper_initial);
   DRAKE_DEMAND(rho_tolerance > 0);
-  Eigen::VectorXd q_upper(rational_forward_kinematics_.plant().num_positions());
-  Eigen::VectorXd q_lower(rational_forward_kinematics_.plant().num_positions());
+  const int nq = rational_forward_kinematics_.plant().num_positions();
+  DRAKE_DEMAND(q_star.rows() == nq);
+  Eigen::VectorXd q_upper(nq);
+  Eigen::VectorXd q_lower(nq);
   for (JointIndex i{0}; i < rational_forward_kinematics_.plant().num_joints();
        ++i) {
     const auto& joint = rational_forward_kinematics_.plant().get_joint(i);
@@ -266,10 +268,17 @@ double ConfigurationSpaceCollisionFreeRegion::FindLargestBoxThroughBinarySearch(
     q_lower.segment(joint.position_start(), joint.num_positions()) =
         joint.position_lower_limits();
   }
+  // clamp q_upper to q_star + pi / 2, and q_lower to q_star - pi / 2.
+  Eigen::VectorXd q_upper_clamped(nq);
+  Eigen::VectorXd q_lower_clamped(nq);
+  for (int i = 0; i < nq; ++i) {
+    q_upper_clamped(i) = std::min(q_upper(i), q_star(i) + M_PI_2);
+    q_lower_clamped(i) = std::max(q_lower(i), q_star(i) - M_PI_2);
+  }
   const Eigen::VectorXd t_upper_limit =
-      rational_forward_kinematics_.ComputeTValue(q_upper, q_star);
+      rational_forward_kinematics_.ComputeTValue(q_upper_clamped, q_star);
   const Eigen::VectorXd t_lower_limit =
-      rational_forward_kinematics_.ComputeTValue(q_lower, q_star);
+      rational_forward_kinematics_.ComputeTValue(q_lower_clamped, q_star);
   double rho_upper = rho_upper_initial;
   double rho_lower = rho_lower_initial;
 
@@ -277,7 +286,7 @@ double ConfigurationSpaceCollisionFreeRegion::FindLargestBoxThroughBinarySearch(
       rationals = GenerateLinkOnOneSideOfPlaneRationals(
           q_star, filtered_collision_pairs);
   solvers::MosekSolver solver;
-  solver.set_stream_logging(true, "");
+  solver.set_stream_logging(false, "");
   solvers::MathematicalProgramResult result;
   while (rho_upper - rho_lower > rho_tolerance) {
     const double rho = (rho_upper + rho_lower) / 2;
@@ -286,6 +295,11 @@ double ConfigurationSpaceCollisionFreeRegion::FindLargestBoxThroughBinarySearch(
     for (int i = 0; i < rational_forward_kinematics_.t().size(); ++i) {
       t_lower(i) = std::max(rho * negative_delta_t(i), t_lower_limit(i));
       t_upper(i) = std::min(rho * positive_delta_t(i), t_upper_limit(i));
+      if (std::isinf(t_lower(i)) || std::isinf(t_upper(i))) {
+        throw std::runtime_error(
+            "ConfigurationSpaceCollisionFreeRegion: t_lower = -inf or t_upper "
+            "= inf is not handled yet.");
+      }
     }
     auto prog = ConstructProgramToVerifyCollisionFreeBox(
         rationals, t_lower, t_upper, filtered_collision_pairs,
@@ -294,9 +308,11 @@ double ConfigurationSpaceCollisionFreeRegion::FindLargestBoxThroughBinarySearch(
     if (result.get_solution_result() ==
         solvers::SolutionResult::kSolutionFound) {
       // rho is feasible.
+      std::cout << "rho = " << rho << " is feasible.\n";
       rho_lower = rho;
     } else {
       // rho is infeasible.
+      std::cout << "rho = " << rho << " is infeasible.\n";
       rho_upper = rho;
     }
   }

@@ -84,7 +84,7 @@ int DoMain() {
     VisualizeBodyPoint(&viewer, *plant, *context, iiwa_link[7], p_7V.col(i),
                        0.01, {1, 0, 0, 1}, "gripper_point" + std::to_string(i));
   }
-  std::vector<std::shared_ptr<ConvexPolytope>> link_polytopes;
+  std::vector<std::shared_ptr<const ConvexPolytope>> link_polytopes;
   link_polytopes.push_back(
       std::make_shared<ConvexPolytope>(iiwa_link[7], p_7V));
 
@@ -128,6 +128,49 @@ int DoMain() {
   }
   link_polytopes.push_back(
       std::make_shared<ConvexPolytope>(iiwa_link[5], p_5V1));
+
+  Eigen::Matrix<double, 3, 8> p_4V;
+  p_4V.col(0) << 0.04, -0.02, 0.11;
+  p_4V.col(1) << -0.04, -0.02, 0.11;
+  p_4V.col(2) << 0.06, -0.05, 0;
+  p_4V.col(3) << -0.06, -0.05, 0;
+  p_4V.col(4) << 0.06, 0.12, 0;
+  p_4V.col(5) << -0.06, 0.12, 0;
+  p_4V.col(6) << 0.05, 0.12, 0.09;
+  p_4V.col(7) << -0.05, 0.12, 0.09;
+  for (int i = 0; i < p_4V.cols(); ++i) {
+    VisualizeBodyPoint(&viewer, *plant, *context, iiwa_link[4], p_4V.col(i),
+                       0.01, {1, 0, 0, 1}, "link4_pt" + std::to_string(i));
+  }
+  link_polytopes.push_back(
+      std::make_shared<ConvexPolytope>(iiwa_link[4], p_4V));
+
+  // Add a table.
+  Eigen::Isometry3d X_WT = Eigen::Isometry3d::Identity();
+  X_WT.translation() << 0.5, 0, 0.25;
+  Eigen::Vector3d table_size(0.3, 0.6, 0.5);
+  viewer.PublishGeometry(DrakeShapes::Box(table_size), X_WT, {0, 0, 1, 1},
+                         {"table"});
+
+  std::vector<std::shared_ptr<const ConvexPolytope>> obstacles;
+  obstacles.push_back(std::make_shared<ConvexPolytope>(
+      plant->world_body().index(), GenerateBoxVertices(table_size, X_WT)));
+
+  // Add a box on the table.
+  Eigen::Isometry3d X_WBox1 = Eigen::Isometry3d::Identity();
+  X_WBox1.translation() << 0.5, 0, 0.57;
+  Eigen::Vector3d box1_size(0.15, 0.2, 0.14);
+  viewer.PublishGeometry(DrakeShapes::Box(box1_size), X_WBox1, {0, 0, 1, 1},
+                         {"box1"});
+  obstacles.push_back(std::make_shared<ConvexPolytope>(
+      plant->world_body().index(), GenerateBoxVertices(box1_size, X_WBox1)));
+
+  ConfigurationSpaceCollisionFreeRegion dut(*plant, link_polytopes, obstacles);
+
+  double rho = dut.FindLargestBoxThroughBinarySearch(
+      q, {}, Eigen::VectorXd::Constant(7, -1), Eigen::VectorXd::Constant(7, 1),
+      0, 3, 0.01);
+  std::cout << "rho = " << rho << "\n";
 
   return 0;
 }

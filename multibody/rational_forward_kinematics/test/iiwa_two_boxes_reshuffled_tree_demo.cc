@@ -174,7 +174,8 @@ int DoMain() {
   const double best_rho = dut.FindLargestBoxThroughBinarySearch(
       q_star, filtered_collision_pairs, -Eigen::VectorXd::Ones(7),
       Eigen::VectorXd::Ones(7), 0.15, 0.5, 0.01);
-  std::cout << "best rho is " << best_rho << "\n";
+  std::cout << "best rho is " << best_rho << ", corresponding to angle(deg) "
+            << best_rho / M_PI * 180.0 << "\n";
 
   return 0;
 }

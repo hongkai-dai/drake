@@ -456,8 +456,10 @@ RationalForwardKinematics::CalcLinkPoses(
 
 Eigen::VectorXd RationalForwardKinematics::ComputeTValue(
     const Eigen::Ref<const Eigen::VectorXd>& q_val,
-    const Eigen::Ref<const Eigen::VectorXd>& q_star_val) const {
+    const Eigen::Ref<const Eigen::VectorXd>& q_star_val,
+    bool clamp_angle) const {
   Eigen::VectorXd t_val(t_.size());
+  const double kInf = std::numeric_limits<double>::infinity();
   for (int i = 0; i < t_val.size(); ++i) {
     const internal::Mobilizer<double>& mobilizer =
         internal::GetInternalTree(plant_).get_mobilizer(
@@ -466,6 +468,13 @@ Eigen::VectorXd RationalForwardKinematics::ComputeTValue(
         nullptr) {
       const int q_index = mobilizer.position_start_in_q();
       t_val(i) = std::tan((q_val(q_index) - q_star_val(q_index)) / 2);
+      if (clamp_angle) {
+        if (q_val(q_index) - q_star_val(q_index) >= M_PI) {
+          t_val(i) = kInf;
+        } else if (q_val(q_index) - q_star_val(q_index) <= -M_PI) {
+          t_val(i) = -kInf;
+        }
+      }
     } else {
       throw std::runtime_error("Other joint types are not supported yet.");
     }

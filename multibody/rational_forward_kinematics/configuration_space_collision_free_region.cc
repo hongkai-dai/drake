@@ -246,13 +246,13 @@ ConfigurationSpaceCollisionFreeRegion::ConstructProgramToVerifyCollisionFreeBox(
 double ConfigurationSpaceCollisionFreeRegion::FindLargestBoxThroughBinarySearch(
     const Eigen::Ref<const Eigen::VectorXd>& q_star,
     const FilteredCollisionPairs& filtered_collision_pairs,
-    const Eigen::Ref<const Eigen::VectorXd>& negative_delta_t,
-    const Eigen::Ref<const Eigen::VectorXd>& positive_delta_t,
+    const Eigen::Ref<const Eigen::VectorXd>& negative_delta_q,
+    const Eigen::Ref<const Eigen::VectorXd>& positive_delta_q,
     double rho_lower_initial, double rho_upper_initial, double rho_tolerance,
     const VerificationOption& verification_option) const {
-  DRAKE_DEMAND(negative_delta_t.size() == positive_delta_t.size());
-  DRAKE_DEMAND((negative_delta_t.array() <= 0).all());
-  DRAKE_DEMAND((positive_delta_t.array() >= 0).all());
+  DRAKE_DEMAND(negative_delta_q.size() == positive_delta_q.size());
+  DRAKE_DEMAND((negative_delta_q.array() <= 0).all());
+  DRAKE_DEMAND((positive_delta_q.array() >= 0).all());
   DRAKE_DEMAND(rho_lower_initial >= 0);
   DRAKE_DEMAND(rho_lower_initial <= rho_upper_initial);
   DRAKE_DEMAND(rho_tolerance > 0);
@@ -268,17 +268,10 @@ double ConfigurationSpaceCollisionFreeRegion::FindLargestBoxThroughBinarySearch(
     q_lower.segment(joint.position_start(), joint.num_positions()) =
         joint.position_lower_limits();
   }
-  // clamp q_upper to q_star + pi / 2, and q_lower to q_star - pi / 2.
-  Eigen::VectorXd q_upper_clamped(nq);
-  Eigen::VectorXd q_lower_clamped(nq);
-  for (int i = 0; i < nq; ++i) {
-    q_upper_clamped(i) = std::min(q_upper(i), q_star(i) + M_PI_2);
-    q_lower_clamped(i) = std::max(q_lower(i), q_star(i) - M_PI_2);
-  }
   const Eigen::VectorXd t_upper_limit =
-      rational_forward_kinematics_.ComputeTValue(q_upper_clamped, q_star);
+      rational_forward_kinematics_.ComputeTValue(q_upper, q_star, true);
   const Eigen::VectorXd t_lower_limit =
-      rational_forward_kinematics_.ComputeTValue(q_lower_clamped, q_star);
+      rational_forward_kinematics_.ComputeTValue(q_lower, q_star, true);
   double rho_upper = rho_upper_initial;
   double rho_lower = rho_lower_initial;
 
@@ -292,9 +285,13 @@ double ConfigurationSpaceCollisionFreeRegion::FindLargestBoxThroughBinarySearch(
     const double rho = (rho_upper + rho_lower) / 2;
     Eigen::VectorXd t_lower(rational_forward_kinematics_.t().size());
     Eigen::VectorXd t_upper(rational_forward_kinematics_.t().size());
+    t_lower = rational_forward_kinematics_.ComputeTValue(
+        q_star + rho * negative_delta_q, q_star, true);
+    t_upper = rational_forward_kinematics_.ComputeTValue(
+        q_star + rho * positive_delta_q, q_star, true);
     for (int i = 0; i < rational_forward_kinematics_.t().size(); ++i) {
-      t_lower(i) = std::max(rho * negative_delta_t(i), t_lower_limit(i));
-      t_upper(i) = std::min(rho * positive_delta_t(i), t_upper_limit(i));
+      t_lower(i) = std::max(t_lower(i), t_lower_limit(i));
+      t_upper(i) = std::min(t_upper(i), t_upper_limit(i));
       if (std::isinf(t_lower(i)) || std::isinf(t_upper(i))) {
         throw std::runtime_error(
             "ConfigurationSpaceCollisionFreeRegion: t_lower = -inf or t_upper "

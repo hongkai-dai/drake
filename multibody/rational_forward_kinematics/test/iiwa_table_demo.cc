@@ -169,8 +169,9 @@ int DoMain() {
 
   double rho = dut.FindLargestBoxThroughBinarySearch(
       q, {}, Eigen::VectorXd::Constant(7, -1), Eigen::VectorXd::Constant(7, 1),
-      0, 3, 0.01);
-  std::cout << "rho = " << rho << "\n";
+      0, 1, 0.01);
+  std::cout << "rho = " << rho
+            << ", corresponding to angle (deg): " << rho / M_PI * 180.0 << "\n";
 
   return 0;
 }

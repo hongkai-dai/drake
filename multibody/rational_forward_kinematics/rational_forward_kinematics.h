@@ -99,9 +99,15 @@ class RationalForwardKinematics {
     return map_t_to_mobilizer_;
   }
 
+  /**
+   * compute t = tan((q_val - q_star_val / 2)), while handling the index
+   * matching between q and t. If @p clamp_angle = true, then t = infinity if
+   * q_val >= q_star_val + pi, and t = -infinity if q_val <= q_star_val - pi.
+   */
   Eigen::VectorXd ComputeTValue(
       const Eigen::Ref<const Eigen::VectorXd>& q_val,
-      const Eigen::Ref<const Eigen::VectorXd>& q_star_val) const;
+      const Eigen::Ref<const Eigen::VectorXd>& q_star_val,
+      bool clamp_angle = false) const;
 
   // Return the indeterminates t on the path from start to the end.
   VectorX<symbolic::Variable> FindTOnPath(BodyIndex start, BodyIndex end) const;

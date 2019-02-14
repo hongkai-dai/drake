@@ -165,7 +165,8 @@ int DoMain() {
   obstacles.push_back(std::make_shared<ConvexPolytope>(
       plant->world_body().index(), GenerateBoxVertices(box1_size, X_WBox1)));
 
-  ConfigurationSpaceCollisionFreeRegion dut(*plant, link_polytopes, obstacles);
+  ConfigurationSpaceCollisionFreeRegion dut(*plant, link_polytopes, obstacles,
+                                            SeparatingPlaneOrder::kConstant);
 
   double rho = dut.FindLargestBoxThroughBinarySearch(
       q, {}, Eigen::VectorXd::Constant(7, -1), Eigen::VectorXd::Constant(7, 1),

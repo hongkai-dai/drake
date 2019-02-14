@@ -11,8 +11,11 @@ using symbolic::RationalFunction;
 ConfigurationSpaceCollisionFreeRegion::ConfigurationSpaceCollisionFreeRegion(
     const MultibodyPlant<double>& plant,
     const std::vector<std::shared_ptr<const ConvexPolytope>>& link_polytopes,
-    const std::vector<std::shared_ptr<const ConvexPolytope>>& obstacles)
-    : rational_forward_kinematics_(plant), obstacles_{obstacles} {
+    const std::vector<std::shared_ptr<const ConvexPolytope>>& obstacles,
+    SeparatingPlaneOrder a_order)
+    : rational_forward_kinematics_(plant),
+      obstacles_{obstacles},
+      a_order_{a_order} {
   // First group the link polytopes by the attached link.
   for (const auto& link_polytope : link_polytopes) {
     DRAKE_DEMAND(link_polytope->body_index() != plant.world_body().index());
@@ -30,21 +33,33 @@ ConfigurationSpaceCollisionFreeRegion::ConfigurationSpaceCollisionFreeRegion(
   // By default, we only consider the pairs between a link polytope and a world
   // obstacle.
   separation_planes_.reserve(link_polytopes.size() * obstacles.size());
+  const symbolic::Monomial monomial_one{};
   for (const auto& obstacle : obstacles_) {
     DRAKE_DEMAND(obstacle->body_index() == plant.world_body().index());
     for (const auto& link_polytope_pairs : link_polytopes_) {
       for (const auto& link_polytope : link_polytope_pairs.second) {
-        Vector3<symbolic::Variable> a;
-        for (int i = 0; i < 3; ++i) {
-          a(i) = symbolic::Variable(
-              "a" + std::to_string(separation_planes_.size() * 3 + i));
+        Vector3<symbolic::Polynomial> a;
+        VectorX<symbolic::Variable> a_decision_vars;
+        if (a_order_ == SeparatingPlaneOrder::kConstant) {
+          a_decision_vars.resize(3);
+          for (int i = 0; i < 3; ++i) {
+            a_decision_vars(i) = symbolic::Variable(
+                "a" + std::to_string(separation_planes_.size() * 3 + i));
+            a(i) = symbolic::Polynomial({{monomial_one, a_decision_vars(i)}});
+          }
+        } else if (a_order_ == SeparatingPlaneOrder::kAffine) {
+          throw std::runtime_error(
+              "Add the variables for a in the affine case.");
+        } else {
+          throw std::runtime_error("Unknown order for a.");
         }
         // Expressed body is the middle link in the chain from the world to
         // the link_polytope.
         separation_planes_.emplace_back(
             a, link_polytope, obstacle,
             internal::FindBodyInTheMiddleOfChain(plant, obstacle->body_index(),
-                                                 link_polytope->body_index()));
+                                                 link_polytope->body_index()),
+            a_order, a_decision_vars);
         map_polytopes_to_separation_planes_.emplace(
             std::make_pair(link_polytope->get_id(), obstacle->get_id()),
             &(separation_planes_[separation_planes_.size() - 1]));
@@ -60,7 +75,7 @@ bool ConfigurationSpaceCollisionFreeRegion::IsLinkPairCollisionIgnored(
          filtered_collision_pairs.count(std::make_pair(id2, id1)) > 0;
 }
 
-std::vector<LinkVertexOnPlaneSideRational<symbolic::Variable>>
+std::vector<LinkVertexOnPlaneSideRational>
 ConfigurationSpaceCollisionFreeRegion::GenerateLinkOnOneSideOfPlaneRationals(
     const Eigen::Ref<const Eigen::VectorXd>& q_star,
     const FilteredCollisionPairs& filtered_collision_pairs) const {
@@ -69,7 +84,7 @@ ConfigurationSpaceCollisionFreeRegion::GenerateLinkOnOneSideOfPlaneRationals(
 
   const BodyIndex world_index =
       rational_forward_kinematics_.plant().world_body().index();
-  std::vector<LinkVertexOnPlaneSideRational<symbolic::Variable>> rationals;
+  std::vector<LinkVertexOnPlaneSideRational> rationals;
   for (const auto& body_to_polytopes : link_polytopes_) {
     const BodyIndex expressed_body_index = internal::FindBodyInTheMiddleOfChain(
         rational_forward_kinematics_.plant(), world_index,
@@ -107,16 +122,16 @@ ConfigurationSpaceCollisionFreeRegion::GenerateLinkOnOneSideOfPlaneRationals(
                                     .get_body(expressed_body_index)
                                     .body_frame(),
               &p_AC);
-          const std::vector<LinkVertexOnPlaneSideRational<symbolic::Variable>>
+          const std::vector<LinkVertexOnPlaneSideRational>
               positive_side_rationals =
                   GenerateLinkOnOneSideOfPlaneRationalFunction(
                       rational_forward_kinematics_, link_polytope, X_AB, a_A,
-                      p_AC, PlaneSide::kPositive);
-          const std::vector<LinkVertexOnPlaneSideRational<symbolic::Variable>>
+                      p_AC, PlaneSide::kPositive, a_order_);
+          const std::vector<LinkVertexOnPlaneSideRational>
               negative_side_rationals =
                   GenerateLinkOnOneSideOfPlaneRationalFunction(
                       rational_forward_kinematics_, obstacle, X_AW, a_A, p_AC,
-                      PlaneSide::kNegative);
+                      PlaneSide::kNegative, a_order_);
           // I cannot use "insert" function to append vectors, since
           // LinkVertexOnPlaneSideRational contains const members, hence it does
           // not have an assignment operator.
@@ -161,8 +176,7 @@ struct KinematicsChainHash {
 
 std::unique_ptr<solvers::MathematicalProgram>
 ConfigurationSpaceCollisionFreeRegion::ConstructProgramToVerifyCollisionFreeBox(
-    const std::vector<LinkVertexOnPlaneSideRational<symbolic::Variable>>&
-        rationals,
+    const std::vector<LinkVertexOnPlaneSideRational>& rationals,
     const Eigen::Ref<const Eigen::VectorXd>& t_lower,
     const Eigen::Ref<const Eigen::VectorXd>& t_upper,
     const FilteredCollisionPairs& filtered_collision_pairs,
@@ -177,7 +191,9 @@ ConfigurationSpaceCollisionFreeRegion::ConstructProgramToVerifyCollisionFreeBox(
             separation_plane.positive_side_polytope->get_id(),
             separation_plane.negative_side_polytope->get_id(),
             filtered_collision_pairs)) {
-      prog->AddDecisionVariables(separation_plane.a);
+      if (a_order_ == SeparatingPlaneOrder::kConstant) {
+        prog->AddDecisionVariables(separation_plane.decision_variables);
+      }
     }
   }
 
@@ -275,9 +291,8 @@ double ConfigurationSpaceCollisionFreeRegion::FindLargestBoxThroughBinarySearch(
   double rho_upper = rho_upper_initial;
   double rho_lower = rho_lower_initial;
 
-  const std::vector<LinkVertexOnPlaneSideRational<symbolic::Variable>>
-      rationals = GenerateLinkOnOneSideOfPlaneRationals(
-          q_star, filtered_collision_pairs);
+  const std::vector<LinkVertexOnPlaneSideRational> rationals =
+      GenerateLinkOnOneSideOfPlaneRationals(q_star, filtered_collision_pairs);
   solvers::MosekSolver solver;
   solver.set_stream_logging(false, "");
   solvers::MathematicalProgramResult result;
@@ -316,34 +331,35 @@ double ConfigurationSpaceCollisionFreeRegion::FindLargestBoxThroughBinarySearch(
   return rho_lower;
 }
 
-std::vector<LinkVertexOnPlaneSideRational<symbolic::Variable>>
+std::vector<LinkVertexOnPlaneSideRational>
 GenerateLinkOnOneSideOfPlaneRationalFunction(
     const RationalForwardKinematics& rational_forward_kinematics,
     std::shared_ptr<const ConvexPolytope> link_polytope,
     const Eigen::Ref<const Eigen::VectorXd>& q_star,
     BodyIndex expressed_body_index,
-    const Eigen::Ref<const Vector3<symbolic::Variable>>& a_A,
-    const Eigen::Ref<const Eigen::Vector3d>& p_AC, PlaneSide plane_side) {
+    const Eigen::Ref<const Vector3<symbolic::Polynomial>>& a_A,
+    const Eigen::Ref<const Eigen::Vector3d>& p_AC, PlaneSide plane_side,
+    SeparatingPlaneOrder a_order) {
   // Compute the link pose
   const auto X_AB =
       rational_forward_kinematics.CalcLinkPoseAsMultilinearPolynomial(
           q_star, link_polytope->body_index(), expressed_body_index);
 
   return GenerateLinkOnOneSideOfPlaneRationalFunction(
-      rational_forward_kinematics, link_polytope, X_AB, a_A, p_AC, plane_side);
+      rational_forward_kinematics, link_polytope, X_AB, a_A, p_AC, plane_side,
+      a_order);
 }
 
-template <typename T>
-std::vector<LinkVertexOnPlaneSideRational<T>>
+std::vector<LinkVertexOnPlaneSideRational>
 GenerateLinkOnOneSideOfPlaneRationalFunction(
     const RationalForwardKinematics& rational_forward_kinematics,
     std::shared_ptr<const ConvexPolytope> link_polytope,
     const RationalForwardKinematics::Pose<symbolic::Polynomial>&
         X_AB_multilinear,
-    const Eigen::Ref<const Vector3<T>>& a_A,
-    const Eigen::Ref<const Vector3<symbolic::Polynomial>>& a_A_poly,
-    const Eigen::Ref<const Eigen::Vector3d>& p_AC, PlaneSide plane_side) {
-  std::vector<LinkVertexOnPlaneSideRational<T>> rational_fun;
+    const Eigen::Ref<const Vector3<symbolic::Polynomial>>& a_A,
+    const Eigen::Ref<const Eigen::Vector3d>& p_AC, PlaneSide plane_side,
+    SeparatingPlaneOrder a_order) {
+  std::vector<LinkVertexOnPlaneSideRational> rational_fun;
   rational_fun.reserve(link_polytope->p_BV().cols());
   const symbolic::Monomial monomial_one{};
   for (int i = 0; i < link_polytope->p_BV().cols(); ++i) {
@@ -353,8 +369,7 @@ GenerateLinkOnOneSideOfPlaneRationalFunction(
         X_AB_multilinear.R_AB * link_polytope->p_BV().col(i);
 
     // Step 2: Compute a_A.dot(p_AVi - p_AC)
-    const symbolic::Polynomial point_on_hyperplane_side =
-        a_A_poly.dot(p_AVi - p_AC);
+    const symbolic::Polynomial point_on_hyperplane_side = a_A.dot(p_AVi - p_AC);
 
     // Step 3: Convert the multilinear polynomial to rational function.
     rational_fun.emplace_back(
@@ -364,40 +379,9 @@ GenerateLinkOnOneSideOfPlaneRationalFunction(
                     ? point_on_hyperplane_side - 1
                     : 1 - point_on_hyperplane_side),
         link_polytope, X_AB_multilinear.frame_A_index,
-        link_polytope->p_BV().col(i), a_A, plane_side);
+        link_polytope->p_BV().col(i), a_A, plane_side, a_order);
   }
   return rational_fun;
-}
-
-std::vector<LinkVertexOnPlaneSideRational<symbolic::Variable>>
-GenerateLinkOnOneSideOfPlaneRationalFunction(
-    const RationalForwardKinematics& rational_forward_kinematics,
-    std::shared_ptr<const ConvexPolytope> link_polytope,
-    const RationalForwardKinematics::Pose<symbolic::Polynomial>&
-        X_AB_multilinear,
-    const Eigen::Ref<const Vector3<symbolic::Variable>>& a_A,
-    const Eigen::Ref<const Eigen::Vector3d>& p_AC, PlaneSide plane_side) {
-  const symbolic::Monomial monomial_one{};
-  Vector3<symbolic::Polynomial> a_A_poly;
-  for (int i = 0; i < 3; ++i) {
-    a_A_poly(i) = symbolic::Polynomial({{monomial_one, a_A(i)}});
-  }
-  return GenerateLinkOnOneSideOfPlaneRationalFunction(
-      rational_forward_kinematics, link_polytope, X_AB_multilinear, a_A,
-      a_A_poly, p_AC, plane_side);
-}
-
-std::vector<LinkVertexOnPlaneSideRational<symbolic::Polynomial>>
-GenerateLinkOnOneSideOfPlaneRationalFunction(
-    const RationalForwardKinematics& rational_forward_kinematics,
-    std::shared_ptr<const ConvexPolytope> link_polytope,
-    const RationalForwardKinematics::Pose<symbolic::Polynomial>&
-        X_AB_multilinear,
-    const Eigen::Ref<const Vector3<symbolic::Polynomial>>& a_A_poly,
-    const Eigen::Ref<const Eigen::Vector3d>& p_AC, PlaneSide plane_side) {
-  return GenerateLinkOnOneSideOfPlaneRationalFunction(
-      rational_forward_kinematics, link_polytope, X_AB_multilinear, a_A_poly,
-      a_A_poly, p_AC, plane_side);
 }
 
 void AddNonnegativeConstraintForPolytopeOnOneSideOfPlane(

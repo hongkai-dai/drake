@@ -86,14 +86,15 @@ int DoMain() {
       GenerateMonomialBasisWithOrderUpToOne(symbolic::Variables{
           rational_forward_kinematics.FindTOnPath(world, iiwa_link_4)});
 
+  SeparatingPlaneOrder a_order = SeparatingPlaneOrder::kAffine;
   const auto X_47 =
       rational_forward_kinematics.CalcLinkPoseAsMultilinearPolynomial(
           q_star, link_polytopes[0]->body_index(), expressed_body_index);
-  const std::vector<LinkVertexOnPlaneSideRational<symbolic::Polynomial>>
+  const std::vector<LinkVertexOnPlaneSideRational>
       link7_on_positive_side_a0_rational =
           GenerateLinkOnOneSideOfPlaneRationalFunction(
               rational_forward_kinematics, link_polytopes[0], X_47, a0,
-              p_4C0_star, PlaneSide::kPositive);
+              p_4C0_star, PlaneSide::kPositive, a_order);
   for (const auto& rational : link7_on_positive_side_a0_rational) {
     AddNonnegativeConstraintForPolytopeOnOneSideOfPlane(
         &prog, rational.rational, t_minus_t_lower, t_upper_minus_t,
@@ -103,33 +104,33 @@ int DoMain() {
   const auto X_4W =
       rational_forward_kinematics.CalcLinkPoseAsMultilinearPolynomial(
           q_star, obstacle_boxes[0]->body_index(), expressed_body_index);
-  const std::vector<LinkVertexOnPlaneSideRational<symbolic::Polynomial>>
+  const std::vector<LinkVertexOnPlaneSideRational>
       box0_on_negative_side_a0_rational =
           GenerateLinkOnOneSideOfPlaneRationalFunction(
               rational_forward_kinematics, obstacle_boxes[0], X_4W, a0,
-              p_4C0_star, PlaneSide::kNegative);
+              p_4C0_star, PlaneSide::kNegative, a_order);
   for (const auto& rational : box0_on_negative_side_a0_rational) {
     AddNonnegativeConstraintForPolytopeOnOneSideOfPlane(
         &prog, rational.rational, t_minus_t_lower, t_upper_minus_t,
         world_to_link4_monomial_basis);
   }
 
-  const std::vector<LinkVertexOnPlaneSideRational<symbolic::Polynomial>>
+  const std::vector<LinkVertexOnPlaneSideRational>
       link7_on_positive_side_a1_rational =
           GenerateLinkOnOneSideOfPlaneRationalFunction(
               rational_forward_kinematics, link_polytopes[0], X_47, a1,
-              p_4C1_star, PlaneSide::kPositive);
+              p_4C1_star, PlaneSide::kPositive, a_order);
   for (const auto& rational : link7_on_positive_side_a1_rational) {
     AddNonnegativeConstraintForPolytopeOnOneSideOfPlane(
         &prog, rational.rational, t_minus_t_lower, t_upper_minus_t,
         link4_to_7_monomial_basis);
   }
 
-  const std::vector<LinkVertexOnPlaneSideRational<symbolic::Polynomial>>
+  const std::vector<LinkVertexOnPlaneSideRational>
       box1_on_negative_side_a1_rational =
           GenerateLinkOnOneSideOfPlaneRationalFunction(
               rational_forward_kinematics, obstacle_boxes[1], X_4W, a1,
-              p_4C1_star, PlaneSide::kNegative);
+              p_4C1_star, PlaneSide::kNegative, a_order);
   for (const auto& rational : box1_on_negative_side_a1_rational) {
     AddNonnegativeConstraintForPolytopeOnOneSideOfPlane(
         &prog, rational.rational, t_minus_t_lower, t_upper_minus_t,
@@ -147,13 +148,13 @@ int DoMain() {
   Eigen::Vector3d b1_val = result.GetSolution(b1);
   std::cout << "A0:\n " << A0_val << "\n";
   std::cout << "b0: " << b0_val << "\n";
-  std::cout << "A1:\n " << A1_val.transpose() << "\n";
+  std::cout << "A1:\n " << A1_val << "\n";
   std::cout << "b1: " << b1_val.transpose() << "\n";
 
   //------------------------------------------------------
   // Now run this optimization using ConfigurationSpaceCollisionFreeRegion
-  ConfigurationSpaceCollisionFreeRegion dut(*plant, link_polytopes,
-                                            obstacle_boxes);
+  ConfigurationSpaceCollisionFreeRegion dut(
+      *plant, link_polytopes, obstacle_boxes, SeparatingPlaneOrder::kConstant);
   const ConfigurationSpaceCollisionFreeRegion::FilteredCollisionPairs
       filtered_collision_pairs{};
   q_star << 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1;
@@ -166,8 +167,10 @@ int DoMain() {
 
   mosek_solver.Solve(*prog2, {}, {}, &result);
   std::cout << result.get_solution_result() << "\n";
-  auto a0_val = result.GetSolution(dut.separation_planes()[0].a);
-  auto a1_val = result.GetSolution(dut.separation_planes()[1].a);
+  auto a0_val =
+      result.GetSolution(dut.separation_planes()[0].decision_variables);
+  auto a1_val =
+      result.GetSolution(dut.separation_planes()[1].decision_variables);
   std::cout << "a0: " << a0_val.transpose() << "\n";
   std::cout << "a1: " << a1_val.transpose() << "\n";
 

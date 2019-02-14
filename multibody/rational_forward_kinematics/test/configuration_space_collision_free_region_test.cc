@@ -16,17 +16,25 @@ void CheckGenerateLinkOnOneSideOfPlaneRationalFunction(
     const Eigen::Ref<const Eigen::VectorXd>& q_val,
     BodyIndex expressed_body_index,
     const Eigen::Ref<const Vector3<double>>& a_A_val,
-    const Eigen::Ref<const Eigen::Vector3d>& p_AC, PlaneSide plane_side) {
+    const Eigen::Ref<const Eigen::Vector3d>& p_AC, PlaneSide plane_side,
+    SeparatingPlaneOrder a_order) {
   symbolic::Environment env;
-  Vector3<symbolic::Variable> a_A;
+  Vector3<symbolic::Polynomial> a_A;
+  const symbolic::Monomial monomial_one{};
   for (int i = 0; i < 3; ++i) {
-    a_A(i) = symbolic::Variable("a_A(" + std::to_string(i) + ")");
-    env.insert(a_A(i), a_A_val(i));
+    if (a_order == SeparatingPlaneOrder::kConstant) {
+      Vector3<symbolic::Variable> a_A_var;
+      a_A_var(i) = symbolic::Variable("a_A(" + std::to_string(i) + ")");
+      env.insert(a_A_var(i), a_A_val(i));
+      a_A(i) = symbolic::Polynomial({{monomial_one, a_A_var(i)}});
+    } else {
+      throw std::runtime_error("Need to handle a as an affine function.");
+    }
   }
-  const std::vector<LinkVertexOnPlaneSideRational<symbolic::Variable>>
-      rational_fun = GenerateLinkOnOneSideOfPlaneRationalFunction(
+  const std::vector<LinkVertexOnPlaneSideRational> rational_fun =
+      GenerateLinkOnOneSideOfPlaneRationalFunction(
           rational_forward_kinematics, link_polytope, q_star,
-          expressed_body_index, a_A, p_AC, plane_side);
+          expressed_body_index, a_A, p_AC, plane_side, a_order);
   const Eigen::VectorXd t_val =
       rational_forward_kinematics.ComputeTValue(q_val, q_star);
   for (int i = 0; i < t_val.size(); ++i) {
@@ -95,13 +103,13 @@ TEST_F(IiwaTest, GenerateLinkOnOneSideOfPlaneRationalFunction1) {
   const Eigen::Vector3d p_AC(0.5, -2.1, 0.6);
   CheckGenerateLinkOnOneSideOfPlaneRationalFunction(
       rational_forward_kinematics, link6_polytope, q_star, q, world_, a_A, p_AC,
-      PlaneSide::kPositive);
+      PlaneSide::kPositive, SeparatingPlaneOrder::kConstant);
 
   q << 0.1, -0.2, 0.3, -0.4, 0.5, -0.6, 0.7;
   q_star << -0.25, 0.13, 0.26, 0.65, -0.02, 0.87, 0.42;
   CheckGenerateLinkOnOneSideOfPlaneRationalFunction(
       rational_forward_kinematics, link6_polytope, q_star, q, iiwa_link_[3],
-      a_A, p_AC, PlaneSide::kNegative);
+      a_A, p_AC, PlaneSide::kNegative, SeparatingPlaneOrder::kConstant);
 }
 
 TEST_F(IiwaTest, GenerateLinkOnOneSideOfPlaneRationalFunction2) {
@@ -125,17 +133,17 @@ TEST_F(IiwaTest, GenerateLinkOnOneSideOfPlaneRationalFunction2) {
   const Eigen::Vector3d p_AC(0.5, -2.1, 0.6);
   CheckGenerateLinkOnOneSideOfPlaneRationalFunction(
       rational_forward_kinematics, link3_polytope, q_star, q, iiwa_link_[7],
-      a_A, p_AC, PlaneSide::kPositive);
+      a_A, p_AC, PlaneSide::kPositive, SeparatingPlaneOrder::kConstant);
 
   q << 0.1, -0.2, 0.3, -0.4, 0.5, -0.6, 0.7;
   q_star << -0.25, 0.13, 0.26, 0.65, -0.02, 0.87, 0.42;
   CheckGenerateLinkOnOneSideOfPlaneRationalFunction(
       rational_forward_kinematics, link3_polytope, q_star, q, iiwa_link_[5],
-      a_A, p_AC, PlaneSide::kNegative);
+      a_A, p_AC, PlaneSide::kNegative, SeparatingPlaneOrder::kConstant);
 
   CheckGenerateLinkOnOneSideOfPlaneRationalFunction(
       rational_forward_kinematics, link3_polytope, q_star, q, world_, a_A, p_AC,
-      PlaneSide::kNegative);
+      PlaneSide::kNegative, SeparatingPlaneOrder::kConstant);
 }
 
 class IiwaConfigurationSpaceTest : public IiwaTest {
@@ -176,7 +184,7 @@ class IiwaConfigurationSpaceTest : public IiwaTest {
 TEST_F(IiwaConfigurationSpaceTest, TestConstructor) {
   ConfigurationSpaceCollisionFreeRegion dut(
       *iiwa_, {link7_polytopes_[0], link7_polytopes_[1], link5_polytopes_[0]},
-      obstacles_);
+      obstacles_, SeparatingPlaneOrder::kConstant);
   const ConfigurationSpaceCollisionFreeRegion::FilteredCollisionPairs
       filtered_collision_pairs{std::make_pair(link7_polytopes_[0]->get_id(),
                                               obstacles_[0]->get_id())};
@@ -184,11 +192,10 @@ TEST_F(IiwaConfigurationSpaceTest, TestConstructor) {
   const auto& separation_planes = dut.separation_planes();
   EXPECT_EQ(separation_planes.size(), 6);
 
-  auto CheckSeparationPlane = [&](
-      const SeparationPlane<symbolic::Variable>& separation_plane,
-      ConvexGeometry::Id expected_positive_polytope,
-      ConvexGeometry::Id expected_negative_polytope,
-      BodyIndex expressed_body_index) {
+  auto CheckSeparationPlane = [&](const SeparationPlane& separation_plane,
+                                  ConvexGeometry::Id expected_positive_polytope,
+                                  ConvexGeometry::Id expected_negative_polytope,
+                                  BodyIndex expressed_body_index) {
     EXPECT_EQ(separation_plane.positive_side_polytope->get_id(),
               expected_positive_polytope);
     EXPECT_EQ(separation_plane.negative_side_polytope->get_id(),
@@ -219,7 +226,7 @@ TEST_F(IiwaConfigurationSpaceTest, TestConstructor) {
 TEST_F(IiwaConfigurationSpaceTest, GenerateLinkOnOneSideOfPlanePolynomials) {
   ConfigurationSpaceCollisionFreeRegion dut(
       *iiwa_, {link7_polytopes_[0], link7_polytopes_[1], link5_polytopes_[0]},
-      obstacles_);
+      obstacles_, SeparatingPlaneOrder::kConstant);
 
   EXPECT_EQ(dut.separation_planes().size(), 6);
 

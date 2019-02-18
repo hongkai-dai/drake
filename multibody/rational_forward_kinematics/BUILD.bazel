@@ -135,12 +135,23 @@ drake_cc_googletest(
     ],
 )
 
+drake_cc_library(
+    name = "iiwa_two_boxes_demo_utilities",
+    testonly = 1,
+    hdrs = ["test/iiwa_two_boxes_demo_utilities.h"],
+    srcs = ["test/iiwa_two_boxes_demo_utilities.cc"],
+    deps = [
+        ":rational_forward_kinematics_test_utilities",
+    ],
+)
+
 drake_cc_binary(
     name = "iiwa_two_boxes_demo",
     testonly = 1,
     srcs = ["test/iiwa_two_boxes_demo.cc"],
     deps = [
         ":rational_forward_kinematics_test_utilities",
+        ":iiwa_two_boxes_demo_utilities",
         "//solvers:mathematical_program",
         "@gflags",
     ]
@@ -152,10 +163,24 @@ drake_cc_binary(
     srcs = ["test/iiwa_two_boxes_reshuffled_tree_demo.cc"],
     deps = [
         ":rational_forward_kinematics_test_utilities",
+        ":iiwa_two_boxes_demo_utilities",
         "//solvers:mathematical_program",
         "@gflags",
     ],
 )
+
+drake_cc_binary(
+    name = "iiwa_two_boxes_affine_separating_plane_demo",
+    testonly = 1,
+    srcs = ["test/iiwa_two_boxes_affine_separating_plane_demo.cc"],
+    deps = [
+        ":rational_forward_kinematics_test_utilities",
+        ":iiwa_two_boxes_demo_utilities",
+        "//solvers:mathematical_program",
+        "@gflags",
+    ],
+)
+
 drake_cc_googletest(
     name = "convex_geometry_test",
     deps = [

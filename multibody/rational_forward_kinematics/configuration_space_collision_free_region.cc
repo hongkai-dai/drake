@@ -8,6 +8,32 @@ namespace drake {
 namespace multibody {
 using symbolic::RationalFunction;
 
+namespace {
+struct OrderedKinematicsChain {
+  OrderedKinematicsChain(BodyIndex m_end1, BodyIndex m_end2) {
+    if (m_end1 < m_end2) {
+      end1 = m_end1;
+      end2 = m_end2;
+    } else {
+      end1 = m_end2;
+      end2 = m_end1;
+    }
+  }
+
+  bool operator==(const OrderedKinematicsChain& other) const {
+    return end1 == other.end1 && end2 == other.end2;
+  }
+  BodyIndex end1;
+  BodyIndex end2;
+};
+
+struct OrderedKinematicsChainHash {
+  size_t operator()(const OrderedKinematicsChain& c) const {
+    return c.end1 * 100 + c.end2;
+  }
+};
+}  // namespace
+
 ConfigurationSpaceCollisionFreeRegion::ConfigurationSpaceCollisionFreeRegion(
     const MultibodyPlant<double>& plant,
     const std::vector<std::shared_ptr<const ConvexPolytope>>& link_polytopes,
@@ -33,23 +59,60 @@ ConfigurationSpaceCollisionFreeRegion::ConfigurationSpaceCollisionFreeRegion(
   // By default, we only consider the pairs between a link polytope and a world
   // obstacle.
   separation_planes_.reserve(link_polytopes.size() * obstacles.size());
-  const symbolic::Monomial monomial_one{};
+  // Create a map from the pair of obstacle and link to the vector containing
+  // all t on the kinematics chain from the obstacle to the link. These t are
+  // used for the separating plane normal a, when a is an affine function of t.
+  std::unordered_map<OrderedKinematicsChain, VectorX<symbolic::Variable>,
+                     OrderedKinematicsChainHash>
+      map_link_obstacle_to_t;
   for (const auto& obstacle : obstacles_) {
     DRAKE_DEMAND(obstacle->body_index() == plant.world_body().index());
     for (const auto& link_polytope_pairs : link_polytopes_) {
       for (const auto& link_polytope : link_polytope_pairs.second) {
-        Vector3<symbolic::Polynomial> a;
+        Vector3<symbolic::Expression> a;
         VectorX<symbolic::Variable> a_decision_vars;
         if (a_order_ == SeparatingPlaneOrder::kConstant) {
           a_decision_vars.resize(3);
           for (int i = 0; i < 3; ++i) {
             a_decision_vars(i) = symbolic::Variable(
                 "a" + std::to_string(separation_planes_.size() * 3 + i));
-            a(i) = symbolic::Polynomial({{monomial_one, a_decision_vars(i)}});
+            a(i) = a_decision_vars(i);
           }
         } else if (a_order_ == SeparatingPlaneOrder::kAffine) {
-          throw std::runtime_error(
-              "Add the variables for a in the affine case.");
+          // Get t on the kinematics chain.
+          const OrderedKinematicsChain link_obstacle(
+              link_polytope->body_index(), obstacle->body_index());
+          auto it = map_link_obstacle_to_t.find(link_obstacle);
+          VectorX<symbolic::Variable> t_on_chain;
+          if (it == map_link_obstacle_to_t.end()) {
+            t_on_chain = rational_forward_kinematics_.FindTOnPath(
+                obstacle->body_index(), link_polytope->body_index());
+            map_link_obstacle_to_t.emplace_hint(it, link_obstacle, t_on_chain);
+          } else {
+            t_on_chain = it->second;
+          }
+          // Now create the variable A and b, such that a = A*t_on_chain + b
+          // A has size 3 * t_on_chain.rows().
+          // The first 3 * t_on_chain.rows() in a_decision_vars are for A, the
+          // bottom 3 entries are for b.
+          a_decision_vars.resize(3 * t_on_chain.rows() + 3);
+          Matrix3X<symbolic::Variable> A(3, t_on_chain.rows());
+          Vector3<symbolic::Variable> b;
+          for (int j = 0; j < t_on_chain.rows(); ++j) {
+            for (int i = 0; i < 3; ++i) {
+              A(i, j) = symbolic::Variable(
+                  "A" + std::to_string(separation_planes_.size()) + "[" +
+                  std::to_string(3 * j + i) + "]");
+              a_decision_vars(3 * j + i) = A(i, j);
+            }
+          }
+          for (int i = 0; i < 3; ++i) {
+            b(i) = symbolic::Variable(
+                "b" + std::to_string(separation_planes_.size()) + "[" +
+                std::to_string(i) + "]");
+            a_decision_vars(3 * t_on_chain.rows() + i) = b(i);
+          }
+          a = A * t_on_chain + b;
         } else {
           throw std::runtime_error("Unknown order for a.");
         }
@@ -125,13 +188,13 @@ ConfigurationSpaceCollisionFreeRegion::GenerateLinkOnOneSideOfPlaneRationals(
           const std::vector<LinkVertexOnPlaneSideRational>
               positive_side_rationals =
                   GenerateLinkOnOneSideOfPlaneRationalFunction(
-                      rational_forward_kinematics_, link_polytope, X_AB, a_A,
-                      p_AC, PlaneSide::kPositive, a_order_);
+                      rational_forward_kinematics_, link_polytope, obstacle,
+                      X_AB, a_A, p_AC, PlaneSide::kPositive, a_order_);
           const std::vector<LinkVertexOnPlaneSideRational>
               negative_side_rationals =
                   GenerateLinkOnOneSideOfPlaneRationalFunction(
-                      rational_forward_kinematics_, obstacle, X_AW, a_A, p_AC,
-                      PlaneSide::kNegative, a_order_);
+                      rational_forward_kinematics_, obstacle, link_polytope,
+                      X_AW, a_A, p_AC, PlaneSide::kNegative, a_order_);
           // I cannot use "insert" function to append vectors, since
           // LinkVertexOnPlaneSideRational contains const members, hence it does
           // not have an assignment operator.
@@ -149,29 +212,92 @@ ConfigurationSpaceCollisionFreeRegion::GenerateLinkOnOneSideOfPlaneRationals(
 }
 
 namespace {
-struct KinematicsChain {
-  KinematicsChain(BodyIndex m_end1, BodyIndex m_end2) {
-    if (m_end1 < m_end2) {
-      end1 = m_end1;
-      end2 = m_end2;
-    } else {
-      end1 = m_end2;
-      end2 = m_end1;
-    }
+// This struct is only used in ConstructProgramToVerifyCollisionFreeBox.
+struct UnorderedKinematicsChain {
+  UnorderedKinematicsChain(BodyIndex m_start, BodyIndex m_end)
+      : start(m_start), end(m_end) {}
+
+  bool operator==(const UnorderedKinematicsChain& other) const {
+    return start == other.start && end == other.end;
   }
 
-  bool operator==(const KinematicsChain& other) const {
-    return end1 == other.end1 && end2 == other.end2;
-  }
-  BodyIndex end1;
-  BodyIndex end2;
+  BodyIndex start;
+  BodyIndex end;
 };
 
-struct KinematicsChainHash {
-  size_t operator()(const KinematicsChain& c) const {
-    return c.end1 * 100 + c.end2;
+struct UnorderedKinematicsChainHash {
+  size_t operator()(const UnorderedKinematicsChain& p) const {
+    return p.start * 100 + p.end;
   }
 };
+
+void FindMonomialBasisForConstantSeparatingPlane(
+    const RationalForwardKinematics& rational_forward_kinematics,
+    const LinkVertexOnPlaneSideRational& rational,
+    std::unordered_map<
+        OrderedKinematicsChain,
+        std::pair<VectorX<symbolic::Variable>, VectorX<symbolic::Monomial>>,
+        OrderedKinematicsChainHash>*
+        map_ordered_kinematics_chain_to_monomial_basis,
+    VectorX<symbolic::Variable>* t_chain,
+    VectorX<symbolic::Monomial>* monomial_basis_chain) {
+  DRAKE_DEMAND(rational.a_order == SeparatingPlaneOrder::kConstant);
+  // First check if the monomial basis for this kinematics chain has been
+  // computed.
+  const OrderedKinematicsChain ordered_kinematics_chain(
+      rational.link_polytope->body_index(), rational.expressed_body_index);
+  const auto it = map_ordered_kinematics_chain_to_monomial_basis->find(
+      ordered_kinematics_chain);
+  if (it == map_ordered_kinematics_chain_to_monomial_basis->end()) {
+    *t_chain = rational_forward_kinematics.FindTOnPath(
+        rational.link_polytope->body_index(), rational.expressed_body_index);
+    *monomial_basis_chain =
+        GenerateMonomialBasisWithOrderUpToOne(symbolic::Variables(*t_chain));
+    map_ordered_kinematics_chain_to_monomial_basis->emplace_hint(
+        it, std::make_pair(ordered_kinematics_chain,
+                           std::make_pair(*t_chain, *monomial_basis_chain)));
+  } else {
+    *t_chain = it->second.first;
+    *monomial_basis_chain = it->second.second;
+  }
+}
+
+void FindMonomialBasisForAffineSeparatingPlane(
+    const RationalForwardKinematics& rational_forward_kinematics,
+    const LinkVertexOnPlaneSideRational& rational,
+    std::unordered_map<
+        UnorderedKinematicsChain,
+        std::pair<VectorX<symbolic::Variable>, VectorX<symbolic::Monomial>>,
+        UnorderedKinematicsChainHash>*
+        map_unordered_kinematics_chain_to_monomial_basis,
+    VectorX<symbolic::Variable>* t_chain,
+    VectorX<symbolic::Monomial>* monomial_basis_chain) {
+  DRAKE_DEMAND(rational.a_order == SeparatingPlaneOrder::kAffine);
+  // First check if the monomial basis for this kinematics chain has been
+  // computed.
+  const UnorderedKinematicsChain unordered_kinematics_chain(
+      rational.link_polytope->body_index(),
+      rational.other_side_link_polytope->body_index());
+  const auto it = map_unordered_kinematics_chain_to_monomial_basis->find(
+      unordered_kinematics_chain);
+  if (it == map_unordered_kinematics_chain_to_monomial_basis->end()) {
+    *t_chain = rational_forward_kinematics.FindTOnPath(
+        rational.link_polytope->body_index(),
+        rational.other_side_link_polytope->body_index());
+    const VectorX<symbolic::Variable> t_monomial =
+        rational_forward_kinematics.FindTOnPath(
+            rational.link_polytope->body_index(),
+            rational.expressed_body_index);
+    *monomial_basis_chain =
+        GenerateMonomialBasisWithOrderUpToOne(symbolic::Variables(t_monomial));
+    map_unordered_kinematics_chain_to_monomial_basis->emplace_hint(
+        it, std::make_pair(unordered_kinematics_chain,
+                           std::make_pair(*t_chain, *monomial_basis_chain)));
+  } else {
+    *t_chain = it->second.first;
+    *monomial_basis_chain = it->second.second;
+  }
+}
 }  // namespace
 
 std::unique_ptr<solvers::MathematicalProgram>
@@ -191,9 +317,7 @@ ConfigurationSpaceCollisionFreeRegion::ConstructProgramToVerifyCollisionFreeBox(
             separation_plane.positive_side_polytope->get_id(),
             separation_plane.negative_side_polytope->get_id(),
             filtered_collision_pairs)) {
-      if (a_order_ == SeparatingPlaneOrder::kConstant) {
-        prog->AddDecisionVariables(separation_plane.decision_variables);
-      }
+      prog->AddDecisionVariables(separation_plane.decision_variables);
     }
   }
 
@@ -216,31 +340,45 @@ ConfigurationSpaceCollisionFreeRegion::ConstructProgramToVerifyCollisionFreeBox(
 
   // map the kinematics chain to (t_chain, monomial_basis), where t_chain are
   // t on the kinematics chain.
-  std::unordered_map<KinematicsChain, std::pair<VectorX<symbolic::Variable>,
-                                                VectorX<symbolic::Monomial>>,
-                     KinematicsChainHash>
-      map_kinematics_chain_to_monomial_basis;
+  //
+  // Case 1. when we use constant separating plane
+  // (SeparationPlaneOrder::kConstraint), we consider the chain from the
+  // expressed body to the link (or the obstacle). In this case, t - t_lower and
+  // t_upper - t contains the t on this chain, also the monomial basis are
+  // generated from t on this chain.
+  //
+  // Case 2. when we use affine separating plane (a = A * t + b). In this case
+  // t - t_lower and t_upper - t contains the t on the chain from the link to
+  // the obstacle, while the monomial basis are generated from t on the "half
+  // chain" from the expressed body to the link (or the obstacle).
+
+  // This is for Constant separating plane.
+  std::unordered_map<
+      OrderedKinematicsChain,
+      std::pair<VectorX<symbolic::Variable>, VectorX<symbolic::Monomial>>,
+      OrderedKinematicsChainHash>
+      map_ordered_kinematics_chain_to_monomial_basis;
+
+  // This is for affine separating plane.
+  std::unordered_map<
+      UnorderedKinematicsChain,
+      std::pair<VectorX<symbolic::Variable>, VectorX<symbolic::Monomial>>,
+      UnorderedKinematicsChainHash>
+      map_unordered_kinematics_chain_to_monomial_basis;
 
   for (const auto& rational : rationals) {
-    // First check if the monomial basis for this kinematics chain has been
-    // computed.
-    const KinematicsChain rational_kinematics_chain(
-        rational.link_polytope->body_index(), rational.expressed_body_index);
-    const auto it =
-        map_kinematics_chain_to_monomial_basis.find(rational_kinematics_chain);
     VectorX<symbolic::Variable> t_chain;
     VectorX<symbolic::Monomial> monomial_basis_chain;
-    if (it == map_kinematics_chain_to_monomial_basis.end()) {
-      t_chain = rational_forward_kinematics_.FindTOnPath(
-          rational.link_polytope->body_index(), rational.expressed_body_index);
-      monomial_basis_chain =
-          GenerateMonomialBasisWithOrderUpToOne(symbolic::Variables(t_chain));
-      map_kinematics_chain_to_monomial_basis.emplace_hint(
-          it, std::make_pair(rational_kinematics_chain,
-                             std::make_pair(t_chain, monomial_basis_chain)));
-    } else {
-      t_chain = it->second.first;
-      monomial_basis_chain = it->second.second;
+    if (a_order_ == SeparatingPlaneOrder::kConstant) {
+      FindMonomialBasisForConstantSeparatingPlane(
+          rational_forward_kinematics_, rational,
+          &map_ordered_kinematics_chain_to_monomial_basis, &t_chain,
+          &monomial_basis_chain);
+    } else if (a_order_ == SeparatingPlaneOrder::kAffine) {
+      FindMonomialBasisForAffineSeparatingPlane(
+          rational_forward_kinematics_, rational,
+          &map_unordered_kinematics_chain_to_monomial_basis, &t_chain,
+          &monomial_basis_chain);
     }
     VectorX<symbolic::Polynomial> t_minus_t_lower(t_chain.size());
     VectorX<symbolic::Polynomial> t_upper_minus_t(t_chain.size());
@@ -272,6 +410,10 @@ double ConfigurationSpaceCollisionFreeRegion::FindLargestBoxThroughBinarySearch(
   DRAKE_DEMAND(rho_lower_initial >= 0);
   DRAKE_DEMAND(rho_lower_initial <= rho_upper_initial);
   DRAKE_DEMAND(rho_tolerance > 0);
+  DRAKE_DEMAND(
+      ((positive_delta_q * rho_upper_initial).array() <= M_PI_2).all());
+  DRAKE_DEMAND(
+      ((negative_delta_q * rho_upper_initial).array() >= -M_PI_2).all());
   const int nq = rational_forward_kinematics_.plant().num_positions();
   DRAKE_DEMAND(q_star.rows() == nq);
   Eigen::VectorXd q_upper(nq);
@@ -335,9 +477,10 @@ std::vector<LinkVertexOnPlaneSideRational>
 GenerateLinkOnOneSideOfPlaneRationalFunction(
     const RationalForwardKinematics& rational_forward_kinematics,
     std::shared_ptr<const ConvexPolytope> link_polytope,
+    std::shared_ptr<const ConvexPolytope> other_side_link_polytope,
     const Eigen::Ref<const Eigen::VectorXd>& q_star,
     BodyIndex expressed_body_index,
-    const Eigen::Ref<const Vector3<symbolic::Polynomial>>& a_A,
+    const Eigen::Ref<const Vector3<symbolic::Expression>>& a_A,
     const Eigen::Ref<const Eigen::Vector3d>& p_AC, PlaneSide plane_side,
     SeparatingPlaneOrder a_order) {
   // Compute the link pose
@@ -346,22 +489,27 @@ GenerateLinkOnOneSideOfPlaneRationalFunction(
           q_star, link_polytope->body_index(), expressed_body_index);
 
   return GenerateLinkOnOneSideOfPlaneRationalFunction(
-      rational_forward_kinematics, link_polytope, X_AB, a_A, p_AC, plane_side,
-      a_order);
+      rational_forward_kinematics, link_polytope, other_side_link_polytope,
+      X_AB, a_A, p_AC, plane_side, a_order);
 }
 
 std::vector<LinkVertexOnPlaneSideRational>
 GenerateLinkOnOneSideOfPlaneRationalFunction(
     const RationalForwardKinematics& rational_forward_kinematics,
     std::shared_ptr<const ConvexPolytope> link_polytope,
+    std::shared_ptr<const ConvexPolytope> other_side_link_polytope,
     const RationalForwardKinematics::Pose<symbolic::Polynomial>&
         X_AB_multilinear,
-    const Eigen::Ref<const Vector3<symbolic::Polynomial>>& a_A,
+    const Eigen::Ref<const Vector3<symbolic::Expression>>& a_A,
     const Eigen::Ref<const Eigen::Vector3d>& p_AC, PlaneSide plane_side,
     SeparatingPlaneOrder a_order) {
   std::vector<LinkVertexOnPlaneSideRational> rational_fun;
   rational_fun.reserve(link_polytope->p_BV().cols());
   const symbolic::Monomial monomial_one{};
+  Vector3<symbolic::Polynomial> a_A_poly;
+  for (int i = 0; i < 3; ++i) {
+    a_A_poly(i) = symbolic::Polynomial({{monomial_one, a_A(i)}});
+  }
   for (int i = 0; i < link_polytope->p_BV().cols(); ++i) {
     // Step 1: Compute vertex position.
     const Vector3<symbolic::Polynomial> p_AVi =
@@ -369,7 +517,8 @@ GenerateLinkOnOneSideOfPlaneRationalFunction(
         X_AB_multilinear.R_AB * link_polytope->p_BV().col(i);
 
     // Step 2: Compute a_A.dot(p_AVi - p_AC)
-    const symbolic::Polynomial point_on_hyperplane_side = a_A.dot(p_AVi - p_AC);
+    const symbolic::Polynomial point_on_hyperplane_side =
+        a_A_poly.dot(p_AVi - p_AC);
 
     // Step 3: Convert the multilinear polynomial to rational function.
     rational_fun.emplace_back(
@@ -378,7 +527,7 @@ GenerateLinkOnOneSideOfPlaneRationalFunction(
                 plane_side == PlaneSide::kPositive
                     ? point_on_hyperplane_side - 1
                     : 1 - point_on_hyperplane_side),
-        link_polytope, X_AB_multilinear.frame_A_index,
+        link_polytope, X_AB_multilinear.frame_A_index, other_side_link_polytope,
         link_polytope->p_BV().col(i), a_A, plane_side, a_order);
   }
   return rational_fun;

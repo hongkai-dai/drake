@@ -28,7 +28,7 @@ enum class SeparatingPlaneOrder {
  */
 struct SeparationPlane {
   SeparationPlane(
-      const Vector3<symbolic::Polynomial>& m_a,
+      const Vector3<symbolic::Expression>& m_a,
       std::shared_ptr<const ConvexPolytope> m_positive_side_polytope,
       std::shared_ptr<const ConvexPolytope> m_negative_side_polytope,
       BodyIndex m_expressed_link, SeparatingPlaneOrder m_a_order,
@@ -39,7 +39,7 @@ struct SeparationPlane {
         expressed_link{m_expressed_link},
         a_order{m_a_order},
         decision_variables{m_decision_variables} {}
-  const Vector3<symbolic::Polynomial> a;
+  const Vector3<symbolic::Expression> a;
   std::shared_ptr<const ConvexPolytope> positive_side_polytope;
   std::shared_ptr<const ConvexPolytope> negative_side_polytope;
   // The link frame in which a is expressed.
@@ -74,12 +74,14 @@ struct LinkVertexOnPlaneSideRational {
       symbolic::RationalFunction m_rational,
       std::shared_ptr<const ConvexPolytope> m_link_polytope,
       BodyIndex m_expressed_body_index,
+      std::shared_ptr<const ConvexPolytope> m_other_side_link_polytope,
       const Eigen::Ref<const Eigen::Vector3d>& m_p_BV,
-      const Vector3<symbolic::Polynomial>& m_a_A, PlaneSide m_plane_side,
+      const Vector3<symbolic::Expression>& m_a_A, PlaneSide m_plane_side,
       SeparatingPlaneOrder m_a_order)
       : rational(std::move(m_rational)),
         link_polytope(m_link_polytope),
         expressed_body_index(m_expressed_body_index),
+        other_side_link_polytope(m_other_side_link_polytope),
         p_BV(m_p_BV),
         a_A(m_a_A),
         plane_side(m_plane_side),
@@ -87,9 +89,10 @@ struct LinkVertexOnPlaneSideRational {
   const symbolic::RationalFunction rational;
   const std::shared_ptr<const ConvexPolytope> link_polytope;
   const BodyIndex expressed_body_index;
+  const std::shared_ptr<const ConvexPolytope> other_side_link_polytope;
   // The position of the vertex V in link's frame B.
   const Eigen::Vector3d p_BV;
-  const Vector3<symbolic::Polynomial> a_A;
+  const Vector3<symbolic::Expression> a_A;
   const PlaneSide plane_side;
   const SeparatingPlaneOrder a_order;
 };
@@ -220,38 +223,36 @@ class ConfigurationSpaceCollisionFreeRegion {
 
 /**
  * Generate the rational functions a_A.dot(p_AVi(t) - p_AC) <= 1 (or >= 1)
- * which
- * represents that the link (whose vertex Vi has position p_AVi in frame A) is
- * on the negative (or positive, respectively) side of the hyperplane.
+ * which represents that the link (whose vertex Vi has position p_AVi in frame
+ * A) is on the negative (or positive, respectively) side of the hyperplane.
  * @param rational_forward_kinematics The utility class that computes the
  * position of Vi in A's frame as a rational function of t.
  * @param link_polytope The polytopic representation of the link collision
  * geometry, Vi is the i'th vertex of the polytope.
+ * @param other_side_link_polytope The plane separates two polytopes @p
+ * link_polytope and @p other_side_link_polytope.
  * @param q_star The nominal configuration.
  * @param expressed_body_index Frame A in the documentation above. The body in
  * which the position is expressed in.
  * @param a_A The normal vector of the plane. This vector is expressed in
- * frame
- * A.
+ * frame A.
  * @param p_AC The point within the interior of the negative side of the
  * plane.
  * @param plane_side Whether the link is on the positive or the negative side
- * of
- * the plane.
+ * of the plane.
  * @return rational_fun rational_fun[i] should be non-negative to represent
- * that
- * the vertiex i is on the correct side of the plane. rational_fun[i] =
+ * that the vertiex i is on the correct side of the plane. rational_fun[i] =
  * a_A.dot(p_AVi(t) - p_AC) - 1 if @p plane_side = kPositive, rational_fun[i]
- * =
- * 1 - a_A.dot(p_AVi(t) - p_AC) if @p plane_side = kNegative.
+ * = 1 - a_A.dot(p_AVi(t) - p_AC) if @p plane_side = kNegative.
  */
 std::vector<LinkVertexOnPlaneSideRational>
 GenerateLinkOnOneSideOfPlaneRationalFunction(
     const RationalForwardKinematics& rational_forward_kinematics,
     std::shared_ptr<const ConvexPolytope> link_polytope,
+    std::shared_ptr<const ConvexPolytope> other_side_link_polytope,
     const Eigen::Ref<const Eigen::VectorXd>& q_star,
     BodyIndex expressed_body_index,
-    const Eigen::Ref<const Vector3<symbolic::Polynomial>>& a_A,
+    const Eigen::Ref<const Vector3<symbolic::Expression>>& a_A,
     const Eigen::Ref<const Eigen::Vector3d>& p_AC, PlaneSide plane_side,
     SeparatingPlaneOrder a_order);
 
@@ -267,9 +268,10 @@ std::vector<LinkVertexOnPlaneSideRational>
 GenerateLinkOnOneSideOfPlaneRationalFunction(
     const RationalForwardKinematics& rational_forward_kinematics,
     std::shared_ptr<const ConvexPolytope> link_polytope,
+    std::shared_ptr<const ConvexPolytope> other_side_link_polytope,
     const RationalForwardKinematics::Pose<symbolic::Polynomial>&
         X_AB_multilinear,
-    const Eigen::Ref<const Vector3<symbolic::Polynomial>>& a_A,
+    const Eigen::Ref<const Vector3<symbolic::Expression>>& a_A,
     const Eigen::Ref<const Eigen::Vector3d>& p_AC, PlaneSide plane_side,
     SeparatingPlaneOrder a_order);
 

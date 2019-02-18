@@ -12,6 +12,7 @@ namespace multibody {
 void CheckGenerateLinkOnOneSideOfPlaneRationalFunction(
     const RationalForwardKinematics& rational_forward_kinematics,
     const std::shared_ptr<const ConvexPolytope> link_polytope,
+    const std::shared_ptr<const ConvexPolytope> other_side_link_polytope,
     const Eigen::Ref<const Eigen::VectorXd>& q_star,
     const Eigen::Ref<const Eigen::VectorXd>& q_val,
     BodyIndex expressed_body_index,
@@ -19,22 +20,25 @@ void CheckGenerateLinkOnOneSideOfPlaneRationalFunction(
     const Eigen::Ref<const Eigen::Vector3d>& p_AC, PlaneSide plane_side,
     SeparatingPlaneOrder a_order) {
   symbolic::Environment env;
-  Vector3<symbolic::Polynomial> a_A;
+  Vector3<symbolic::Expression> a_A;
   const symbolic::Monomial monomial_one{};
   for (int i = 0; i < 3; ++i) {
     if (a_order == SeparatingPlaneOrder::kConstant) {
       Vector3<symbolic::Variable> a_A_var;
       a_A_var(i) = symbolic::Variable("a_A(" + std::to_string(i) + ")");
       env.insert(a_A_var(i), a_A_val(i));
-      a_A(i) = symbolic::Polynomial({{monomial_one, a_A_var(i)}});
+      a_A(i) = a_A_var(i);
     } else {
       throw std::runtime_error("Need to handle a as an affine function.");
     }
   }
   const std::vector<LinkVertexOnPlaneSideRational> rational_fun =
       GenerateLinkOnOneSideOfPlaneRationalFunction(
-          rational_forward_kinematics, link_polytope, q_star,
-          expressed_body_index, a_A, p_AC, plane_side, a_order);
+          rational_forward_kinematics, link_polytope, other_side_link_polytope,
+          q_star, expressed_body_index, a_A, p_AC, plane_side, a_order);
+  for (const auto& rational : rational_fun) {
+    EXPECT_EQ(rational.other_side_link_polytope, other_side_link_polytope);
+  }
   const Eigen::VectorXd t_val =
       rational_forward_kinematics.ComputeTValue(q_val, q_star);
   for (int i = 0; i < t_val.size(); ++i) {
@@ -95,6 +99,10 @@ TEST_F(IiwaTest, GenerateLinkOnOneSideOfPlaneRationalFunction1) {
   auto link6_polytope =
       std::make_shared<const ConvexPolytope>(iiwa_link_[6], p_6V);
 
+  auto obstacle = std::make_shared<const ConvexPolytope>(
+      world_index(), GenerateBoxVertices(Eigen::Vector3d::Ones(),
+                                         Eigen::Isometry3d::Identity()));
+
   Eigen::VectorXd q(7);
   q.setZero();
   Eigen::VectorXd q_star(7);
@@ -102,14 +110,15 @@ TEST_F(IiwaTest, GenerateLinkOnOneSideOfPlaneRationalFunction1) {
   Eigen::Vector3d a_A(1.2, -0.4, 3.1);
   const Eigen::Vector3d p_AC(0.5, -2.1, 0.6);
   CheckGenerateLinkOnOneSideOfPlaneRationalFunction(
-      rational_forward_kinematics, link6_polytope, q_star, q, world_, a_A, p_AC,
-      PlaneSide::kPositive, SeparatingPlaneOrder::kConstant);
+      rational_forward_kinematics, link6_polytope, nullptr, q_star, q, world_,
+      a_A, p_AC, PlaneSide::kPositive, SeparatingPlaneOrder::kConstant);
 
   q << 0.1, -0.2, 0.3, -0.4, 0.5, -0.6, 0.7;
   q_star << -0.25, 0.13, 0.26, 0.65, -0.02, 0.87, 0.42;
   CheckGenerateLinkOnOneSideOfPlaneRationalFunction(
-      rational_forward_kinematics, link6_polytope, q_star, q, iiwa_link_[3],
-      a_A, p_AC, PlaneSide::kNegative, SeparatingPlaneOrder::kConstant);
+      rational_forward_kinematics, link6_polytope, obstacle, q_star, q,
+      iiwa_link_[3], a_A, p_AC, PlaneSide::kNegative,
+      SeparatingPlaneOrder::kConstant);
 }
 
 TEST_F(IiwaTest, GenerateLinkOnOneSideOfPlaneRationalFunction2) {
@@ -125,6 +134,10 @@ TEST_F(IiwaTest, GenerateLinkOnOneSideOfPlaneRationalFunction2) {
   auto link3_polytope =
       std::make_shared<const ConvexPolytope>(iiwa_link_[3], p_3V);
 
+  auto obstacle = std::make_shared<const ConvexPolytope>(
+      world_index(), GenerateBoxVertices(Eigen::Vector3d::Ones(),
+                                         Eigen::Isometry3d::Identity()));
+
   Eigen::VectorXd q(7);
   q.setZero();
   Eigen::VectorXd q_star(7);
@@ -132,18 +145,20 @@ TEST_F(IiwaTest, GenerateLinkOnOneSideOfPlaneRationalFunction2) {
   Eigen::Vector3d a_A(1.2, -0.4, 3.1);
   const Eigen::Vector3d p_AC(0.5, -2.1, 0.6);
   CheckGenerateLinkOnOneSideOfPlaneRationalFunction(
-      rational_forward_kinematics, link3_polytope, q_star, q, iiwa_link_[7],
-      a_A, p_AC, PlaneSide::kPositive, SeparatingPlaneOrder::kConstant);
+      rational_forward_kinematics, link3_polytope, obstacle, q_star, q,
+      iiwa_link_[7], a_A, p_AC, PlaneSide::kPositive,
+      SeparatingPlaneOrder::kConstant);
 
   q << 0.1, -0.2, 0.3, -0.4, 0.5, -0.6, 0.7;
   q_star << -0.25, 0.13, 0.26, 0.65, -0.02, 0.87, 0.42;
   CheckGenerateLinkOnOneSideOfPlaneRationalFunction(
-      rational_forward_kinematics, link3_polytope, q_star, q, iiwa_link_[5],
-      a_A, p_AC, PlaneSide::kNegative, SeparatingPlaneOrder::kConstant);
+      rational_forward_kinematics, link3_polytope, obstacle, q_star, q,
+      iiwa_link_[5], a_A, p_AC, PlaneSide::kNegative,
+      SeparatingPlaneOrder::kConstant);
 
   CheckGenerateLinkOnOneSideOfPlaneRationalFunction(
-      rational_forward_kinematics, link3_polytope, q_star, q, world_, a_A, p_AC,
-      PlaneSide::kNegative, SeparatingPlaneOrder::kConstant);
+      rational_forward_kinematics, link3_polytope, obstacle, q_star, q, world_,
+      a_A, p_AC, PlaneSide::kNegative, SeparatingPlaneOrder::kConstant);
 }
 
 class IiwaConfigurationSpaceTest : public IiwaTest {
@@ -207,6 +222,10 @@ TEST_F(IiwaConfigurationSpaceTest, TestConstructor) {
                                        expected_negative_polytope))
                   ->second,
               &separation_plane);
+    EXPECT_EQ(separation_plane.a_order, SeparatingPlaneOrder::kConstant);
+    EXPECT_EQ(separation_plane.decision_variables.size(), 3);
+    EXPECT_EQ(separation_plane.a,
+              separation_plane.decision_variables.cast<symbolic::Expression>());
   };
 
   CheckSeparationPlane(separation_planes[0], link5_polytopes_[0]->get_id(),
@@ -237,5 +256,148 @@ TEST_F(IiwaConfigurationSpaceTest, GenerateLinkOnOneSideOfPlanePolynomials) {
       Eigen::VectorXd::Zero(7), filtered_collision_pairs);
   EXPECT_EQ(rationals.size(), 80);
 }
+
+TEST_F(IiwaConfigurationSpaceTest, TestConstructorWithAffineSeparatingPlane) {
+  ConfigurationSpaceCollisionFreeRegion dut(
+      *iiwa_, {link7_polytopes_[0], link7_polytopes_[1], link5_polytopes_[0]},
+      obstacles_, SeparatingPlaneOrder::kAffine);
+
+  const auto& separation_planes = dut.separation_planes();
+  EXPECT_EQ(separation_planes.size(), 6);
+  auto check_separation_plane = [](
+      const SeparationPlane& plane,
+      const Eigen::Ref<const VectorX<symbolic::Variable>>& t_expected) {
+    EXPECT_EQ(plane.a_order, SeparatingPlaneOrder::kAffine);
+    EXPECT_EQ(plane.decision_variables.rows(), 3 * t_expected.rows() + 3);
+    EXPECT_EQ(symbolic::Variables(plane.decision_variables).size(),
+              3 * t_expected.rows() + 3);
+    // Now check if a(i) is an affine function of t_expected.
+    for (int i = 0; i < 3; ++i) {
+      const symbolic::Polynomial a_poly(plane.a(i),
+                                        symbolic::Variables(t_expected));
+      EXPECT_EQ(a_poly.TotalDegree(), 1);
+      symbolic::Polynomial a_poly_expected{};
+      for (int j = 0; j < t_expected.rows(); ++j) {
+        a_poly_expected.AddProduct(plane.decision_variables(3 * j + i),
+                                   symbolic::Monomial(t_expected(j), 1));
+      }
+      a_poly_expected.AddProduct(
+          plane.decision_variables(3 * t_expected.rows() + i),
+          symbolic::Monomial{});
+      EXPECT_EQ(a_poly, a_poly_expected);
+    }
+  };
+
+  const auto& t = dut.rational_forward_kinematics().t();
+
+  // link5_polytopes_[0] and obstacles_[0]
+  check_separation_plane(separation_planes[0], t.head<5>());
+  // link7_polytopes_[0] and obstacles_[0]
+  check_separation_plane(separation_planes[1], t.head<7>());
+  // link7_polytopes_[1] and obstacles_[0]
+  check_separation_plane(separation_planes[2], t.head<7>());
+  // link5_polytopes_[0] and obstacles_[1]
+  check_separation_plane(separation_planes[3], t.head<5>());
+  // link7_polytopes_[0] and obstacles_[1]
+  check_separation_plane(separation_planes[4], t.head<7>());
+  // link7_polytopes_[1] and obstacles_[1]
+  check_separation_plane(separation_planes[5], t.head<7>());
+}
+
+// The rational's numerator's monomials should be a subset of ∏ᵢ tᵢⁿⁱ,
+// where tᵢ is in @p t_on_half_chain, ni = 0, 1, 2
+std::unordered_set<symbolic::Monomial>
+GenerateMonomialsForLinkOnOneSideOfPlaneRationalConstantSeparatingPlane(
+    const Eigen::Ref<const VectorX<symbolic::Variable>>& t_on_half_chain) {
+  std::queue<symbolic::Monomial> monomials;
+  monomials.emplace();
+  std::unordered_set<symbolic::Monomial> monomial_set;
+  while (!monomials.empty()) {
+    const auto& monomial = monomials.front();
+    for (int i = 0; i < t_on_half_chain.rows(); ++i) {
+      if (monomial.degree(t_on_half_chain(i)) < 2) {
+        monomials.push(monomial * symbolic::Monomial(t_on_half_chain(i)));
+      }
+    }
+    monomial_set.insert(monomial);
+    monomials.pop();
+  }
+  return monomial_set;
+}
+
+// The rational's numerator's monomials should be a subset of tⱼ ∏ᵢ tᵢⁿⁱ and ∏ᵢ
+// tᵢⁿⁱ where tᵢ is in @p t_on_half_chain, ni = 0, 1, 2, and tⱼ is in @p
+// t_on_whole_chain.
+std::unordered_set<symbolic::Monomial>
+GenerateMonomialsForLinkOnOneSideOfPlaneRationalAffineSeparatingPlane(
+    const Eigen::Ref<const VectorX<symbolic::Variable>>& t_on_half_chain,
+    const Eigen::Ref<const VectorX<symbolic::Variable>>& t_on_whole_chain) {
+  const std::unordered_set<symbolic::Monomial> monomials_constant_plane =
+      GenerateMonomialsForLinkOnOneSideOfPlaneRationalConstantSeparatingPlane(
+          t_on_half_chain);
+  std::unordered_set<symbolic::Monomial> monomial_set =
+      monomials_constant_plane;
+  VectorX<symbolic::Monomial> t_monomial(t_on_whole_chain.rows());
+  for (int i = 0; i < t_on_whole_chain.rows(); ++i) {
+    t_monomial(i) = symbolic::Monomial(t_on_whole_chain(i));
+  }
+  for (const auto& monomial : monomials_constant_plane) {
+    for (int i = 0; i < t_on_whole_chain.rows(); ++i) {
+      monomial_set.insert(monomial * t_monomial(i));
+    }
+  }
+  return monomial_set;
+}
+
+TEST_F(IiwaConfigurationSpaceTest,
+       GenerateLinkOnOneSideOfPlaneRationalsAffineSeparatingPlane) {
+  ConfigurationSpaceCollisionFreeRegion dut(*iiwa_, {link5_polytopes_[0]},
+                                            {obstacles_[0]},
+                                            SeparatingPlaneOrder::kAffine);
+  Eigen::VectorXd q_star(7);
+  q_star << 0.1, 0.2, 0.3, 0.4, -0.5, -0.2, -0.3;
+  const std::vector<LinkVertexOnPlaneSideRational> rationals =
+      dut.GenerateLinkOnOneSideOfPlaneRationals(q_star, {});
+  // 1 rational for each vertex on link and obstacle polytopes.
+  EXPECT_EQ(rationals.size(), 16);
+  const auto& t = dut.rational_forward_kinematics().t();
+  auto check_rational = [](
+      const LinkVertexOnPlaneSideRational& rational,
+      std::shared_ptr<const ConvexPolytope> link_polytope,
+      BodyIndex expressed_body_index,
+      std::shared_ptr<const ConvexPolytope> other_side_link_polytope,
+      PlaneSide plane_side, SeparatingPlaneOrder a_order,
+      const Eigen::Ref<const VectorX<symbolic::Variable>>& t_on_half_chain,
+      const Eigen::Ref<const VectorX<symbolic::Variable>>& t_on_whole_chain) {
+    EXPECT_EQ(rational.link_polytope, link_polytope);
+    EXPECT_EQ(rational.expressed_body_index, expressed_body_index);
+    EXPECT_EQ(rational.other_side_link_polytope, other_side_link_polytope);
+    EXPECT_EQ(rational.plane_side, plane_side);
+    EXPECT_EQ(rational.a_order, a_order);
+    const std::unordered_set<symbolic::Monomial> monomial_set =
+        GenerateMonomialsForLinkOnOneSideOfPlaneRationalAffineSeparatingPlane(
+            t_on_half_chain, t_on_whole_chain);
+    for (const auto& item :
+         rational.rational.numerator().monomial_to_coefficient_map()) {
+      EXPECT_GT(monomial_set.count(item.first), 0);
+    }
+
+  };
+  for (int i = 0; i < 8; ++i) {
+    // The first 8 are for the vertex on link5_polytopes_[0]
+    // The rational's numerator's monomials should be a subset of tⱼ ∏ᵢ tᵢⁿⁱ,
+    // where i = 3, 4, ni = 0, 1, 2, and j = 0, 1, ..., 4.
+    check_rational(rationals[i], link5_polytopes_[0], iiwa_link_[3],
+                   obstacles_[0], PlaneSide::kPositive,
+                   SeparatingPlaneOrder::kAffine, t.segment<2>(3), t.head<5>());
+    // The last 8 are for the vertex on obstacles_[0]
+    // The rational's numerator's monomials should be a subset of tⱼ ∏ᵢ tᵢⁿⁱ,
+    // where i = 0, 1, 2, ni = 0, 1, 2, and j = 0, 1, ..., 4.
+    check_rational(rationals[i + 8], obstacles_[0], iiwa_link_[3],
+                   link5_polytopes_[0], PlaneSide::kNegative,
+                   SeparatingPlaneOrder::kAffine, t.head<3>(), t.head<5>());
+  }
+}
+
 }  // namespace multibody
 }  // namespace drake

@@ -57,6 +57,16 @@ int DoMain() {
   MultibodyPlantVisualizer visualizer(*plant, std::move(scene_graph));
   Eigen::Matrix<double, 7, 1> q;
   q << 0.4, 0.4, 0.4, -0.4, 0.4, 0.4, 0.4;
+  // This is only for visualizing a sampled configuration in the verified
+  // collision free box in the configuration space.
+  // double delta = 0.271484;
+  // q(0) -= delta;
+  // q(1) += delta;
+  // q(2) -= delta;
+  // q(3) -= delta;
+  // q(4) -= delta;
+  // q(5) += delta;
+
   visualizer.VisualizePosture(q);
 
   // Now add the link points to represent collision.
@@ -166,7 +176,7 @@ int DoMain() {
       plant->world_body().index(), GenerateBoxVertices(box1_size, X_WBox1)));
 
   ConfigurationSpaceCollisionFreeRegion dut(*plant, link_polytopes, obstacles,
-                                            SeparatingPlaneOrder::kConstant);
+                                            SeparatingPlaneOrder::kAffine);
 
   double rho = dut.FindLargestBoxThroughBinarySearch(
       q, {}, Eigen::VectorXd::Constant(7, -1), Eigen::VectorXd::Constant(7, 1),

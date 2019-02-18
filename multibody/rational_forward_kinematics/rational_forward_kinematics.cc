@@ -262,10 +262,12 @@ void RationalForwardKinematics::
       tree.get_topology().get_body(reshuffled_child);
   internal::MobilizerIndex mobilizer_index;
   bool is_order_reversed;
-  if (reshuffled_parent_topology.parent_body == reshuffled_child) {
+  if (reshuffled_parent_topology.parent_body >= 0 &&
+      reshuffled_parent_topology.parent_body == reshuffled_child) {
     is_order_reversed = true;
     mobilizer_index = reshuffled_parent_topology.inboard_mobilizer;
-  } else if (reshuffled_child_topology.parent_body == reshuffled_parent) {
+  } else if (reshuffled_child_topology.parent_body >= 0 &&
+             reshuffled_child_topology.parent_body == reshuffled_parent) {
     is_order_reversed = false;
     mobilizer_index = reshuffled_child_topology.inboard_mobilizer;
   } else {

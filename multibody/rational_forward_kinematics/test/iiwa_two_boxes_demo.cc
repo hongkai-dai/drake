@@ -27,12 +27,12 @@ int DoMain() {
   box1_pose.translation() << -0.5, 0, 0.5;
   Eigen::Isometry3d box2_pose = Eigen::Isometry3d::Identity();
   box2_pose.translation() << 0.5, 0, 0.5;
-  std::vector<ConvexPolytope> obstacle_boxes;
+  std::vector<std::shared_ptr<const ConvexPolytope>> obstacle_boxes;
   const BodyIndex world = plant->world_body().index();
-  obstacle_boxes.emplace_back(
-      world, GenerateBoxVertices(Eigen::Vector3d(0.4, 0.6, 1), box1_pose));
-  obstacle_boxes.emplace_back(
-      world, GenerateBoxVertices(Eigen::Vector3d(0.4, 0.6, 1), box2_pose));
+  obstacle_boxes.push_back(std::make_shared<const ConvexPolytope>(
+      world, GenerateBoxVertices(Eigen::Vector3d(0.4, 0.6, 1), box1_pose)));
+  obstacle_boxes.push_back(std::make_shared<const ConvexPolytope>(
+      world, GenerateBoxVertices(Eigen::Vector3d(0.4, 0.6, 1), box2_pose)));
 
   Eigen::VectorXd q_star(7);
   q_star.setZero();
@@ -43,10 +43,10 @@ int DoMain() {
   auto a0_var = prog.NewContinuousVariables<3>("a0");
   auto a1_var = prog.NewContinuousVariables<3>("a1");
   const symbolic::Monomial monomial_one{};
-  Vector3<symbolic::Polynomial> a0, a1;
+  Vector3<symbolic::Expression> a0, a1;
   for (int i = 0; i < 3; ++i) {
-    a0(i) = symbolic::Polynomial({{monomial_one, a0_var(i)}});
-    a1(i) = symbolic::Polynomial({{monomial_one, a1_var(i)}});
+    a0(i) = a0_var(i);
+    a1(i) = a1_var(i);
   }
 
   RationalForwardKinematics rational_forward_kinematics(*plant);
@@ -82,8 +82,9 @@ int DoMain() {
   const std::vector<LinkVertexOnPlaneSideRational>
       link7_on_positive_side_a0_rational =
           GenerateLinkOnOneSideOfPlaneRationalFunction(
-              rational_forward_kinematics, link_polytopes[0], X_W7, a0,
-              obstacle_boxes[0].p_BC(), PlaneSide::kPositive, a_order);
+              rational_forward_kinematics, link_polytopes[0], obstacle_boxes[0],
+              X_W7, a0, obstacle_boxes[0]->p_BC(), PlaneSide::kPositive,
+              a_order);
   std::cout << "Add nonnegative polynomial constraint that link 7 is on the "
                "positive side of the plane between obstacle[0]\n";
   for (const auto& rational : link7_on_positive_side_a0_rational) {
@@ -95,8 +96,9 @@ int DoMain() {
   const std::vector<LinkVertexOnPlaneSideRational>
       link7_on_positive_side_a1_rational =
           GenerateLinkOnOneSideOfPlaneRationalFunction(
-              rational_forward_kinematics, link_polytopes[0], X_W7, a1,
-              obstacle_boxes[1].p_BC(), PlaneSide::kPositive, a_order);
+              rational_forward_kinematics, link_polytopes[0], obstacle_boxes[1],
+              X_W7, a1, obstacle_boxes[1]->p_BC(), PlaneSide::kPositive,
+              a_order);
   std::cout << "Add nonnegative polynomial constraint that link 7 is on the "
                "positive side of the plane between obstacle[1]\n";
   for (const auto& rational : link7_on_positive_side_a1_rational) {
@@ -106,10 +108,10 @@ int DoMain() {
   }
   // Add constraint that the obstacle boxes are on the negative side of the
   // plane.
-  obstacle_boxes[0].AddInsideHalfspaceConstraint(obstacle_boxes[0].p_BC(),
-                                                 a0_var, &prog);
-  obstacle_boxes[1].AddInsideHalfspaceConstraint(obstacle_boxes[1].p_BC(),
-                                                 a0_var, &prog);
+  obstacle_boxes[0]->AddInsideHalfspaceConstraint(obstacle_boxes[0]->p_BC(),
+                                                  a0_var, &prog);
+  obstacle_boxes[1]->AddInsideHalfspaceConstraint(obstacle_boxes[1]->p_BC(),
+                                                  a0_var, &prog);
 
   solvers::MosekSolver mosek_solver;
   mosek_solver.set_stream_logging(true, "");

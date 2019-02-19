@@ -252,7 +252,7 @@ int DoMain() {
   mosek_solver.Solve(prog, {}, {}, &result);
   std::cout << "verification result: " << result.get_solution_result() << "\n";
   const auto mosek_solver_details =
-      result.get_solver_details().GetValue<solvers::MosekSolverDetails>();
+      result.get_solver_details<solvers::MosekSolver>();
   std::cout << "rescode: " << mosek_solver_details.rescode << "\n";
   std::cout << "solution status: " << mosek_solver_details.solution_status
             << "\n";

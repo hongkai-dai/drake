@@ -97,6 +97,7 @@ drake_cc_library(
         "//multibody/multibody_tree/multibody_plant",
         "//multibody/parsing:parser",
         "//systems/rendering:multibody_position_to_geometry_pose",
+        "//systems/analysis:simulator",
     ],
 )
 

@@ -121,7 +121,7 @@ int DoMain() {
   link_polytopes.push_back(
       std::make_shared<ConvexPolytope>(iiwa_link[6], p_6V));
 
-  Eigen::Matrix<double, 3, 11> p_5V1;
+  Eigen::Matrix<double, 3, 10> p_5V1;
   p_5V1.col(0) << 0.05, 0.07, -0.05;
   p_5V1.col(1) << 0.05, -0.05, -0.05;
   p_5V1.col(2) << -0.05, 0.07, -0.05;

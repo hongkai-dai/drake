@@ -212,6 +212,10 @@ drake_cc_binary(
     name = "iiwa_table_demo",
     testonly = 1,
     srcs = ["test/iiwa_table_demo.cc"],
+    data = [
+        "//manipulation/models/iiwa_description:models",
+        "//manipulation/models/wsg_50_description:models",
+    ],
     deps = [
         ":configuration_space_collision_free_region",
         ":rational_forward_kinematics_test_utilities",

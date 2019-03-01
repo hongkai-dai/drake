@@ -16,13 +16,15 @@ int DoMain() {
       Eigen::AngleAxisd(-21.0 / 180 * M_PI, Eigen::Vector3d::UnitZ()) *
       Eigen::AngleAxisd(M_PI_2, Eigen::Vector3d::UnitX()) *
       Eigen::Isometry3d::Identity();
-  auto plant = ConstructIiwaWithSchunk(X_7S);
+  auto plant = std::make_unique<MultibodyPlant<double>>();
   auto scene_graph = std::make_unique<geometry::SceneGraph<double>>();
   plant->RegisterAsSourceForSceneGraph(scene_graph.get());
+  AddIiwaWithSchunk(X_7S, plant.get());
   plant->Finalize(scene_graph.get());
-  auto plant_collision = ConstructIiwaWithSchunk(X_7S);
+  auto plant_collision = std::make_unique<MultibodyPlant<double>>();
   auto scene_graph_collision = std::make_unique<geometry::SceneGraph<double>>();
   plant_collision->RegisterAsSourceForSceneGraph(scene_graph_collision.get());
+  AddIiwaWithSchunk(X_7S, plant_collision.get());
 
   MultibodyPlantVisualizer visualizer(*plant, std::move(scene_graph));
   Eigen::Matrix<double, 7, 1> q;

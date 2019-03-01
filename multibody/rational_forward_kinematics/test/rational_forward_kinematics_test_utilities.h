@@ -68,7 +68,7 @@ void VisualizeBodyPoint(manipulation::dev::RemoteTreeViewerWrapper* viewer,
  * @param X_7S The transformation from schunk frame to iiwa link 7.
  * @note the plant is not finalized.
  */
-std::unique_ptr<MultibodyPlant<double>> ConstructIiwaWithSchunk(
-    const Eigen::Isometry3d& X_7S);
+void AddIiwaWithSchunk(const Eigen::Isometry3d& X_7S,
+                       MultibodyPlant<double>* plant);
 }  // namespace multibody
 }  // namespace drake

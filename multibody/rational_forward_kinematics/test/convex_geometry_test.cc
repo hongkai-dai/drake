@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include "drake/common/test_utilities/eigen_matrix_compare.h"
+#include "drake/solvers/solve.h"
 
 namespace drake {
 namespace multibody {
@@ -16,6 +17,57 @@ GTEST_TEST(PolytopeTest, Test) {
   // clang-format on
   ConvexPolytope polytope(BodyIndex{0}, p_BV);
   EXPECT_TRUE(CompareMatrices(polytope.p_BC(), Eigen::Vector3d(0, 0.25, 0.25)));
+}
+
+GTEST_TEST(ConvexGeometryTest, InCollision) {
+  // Two polytopes. If they are separated, then there exists a separating
+  // hyperplane.
+  auto check_is_separating = [](const ConvexPolytope& P1,
+                                const ConvexPolytope& P2,
+                                const math::RigidTransform<double>& X_AP1,
+                                const math::RigidTransform<double>& X_AP2) {
+    solvers::MathematicalProgram prog;
+    auto n = prog.NewContinuousVariables<3>();
+    auto d = prog.NewContinuousVariables<1>()(0);
+    for (int i = 0; i < P1.p_BV().cols(); ++i) {
+      prog.AddLinearConstraint(
+          n.cast<symbolic::Expression>().dot(X_AP1 * P1.p_BV().col(i)) >= d);
+    }
+    for (int i = 0; i < P2.p_BV().cols(); ++i) {
+      prog.AddLinearConstraint(
+          n.cast<symbolic::Expression>().dot(X_AP2 * P2.p_BV().col(i)) <= d);
+    }
+    prog.AddLinearConstraint(
+        n.cast<symbolic::Expression>().dot(X_AP1 * P1.p_BC()) >= d + 1);
+    auto result = solvers::Solve(prog);
+    return result.is_success();
+  };
+
+  Eigen::Matrix<double, 3, 4> p_BV;
+  // clang-format off
+  p_BV << 1, -1, 0, 0,
+          0, 0, 1, 0,
+          0, 0, 0, 1;
+  // clang-format on
+  ConvexPolytope P1(BodyIndex{0}, p_BV);
+  ConvexPolytope P2(BodyIndex{1}, p_BV);
+
+  math::RigidTransform<double> X_AP1, X_AP2;
+  X_AP1.SetIdentity();
+  X_AP2.SetIdentity();
+  EXPECT_TRUE(P1.IsInCollision(P2, X_AP1, X_AP2));
+  EXPECT_FALSE(check_is_separating(P1, P2, X_AP1, X_AP2));
+
+  X_AP1.set_rotation(math::RotationMatrix<double>(Eigen::AngleAxisd(
+      0.2 * M_PI, Eigen::Vector3d(1.0 / 3, 2.0 / 3, 2.0 / 3))));
+  EXPECT_TRUE(P1.IsInCollision(P2, X_AP1, X_AP2));
+  EXPECT_FALSE(check_is_separating(P1, P2, X_AP1, X_AP2));
+
+  for (int k = 0; k < 20; ++k) {
+    X_AP1.set_translation(Eigen::Vector3d(0.2 * k, -0.1 * k, 0.3 * k));
+    EXPECT_NE(P1.IsInCollision(P2, X_AP1, X_AP2),
+              check_is_separating(P1, P2, X_AP1, X_AP2));
+  }
 }
 
 template <typename C>

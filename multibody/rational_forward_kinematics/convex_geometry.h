@@ -1,5 +1,6 @@
 #pragma once
 
+#include "drake/math/rigid_transform.h"
 #include "drake/multibody/rational_forward_kinematics/plane_side.h"
 #include "drake/multibody/tree/multibody_tree_indexes.h"
 #include "drake/solvers/mathematical_program.h"
@@ -46,6 +47,10 @@ class ConvexGeometry {
   virtual const Eigen::Vector3d& p_BC() const = 0;
 
   Id get_id() const { return id_; }
+
+  bool IsInCollision(const ConvexGeometry& other,
+                     const math::RigidTransform<double>& X_ASelf,
+                     const math::RigidTransform<double>& X_AOther) const;
 
  protected:
   ConvexGeometry(ConvexGeometryType type, BodyIndex body_index);
@@ -127,5 +132,6 @@ class Cylinder : public ConvexGeometry {
   // â₁ ⊥ â₂.
   Eigen::Vector3d a_hat1_B_, a_hat2_B_;
 };
+
 }  // namespace multibody
 }  // namespace drake

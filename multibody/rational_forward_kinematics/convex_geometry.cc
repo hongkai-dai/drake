@@ -3,6 +3,7 @@
 #include <atomic>
 
 #include "drake/common/never_destroyed.h"
+#include "drake/solvers/solve.h"
 
 using std::atomic;
 
@@ -15,6 +16,18 @@ ConvexGeometry::Id ConvexGeometry::get_next_id() {
 
 ConvexGeometry::ConvexGeometry(ConvexGeometryType type, BodyIndex body_index)
     : type_{type}, body_index_{body_index}, id_{get_next_id()} {}
+
+bool ConvexGeometry::IsInCollision(
+    const ConvexGeometry& other, const math::RigidTransform<double>& X_ASelf,
+    const math::RigidTransform<double>& X_AOther) const {
+  solvers::MathematicalProgram prog;
+  auto p_AQ = prog.NewContinuousVariables<3>();
+  this->AddPointInsideGeometryConstraint(X_ASelf.GetAsIsometry3(), p_AQ, &prog);
+  other.AddPointInsideGeometryConstraint(X_AOther.GetAsIsometry3(), p_AQ,
+                                         &prog);
+  const auto result = solvers::Solve(prog);
+  return result.is_success();
+}
 
 ConvexPolytope::ConvexPolytope(BodyIndex body_index,
                                const Eigen::Ref<const Eigen::Matrix3Xd>& p_BV)

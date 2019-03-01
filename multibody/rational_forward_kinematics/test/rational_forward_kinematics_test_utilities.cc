@@ -141,5 +141,38 @@ void MultibodyPlantVisualizer::VisualizePosture(
   simulator.StepTo(0.1);
 }
 
+void VisualizeBodyPoint(manipulation::dev::RemoteTreeViewerWrapper* viewer,
+                        const MultibodyPlant<double>& plant,
+                        const systems::Context<double>& context,
+                        BodyIndex body_index,
+                        const Eigen::Ref<const Eigen::Vector3d>& p_BQ,
+                        double radius, const Eigen::Vector4d& color,
+                        const std::string& name) {
+  Eigen::Vector3d p_WQ;
+  plant.CalcPointsPositions(context, plant.get_body(body_index).body_frame(),
+                            p_BQ, plant.world_frame(), &p_WQ);
+  Eigen::Isometry3d X_WQ = Eigen::Isometry3d::Identity();
+  X_WQ.translation() = p_WQ;
+  viewer->PublishGeometry(DrakeShapes::Sphere(radius), X_WQ, color, {name});
+}
+
+
+std::unique_ptr<MultibodyPlant<double>> ConstructIiwaWithSchunk(
+    const Eigen::Isometry3d& X_7S) {
+  const std::string file_path =
+      "drake/manipulation/models/iiwa_description/sdf/iiwa14_no_collision.sdf";
+  auto plant = std::make_unique<MultibodyPlant<double>>();
+  Parser(plant.get()).AddModelFromFile(FindResourceOrThrow(file_path));
+  Parser(plant.get())
+      .AddModelFromFile(
+          FindResourceOrThrow("drake/manipulation/models/wsg_50_description/"
+                              "sdf/schunk_wsg_50_fixed_joint.sdf"));
+  plant->WeldFrames(plant->world_frame(), plant->GetFrameByName("iiwa_link_0"));
+  // weld the schunk gripper to iiwa link 7.
+  plant->WeldFrames(plant->GetFrameByName("iiwa_link_7"),
+                    plant->GetFrameByName("body"), X_7S);
+  return plant;
+}
+
 }  // namespace multibody
 }  // namespace drake

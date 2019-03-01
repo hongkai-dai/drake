@@ -4,6 +4,7 @@
 #include <string>
 #include <gtest/gtest.h>
 
+#include "drake/manipulation/dev/remote_tree_viewer_wrapper.h"
 #include "drake/multibody/plant/multibody_plant.h"
 #include "drake/multibody/rational_forward_kinematics/configuration_space_collision_free_region.h"
 
@@ -54,5 +55,20 @@ class MultibodyPlantVisualizer {
   std::unique_ptr<systems::Diagram<double>> diagram_;
   internal::MultibodyPlantPostureSource* posture_source_;
 };
+
+void VisualizeBodyPoint(manipulation::dev::RemoteTreeViewerWrapper* viewer,
+                        const MultibodyPlant<double>& plant,
+                        const systems::Context<double>& context,
+                        BodyIndex body_index,
+                        const Eigen::Ref<const Eigen::Vector3d>& p_BQ,
+                        double radius, const Eigen::Vector4d& color,
+                        const std::string& name);
+
+/**
+ * @param X_7S The transformation from schunk frame to iiwa link 7.
+ * @note the plant is not finalized.
+ */
+std::unique_ptr<MultibodyPlant<double>> ConstructIiwaWithSchunk(
+    const Eigen::Isometry3d& X_7S);
 }  // namespace multibody
 }  // namespace drake

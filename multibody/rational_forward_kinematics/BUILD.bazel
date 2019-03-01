@@ -62,6 +62,7 @@ drake_cc_library(
     deps = [
         ":plane_side",
         "//solvers:mathematical_program",
+        "//solvers:solve",
         "//multibody/tree:tree",
     ],
 )
@@ -98,6 +99,8 @@ drake_cc_library(
         "//multibody/parsing:parser",
         "//systems/rendering:multibody_position_to_geometry_pose",
         "//systems/analysis:simulator",
+        "//attic/manipulation/dev:remote_tree_viewer_wrapper",
+	"@gtest//:without_main",
     ],
 )
 
@@ -216,7 +219,6 @@ drake_cc_binary(
         "//multibody/parsing:parser",
         "//multibody/inverse_kinematics:inverse_kinematics",
         "//solvers:mathematical_program",
-        "//attic/manipulation/dev:remote_tree_viewer_wrapper",
         "@gtest//:without_main",
     ],
 )

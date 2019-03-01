@@ -9,50 +9,20 @@
 namespace drake {
 namespace multibody {
 
-void VisualizeBodyPoint(manipulation::dev::RemoteTreeViewerWrapper* viewer,
-                        const MultibodyPlant<double>& plant,
-                        const systems::Context<double>& context,
-                        BodyIndex body_index,
-                        const Eigen::Ref<const Eigen::Vector3d>& p_BQ,
-                        double radius, const Eigen::Vector4d& color,
-                        const std::string& name) {
-  Eigen::Vector3d p_WQ;
-  plant.CalcPointsPositions(context, plant.get_body(body_index).body_frame(),
-                            p_BQ, plant.world_frame(), &p_WQ);
-  Eigen::Isometry3d X_WQ = Eigen::Isometry3d::Identity();
-  X_WQ.translation() = p_WQ;
-  viewer->PublishGeometry(DrakeShapes::Sphere(radius), X_WQ, color, {name});
-}
-
 int DoMain() {
-  const std::string file_path =
-      "drake/manipulation/models/iiwa_description/sdf/iiwa14_no_collision.sdf";
-  auto plant = std::make_unique<MultibodyPlant<double>>();
-  auto scene_graph = std::make_unique<geometry::SceneGraph<double>>();
-  plant->RegisterAsSourceForSceneGraph(scene_graph.get());
-  Parser(plant.get()).AddModelFromFile(FindResourceOrThrow(file_path));
-  Parser(plant.get())
-      .AddModelFromFile(
-          FindResourceOrThrow("drake/manipulation/models/wsg_50_description/"
-                              "sdf/schunk_wsg_50_fixed_joint.sdf"));
-  plant->WeldFrames(plant->world_frame(), plant->GetFrameByName("iiwa_link_0"));
   // weld the schunk gripper to iiwa link 7.
   Eigen::Isometry3d X_7S =
       Eigen::Translation3d(0, 0, 0.1) *
       Eigen::AngleAxisd(-21.0 / 180 * M_PI, Eigen::Vector3d::UnitZ()) *
       Eigen::AngleAxisd(M_PI_2, Eigen::Vector3d::UnitX()) *
       Eigen::Isometry3d::Identity();
-  plant->WeldFrames(plant->GetFrameByName("iiwa_link_7"),
-                    plant->GetFrameByName("body"), X_7S);
-
-  Isometry3<double> X_WTableTop = Isometry3<double>::Identity();
-  X_WTableTop.translation() << 0, 0.5, 0.5;
-  geometry::Box table_top(0.4, 0.4, 0.2);
-  plant->RegisterCollisionGeometry(plant->world_body(), X_WTableTop, table_top,
-                                   "table_top", CoulombFriction<double>(),
-                                   scene_graph.get());
-
+  auto plant = ConstructIiwaWithSchunk(X_7S);
+  auto scene_graph = std::make_unique<geometry::SceneGraph<double>>();
+  plant->RegisterAsSourceForSceneGraph(scene_graph.get());
   plant->Finalize(scene_graph.get());
+  auto plant_collision = ConstructIiwaWithSchunk(X_7S);
+  auto scene_graph_collision = std::make_unique<geometry::SceneGraph<double>>();
+  plant_collision->RegisterAsSourceForSceneGraph(scene_graph_collision.get());
 
   MultibodyPlantVisualizer visualizer(*plant, std::move(scene_graph));
   Eigen::Matrix<double, 7, 1> q;
@@ -95,8 +65,31 @@ int DoMain() {
                        0.01, {1, 0, 0, 1}, "gripper_point" + std::to_string(i));
   }
   std::vector<std::shared_ptr<const ConvexPolytope>> link_polytopes;
-  link_polytopes.push_back(
-      std::make_shared<ConvexPolytope>(iiwa_link[7], p_7V));
+
+  auto add_link_collision_polytope = [&link_polytopes](
+      MultibodyPlant<double>* plant_collision_in,
+      geometry::SceneGraph<double>* scene_graph_collision_in,
+      BodyIndex body_index, const Eigen::Ref<const Eigen::Matrix3Xd>& p_BV,
+      const std::string& name) {
+    // The proximity engine does not support mesh yet. So we add the vertices as
+    // tiny spheres to the collision geometry. If these spheres are in collision
+    // with the environment, we know the robot has to be in collision.
+    geometry::Sphere vertex_sphere(1e-6);
+    for (int i = 0; i < p_BV.cols(); ++i) {
+      Eigen::Isometry3d X_BS = Eigen::Isometry3d::Identity();
+      X_BS.translation() = p_BV.col(i);
+      plant_collision_in->RegisterCollisionGeometry(
+          plant_collision_in->get_body(body_index), X_BS, vertex_sphere,
+          name + std::to_string(i), CoulombFriction<double>(1.0, 1.0),
+          scene_graph_collision_in);
+    }
+    link_polytopes.push_back(
+        std::make_shared<ConvexPolytope>(body_index, p_BV));
+  };
+
+  add_link_collision_polytope(plant_collision.get(),
+                              scene_graph_collision.get(), iiwa_link[7], p_7V,
+                              "schunk");
 
   // iiwa_link6 points.
   Eigen::Matrix<double, 3, 14> p_6V;
@@ -118,8 +111,9 @@ int DoMain() {
     VisualizeBodyPoint(&viewer, *plant, *context, iiwa_link[6], p_6V.col(i),
                        0.01, {1, 0, 0, 1}, "link6_pt" + std::to_string(i));
   }
-  link_polytopes.push_back(
-      std::make_shared<ConvexPolytope>(iiwa_link[6], p_6V));
+  add_link_collision_polytope(plant_collision.get(),
+                              scene_graph_collision.get(), iiwa_link[6], p_6V,
+                              "link6_pt");
 
   Eigen::Matrix<double, 3, 10> p_5V1;
   p_5V1.col(0) << 0.05, 0.07, -0.05;
@@ -136,8 +130,9 @@ int DoMain() {
     VisualizeBodyPoint(&viewer, *plant, *context, iiwa_link[5], p_5V1.col(i),
                        0.01, {1, 0, 0, 1}, "link5_V1_pt" + std::to_string(i));
   }
-  link_polytopes.push_back(
-      std::make_shared<ConvexPolytope>(iiwa_link[5], p_5V1));
+  add_link_collision_polytope(plant_collision.get(),
+                              scene_graph_collision.get(), iiwa_link[5], p_5V1,
+                              "link5_V1_pt");
 
   Eigen::Matrix<double, 3, 8> p_4V;
   p_4V.col(0) << 0.04, -0.02, 0.11;
@@ -152,9 +147,24 @@ int DoMain() {
     VisualizeBodyPoint(&viewer, *plant, *context, iiwa_link[4], p_4V.col(i),
                        0.01, {1, 0, 0, 1}, "link4_pt" + std::to_string(i));
   }
-  link_polytopes.push_back(
-      std::make_shared<ConvexPolytope>(iiwa_link[4], p_4V));
+  add_link_collision_polytope(plant_collision.get(),
+                              scene_graph_collision.get(), iiwa_link[4], p_4V,
+                              "link4_pt");
 
+  std::vector<std::shared_ptr<const ConvexPolytope>> obstacles;
+  auto add_box_to_obstacle = [&obstacles](
+      MultibodyPlant<double>* plant_collision_in,
+      geometry::SceneGraph<double>* scene_graph_collision_in,
+      const Eigen::Isometry3d& X_WB, const Eigen::Vector3d box_size,
+      const std::string& name) {
+    plant_collision_in->RegisterCollisionGeometry(
+        plant_collision_in->world_body(), X_WB,
+        geometry::Box(box_size(0), box_size(1), box_size(2)), name,
+        CoulombFriction<double>(1, 1), scene_graph_collision_in);
+    obstacles.push_back(std::make_shared<ConvexPolytope>(
+        plant_collision_in->world_body().index(),
+        GenerateBoxVertices(box_size, X_WB)));
+  };
   // Add a table.
   Eigen::Isometry3d X_WT = Eigen::Isometry3d::Identity();
   X_WT.translation() << 0.5, 0, 0.25;
@@ -162,9 +172,8 @@ int DoMain() {
   viewer.PublishGeometry(DrakeShapes::Box(table_size), X_WT, {0, 0, 1, 1},
                          {"table"});
 
-  std::vector<std::shared_ptr<const ConvexPolytope>> obstacles;
-  obstacles.push_back(std::make_shared<ConvexPolytope>(
-      plant->world_body().index(), GenerateBoxVertices(table_size, X_WT)));
+  add_box_to_obstacle(plant_collision.get(), scene_graph_collision.get(), X_WT,
+                      table_size, "table");
 
   // Add a box on the table.
   Eigen::Isometry3d X_WBox1 = Eigen::Isometry3d::Identity();
@@ -172,8 +181,9 @@ int DoMain() {
   Eigen::Vector3d box1_size(0.15, 0.2, 0.14);
   viewer.PublishGeometry(DrakeShapes::Box(box1_size), X_WBox1, {0, 0, 1, 1},
                          {"box1"});
-  obstacles.push_back(std::make_shared<ConvexPolytope>(
-      plant->world_body().index(), GenerateBoxVertices(box1_size, X_WBox1)));
+  add_box_to_obstacle(plant_collision.get(), scene_graph_collision.get(),
+                      X_WBox1, box1_size, "box1");
+  plant_collision->Finalize(scene_graph_collision.get());
 
   ConfigurationSpaceCollisionFreeRegion dut(*plant, link_polytopes, obstacles,
                                             SeparatingPlaneOrder::kAffine);

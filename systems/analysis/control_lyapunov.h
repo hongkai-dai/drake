@@ -60,13 +60,30 @@ class SearchControlLyapunov {
 };
 
 /**
+ * Compute V̇(x, u) = ∂V/∂x * (f(x)+G(x)u)
+ */
+class VdotCalculator {
+ public:
+  VdotCalculator(const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+                 const symbolic::Polynomial& V,
+                 const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
+                 const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G);
+
+  symbolic::Polynomial Calc(
+      const Eigen::Ref<const Eigen::VectorXd>& u) const;
+
+ private:
+  symbolic::Polynomial dVdx_times_f_;
+  RowVectorX<symbolic::Polynomial> dVdx_times_G_;
+};
+
+/**
  * Given control Lyapunov function V, formulates the SOS program to search for
  * the Lagrangian multiplier l and m in
  * -V̇(x, uᵢ) - εV(x) - ∑ⱼ lᵢⱼ(x)(V̇(x, uⱼ)-V̇(x, uᵢ)) - mᵢ(x)(ρ-V(x)) is SOS ∀ i
  * lᵢⱼ(x) is SOS, mᵢ(x) is SOS.
  */
-class SearchControlLyapunovLagrangian {
-};
+class SearchControlLyapunovLagrangian {};
 }  // namespace analysis
 }  // namespace systems
 }  // namespace drake

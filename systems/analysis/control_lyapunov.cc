@@ -27,6 +27,21 @@ SearchControlLyapunov::SearchControlLyapunov(
   DRAKE_DEMAND(u_vertices.rows() == num_u);
   DRAKE_DEMAND(x_equilibrium.rows() == num_x);
 }
+
+VdotCalculator::VdotCalculator(
+    const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+    const symbolic::Polynomial& V,
+    const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
+    const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G) {
+  const RowVectorX<symbolic::Polynomial> dVdx = V.Jacobian(x);
+  dVdx_times_f_ = (dVdx * f)(0);
+  dVdx_times_G_ = dVdx * G;
+}
+
+symbolic::Polynomial VdotCalculator::Calc(
+    const Eigen::Ref<const Eigen::VectorXd>& u) const {
+  return dVdx_times_f_ + (dVdx_times_G_ * u)(0);
+}
 }  // namespace analysis
 }  // namespace systems
 }  // namespace drake

@@ -1,0 +1,21 @@
+name: C/C++ CI
+
+on:
+  push:
+    branches: [ control_lyapunov ]
+  pull_request:
+    branches: [ control_lyapunov ]
+
+jobs:
+  build:
+
+    runs-on: self-hosted
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: lint
+      run: bazel test --config lint //...
+    - name: test
+      run: bazel test //systems/...
+    - name: test_with_mosek
+      run: bazel test --config mosek --test_tag_filters=mosek //systems/analysis/...

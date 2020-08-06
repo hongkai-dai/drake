@@ -823,6 +823,7 @@ drake_cc_googletest(
     deps = [
         ":control_lyapunov",
         "//common/test_utilities:symbolic_test_util",
+        "//systems/controllers:linear_quadratic_regulator",
     ],
 )
 

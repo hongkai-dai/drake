@@ -12,9 +12,9 @@ namespace analysis {
  * (and region of attraction) for this system as V(x). The control Lyapunov
  * function should satisfy the condition
  *
- *    V(x) > 0 ∀ x ≠ x*                                     (1)
- *    V(x*) = 0                                             (2)
- *    ∀ x satisfying V(x) ≤ ρ, ∃ u ∈ P s.t V̇ < 0            (3)
+ *     V(x) > 0 ∀ x ≠ x*                                     (1)
+ *     V(x*) = 0                                             (2)
+ *     ∀ x satisfying V(x) ≤ ρ, ∃ u ∈ P s.t V̇ < 0            (3)
  *
  * These conditions prove that the sublevel set V(x) ≤ ρ is a region of
  * attraction, that starting from any state within this ROA, there exists
@@ -23,8 +23,13 @@ namespace analysis {
  * u is a polytope P. If we write the vertices of P as uᵢ, i = 1, ..., N, since
  * V̇ is a linear function of u, the minimal of min V̇, subject to u ∈ P is
  * obtained in one of the vertices of P. Hence the condition
- * ∃ u ∈ P s.t V̇(x, u) < 0
- * is equivalent to min_i V̇(x, uᵢ) < 0
+ *
+ *     ∃ u ∈ P s.t V̇(x, u) < 0
+ *
+ * is equivalent to
+ *
+ *      min_i V̇(x, uᵢ) < 0
+ *
  * We don't know which vertex gives us the minimal, but we can say if the
  * minimal is obtained at the i'th vertex (namely V̇(x, uᵢ)≤ V̇(x, uⱼ)∀ j≠ i),
  * then the minimal has to be negative. Mathematically this means
@@ -32,7 +37,9 @@ namespace analysis {
  * where Neighbour(uᵢ) is the set of vertices on polytope P neighbouring uᵢ.
  * As a result, condition (3) is equivalent to the following condition
  * for each i = 1, ..., N
- * V(x) ≤ ρ, V̇(x, uᵢ) ≤ V̇(x, uⱼ) => V̇(x, uᵢ)<0            (4)
+ *
+ *     V(x) ≤ ρ, V̇(x, uᵢ) ≤ V̇(x, uⱼ) => V̇(x, uᵢ)<0            (4)
+ *
  * We will impose condition (1) and (4) as sum-of-squares constraints.
  */
 class SearchControlLyapunov {
@@ -99,18 +106,23 @@ class VdotCalculator {
  * since minᵤ ∂V/∂x*f(x) + ∂V/∂x G(x)u = ∂V/∂x*f(x) - |∂V/∂x G(x)|₁
  * when -1 <= u <= 1, where |∂V/∂x G(x)|₁ is the 1-norm of ∂V/∂x G(x).
  * we know the condition (2) is equivalent to
- * |∂V/∂x G(x)|₁ >= ∂V/∂x*f(x) + εV                              (3)
+ *
+ *     |∂V/∂x G(x)|₁ >= ∂V/∂x*f(x) + εV                          (3)
+ *
  * Note that ∂V/∂x G(x) is a vector of size nᵤ, where nᵤ is the input size.
  * Condition (3) is equivalent to
- * ∂V/∂x*f(x) + εV = ∑ᵢ bᵢ(x)
- * bᵢ(x) <= |∂V/∂x * Gᵢ(x)|, where Gᵢ(x) is the i'th column of the matrix G(x).
+ *
+ *     ∃ bᵢ(x), such that ∂V/∂x*f(x) + εV = ∑ᵢ bᵢ(x)
+ *     bᵢ(x) <= |∂V/∂x * Gᵢ(x)|,
+ *
+ * where Gᵢ(x) is the i'th column of the matrix G(x).
  * We know that bᵢ(x) <= |∂V/∂x * Gᵢ(x)| if and only if
  *
  *     when ∂V/∂x * Gᵢ(x) > 0, then bᵢ(x) <= ∂V/∂x * Gᵢ(x)
  *     when ∂V/∂x * Gᵢ(x) <= 0, then bᵢ(x) <= -∂V/∂x * Gᵢ(x)
  *
  * So to impose the constraint bᵢ(x) <= |∂V/∂x * Gᵢ(x)|, we introduce the
- * Lagrangian multiplier lᵢ₁(x), lᵢ₂(x), with the constraint
+ * Lagrangian multiplier lᵢ₁(x), lᵢ₂(x),lᵢ₃(x), lᵢ₄(x)with the constraint
  *
  *     (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x) − bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x)>=0
  *     (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x) − bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x)>=0
@@ -127,7 +139,7 @@ class VdotCalculator {
  *     lᵢ₃(x) >= 0, lᵢ₄(x) >= 0, lᵢ₅(x) >= 0, lᵢ₆(x) >= 0
  *
  * We will use bilinear alternation to search for the control Lyapunov function
- * V and the Lagrangian multipliers.
+ * V, the Lagrangian multipliers and the slack polynomials b(x).
  */
 class ControlLyapunovBoxInputBound {
  public:
@@ -148,6 +160,76 @@ class ControlLyapunovBoxInputBound {
 };
 
 /**
+ * Given the control Lyapunov function candidate V, together with the Lagrangian
+ * multipliers lᵢ₁(x), lᵢ₂(x), search for b and Lagrangian multipliers lᵢ₃(x),
+ * lᵢ₄(x), lᵢ₅(x), lᵢ₆(x), so as to maximize the convergence rate ε
+ *
+ *     max ε
+ *     s.t
+ *     ∂V/∂x*f(x) + εV = ∑ᵢ bᵢ(x)
+ *     (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
+ *     (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
+ *     lᵢ₃(x) >= 0, lᵢ₄(x) >= 0, lᵢ₅(x) >= 0, lᵢ₆(x) >= 0
+ */
+class MaximizeEpsGivenVBoxInputBound {
+ public:
+  DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(MaximizeEpsGivenVBoxInputBound)
+
+  /**
+   * @param l_given l_given[i][0] is lᵢ₁(x), l_given[i][1] is lᵢ₂(x).
+   * @param lagrangian_degrees lagrangian_degrees[i][j] is the degree of the
+   * Lagrangian multiplier lᵢⱼ₊₁(x).
+   * @param b_degrees b_degrees[i] is the degree of the polynomial b(i).
+   */
+  MaximizeEpsGivenVBoxInputBound(
+      symbolic::Polynomial V, VectorX<symbolic::Polynomial> f,
+      MatrixX<symbolic::Polynomial> G,
+      const std::vector<std::array<symbolic::Polynomial, 2>>& l_given,
+      std::vector<std::array<int, 6>> lagrangian_degrees,
+      std::vector<int> b_degrees, VectorX<symbolic::Variable> x);
+
+  const std::vector<std::array<symbolic::Polynomial, 6>>& lagrangians() const {
+    return l_;
+  }
+
+  const solvers::MathematicalProgram& prog() const { return prog_; }
+
+  const symbolic::Variable& eps() const { return eps_; }
+
+  const VectorX<symbolic::Polynomial>& b() const { return b_; }
+
+  const std::vector<std::array<
+      std::pair<MatrixX<symbolic::Variable>, VectorX<symbolic::Monomial>>, 2>>&
+  constraint_grams() const {
+    return constraint_grams_;
+  }
+
+ private:
+  solvers::MathematicalProgram prog_;
+  symbolic::Polynomial V_;
+  VectorX<symbolic::Polynomial> f_;
+  MatrixX<symbolic::Polynomial> G_;
+  int nx_{};
+  int nu_{};
+  std::vector<std::array<symbolic::Polynomial, 6>> l_;
+  std::vector<std::array<int, 6>> lagrangian_degrees_;
+  std::vector<int> b_degrees_;
+  VectorX<symbolic::Variable> x_;
+  VectorX<symbolic::Polynomial> b_;
+  symbolic::Variable eps_;
+
+  // constraint_grams_[i][0] contains the gram matrix and monomial basis for
+  // the constraint
+  // (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
+  // constraint_grams_[i][1] contains the gram matrix and monomial basis for
+  // the constraint
+  // (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
+  std::vector<std::array<
+      std::pair<MatrixX<symbolic::Variable>, VectorX<symbolic::Monomial>>, 2>>
+      constraint_grams_;
+};
+
+/**
  * This is the Lagrangian step in ControlLaypunovBoxInputBound. The control
  * Lyapunov function V is fixed, and we search for the Lagrangian multipliers
  * lᵢ₁(x), lᵢ₂(x), lᵢ₃(x), lᵢ₄(x), lᵢ₅(x), lᵢ₆(x) satisfying the constraints
@@ -164,7 +246,7 @@ class SearchLagrangianGivenVBoxInputBound {
   /**
    * @param x The state as the indeterminates.
    * @param lagrangian_degrees lagrangian_degrees[i][j] is the degree of the
-   * Lagrangian multiplier lᵢⱼ(x).
+   * Lagrangian multiplier lᵢⱼ₊₁(x).
    */
   SearchLagrangianGivenVBoxInputBound(
       symbolic::Polynomial V, VectorX<symbolic::Polynomial> f,

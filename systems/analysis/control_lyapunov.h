@@ -160,6 +160,7 @@ class ControlLyapunovBoxInputBound {
 };
 
 /**
+ * For u bounded in a unit box -1 <= u <= 1.
  * Given the control Lyapunov function candidate V, together with the Lagrangian
  * multipliers lᵢ₁(x), lᵢ₂(x), search for b and Lagrangian multipliers lᵢ₃(x),
  * lᵢ₄(x), lᵢ₅(x), lᵢ₆(x), so as to maximize the convergence rate ε
@@ -194,6 +195,8 @@ class MaximizeEpsGivenVBoxInputBound {
 
   const solvers::MathematicalProgram& prog() const { return prog_; }
 
+  solvers::MathematicalProgram* get_mutable_prog() { return &prog_; }
+
   const symbolic::Variable& eps() const { return eps_; }
 
   const VectorX<symbolic::Polynomial>& b() const { return b_; }
@@ -218,6 +221,60 @@ class MaximizeEpsGivenVBoxInputBound {
   VectorX<symbolic::Polynomial> b_;
   symbolic::Variable eps_;
 
+  // constraint_grams_[i][0] contains the gram matrix and monomial basis for
+  // the constraint
+  // (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
+  // constraint_grams_[i][1] contains the gram matrix and monomial basis for
+  // the constraint
+  // (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
+  std::vector<std::array<
+      std::pair<MatrixX<symbolic::Variable>, VectorX<symbolic::Monomial>>, 2>>
+      constraint_grams_;
+};
+
+/**
+ * For u bounded in a unit box -1 <= u <= 1.
+ * Given the Lagrangian multiplier, find the Lyapunov function V and slack
+ * polynomials b, satisfying the condition
+ *
+ *     V(x) >= 0
+ *     ∂V/∂x*f(x) + εV = ∑ᵢ bᵢ(x)
+ *     (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
+ *     (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
+ * where lᵢⱼ(x) are all given.
+ */
+class SearchLyapunovGivenLagrangianBoxInputBound {
+ public:
+  DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(SearchLyapunovGivenLagrangianBoxInputBound)
+
+  SearchLyapunovGivenLagrangianBoxInputBound(
+      VectorX<symbolic::Polynomial> f, MatrixX<symbolic::Polynomial> G,
+      int V_degree, double eps,
+      std::vector<std::array<symbolic::Polynomial, 6>> l_given,
+      const std::vector<int>& b_degrees, VectorX<symbolic::Variable> x);
+
+  const solvers::MathematicalProgram& prog() const { return prog_; }
+
+  solvers::MathematicalProgram* get_mutable_prog() { return &prog_; }
+
+  const VectorX<symbolic::Polynomial>& b() const { return b_; }
+
+  const symbolic::Polynomial& V() const { return V_; }
+
+  const MatrixX<symbolic::Variable>& V_gram() const { return V_gram_; }
+
+ private:
+  solvers::MathematicalProgram prog_;
+  VectorX<symbolic::Polynomial> f_;
+  MatrixX<symbolic::Polynomial> G_;
+  double eps_;
+  std::vector<std::array<symbolic::Polynomial, 6>> l_;
+  VectorX<symbolic::Variable> x_;
+  symbolic::Polynomial V_;
+  MatrixX<symbolic::Variable> V_gram_;
+  int nx_;
+  int nu_;
+  VectorX<symbolic::Polynomial> b_;
   // constraint_grams_[i][0] contains the gram matrix and monomial basis for
   // the constraint
   // (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0

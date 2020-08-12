@@ -59,6 +59,33 @@ void CheckDynamicsInput(const symbolic::Polynomial& V,
     }
   }
 }
+
+namespace {
+// Add the constraint
+// (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
+// (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
+void AddControlLyapunovBoxInputBoundConstraints(
+    solvers::MathematicalProgram* prog,
+    const std::vector<std::array<symbolic::Polynomial, 6>>& l,
+    const symbolic::Polynomial& V, const RowVectorX<symbolic::Polynomial>& dVdx,
+    const VectorX<symbolic::Polynomial>& b,
+    const MatrixX<symbolic::Polynomial>& G,
+    std::vector<std::array<
+        std::pair<MatrixX<symbolic::Variable>, VectorX<symbolic::Monomial>>,
+        2>>* constraint_grams) {
+  const int nu = G.cols();
+  for (int i = 0; i < nu; ++i) {
+    const symbolic::Polynomial dVdx_times_Gi = (dVdx * G.col(i))(0);
+    const symbolic::Polynomial p1 = (l[i][0] + 1) * (dVdx_times_Gi - b(i)) -
+                                    l[i][2] * dVdx_times_Gi - l[i][4] * (1 - V);
+    const symbolic::Polynomial p2 = (l[i][1] + 1) * (-dVdx_times_Gi - b(i)) +
+                                    l[i][3] * dVdx_times_Gi - l[i][5] * (1 - V);
+    (*constraint_grams)[i][0] = prog->AddSosConstraint(p1);
+    (*constraint_grams)[i][1] = prog->AddSosConstraint(p2);
+  }
+}
+}  // namespace
+
 MaximizeEpsGivenVBoxInputBound::MaximizeEpsGivenVBoxInputBound(
     symbolic::Polynomial V, VectorX<symbolic::Polynomial> f,
     MatrixX<symbolic::Polynomial> G,
@@ -117,20 +144,45 @@ MaximizeEpsGivenVBoxInputBound::MaximizeEpsGivenVBoxInputBound(
   // Add the constraint
   // (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
   // (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
-  for (int i = 0; i < nu_; ++i) {
-    const symbolic::Polynomial dVdx_times_Gi = (dVdx * G_.col(i))(0);
-    const symbolic::Polynomial p1 = (l_[i][0] + 1) * (dVdx_times_Gi - b_(i)) -
-                                    l_[i][2] * dVdx_times_Gi -
-                                    l_[i][4] * (1 - V_);
-    const symbolic::Polynomial p2 = (l_[i][1] + 1) * (-dVdx_times_Gi - b_(i)) +
-                                    l_[i][3] * dVdx_times_Gi -
-                                    l_[i][5] * (1 - V_);
-    constraint_grams_[i][0] = prog_.AddSosConstraint(p1);
-    constraint_grams_[i][1] = prog_.AddSosConstraint(p2);
-  }
+  AddControlLyapunovBoxInputBoundConstraints(&prog_, l_, V_, dVdx, b_, G_,
+                                             &constraint_grams_);
+}
 
-  // prog_.AddLinearCost(-eps_);
-  prog_.AddLinearConstraint(eps_ >= 3);
+SearchLyapunovGivenLagrangianBoxInputBound::
+    SearchLyapunovGivenLagrangianBoxInputBound(
+        VectorX<symbolic::Polynomial> f, MatrixX<symbolic::Polynomial> G,
+        int V_degree, double eps,
+        std::vector<std::array<symbolic::Polynomial, 6>> l_given,
+        const std::vector<int>& b_degrees, VectorX<symbolic::Variable> x)
+    : prog_{},
+      f_{std::move(f)},
+      G_{std::move(G)},
+      eps_{eps},
+      l_{std::move(l_given)},
+      x_{std::move(x)},
+      nx_{static_cast<int>(f_.rows())},
+      nu_{static_cast<int>(G_.cols())},
+      b_{nu_},
+      constraint_grams_{static_cast<size_t>(nu_)} {
+  const symbolic::Variables x_set(x_);
+  prog_.AddIndeterminates(x_);
+  CheckDynamicsInput(V_, f_, G_, x_set);
+  DRAKE_DEMAND(static_cast<int>(b_degrees.size()) == nu_);
+  // V >= 0
+  std::tie(V_, V_gram_) = prog_.NewSosPolynomial(x_set, V_degree);
+
+  // ∂V/∂x*f(x) + εV = ∑ᵢ bᵢ(x)
+  for (int i = 0; i < nu_; ++i) {
+    b_(i) = prog_.NewFreePolynomial(x_set, b_degrees[i]);
+  }
+  const RowVectorX<symbolic::Polynomial> dVdx = V_.Jacobian(x_);
+  prog_.AddEqualityConstraintBetweenPolynomials((dVdx * f_)(0) + eps_ * V_,
+                                                b_.sum());
+  // Add the constraint
+  // (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
+  // (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
+  AddControlLyapunovBoxInputBoundConstraints(&prog_, l_, V_, dVdx, b_, G_,
+                                             &constraint_grams_);
 }
 
 SearchLagrangianGivenVBoxInputBound::SearchLagrangianGivenVBoxInputBound(

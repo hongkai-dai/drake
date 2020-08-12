@@ -1,5 +1,7 @@
 #include "drake/systems/analysis/control_lyapunov.h"
 
+#include <limits>
+
 #include <gtest/gtest.h>
 
 #include "drake/common/test_utilities/symbolic_test_util.h"
@@ -11,6 +13,7 @@
 namespace drake {
 namespace systems {
 namespace analysis {
+const double kInf = std::numeric_limits<double>::infinity();
 
 class ControlLyapunovTest : public ::testing::Test {
  protected:
@@ -155,8 +158,11 @@ void ValidateRegionOfAttractionBySample(const VectorX<symbolic::Polynomial>& f,
   }
 }
 
-TEST_F(SimpleLinearSystemTest, MaximizeEpsGivenVBoxInputBound) {
-  // We compute the LQR cost-to-go as the candidate Lyapunov function.
+TEST_F(SimpleLinearSystemTest, MaximizeEpsAndSearchVBoxInputBound) {
+  // We first compute LQR cost-to-go as the candidate Lyapunov function, and
+  // show that we can search the Lagrangians. Then we fix the Lagrangian, and
+  // show that we can search the Lyapunov. We compute the LQR cost-to-go as the
+  // candidate Lyapunov function.
   const controllers::LinearQuadraticRegulatorResult lqr_result =
       controllers::LinearQuadraticRegulator(A_, B_, Eigen::Matrix2d::Identity(),
                                             Eigen::Matrix2d::Identity());
@@ -196,21 +202,47 @@ TEST_F(SimpleLinearSystemTest, MaximizeEpsGivenVBoxInputBound) {
 
   std::vector<int> b_degrees(nu, 2);
 
-  MaximizeEpsGivenVBoxInputBound dut(V, f, G, l_given, lagrangian_degrees,
-                                     b_degrees, x_);
+  MaximizeEpsGivenVBoxInputBound dut_max_eps(V, f, G, l_given,
+                                             lagrangian_degrees, b_degrees, x_);
+  dut_max_eps.get_mutable_prog()->AddBoundingBoxConstraint(3, kInf,
+                                                           dut_max_eps.eps());
 
   solvers::MosekSolver mosek_solver;
   solvers::CsdpSolver csdp_solver;
   mosek_solver.set_stream_logging(true, "");
-  const auto result = csdp_solver.Solve(dut.prog());
+  const auto result = mosek_solver.Solve(dut_max_eps.prog());
   EXPECT_TRUE(result.is_success());
-  CheckMaximizeEpsGivenVBoxInputBoundResult(dut, result, V, f, G, x_, 1.3E-5);
+  CheckMaximizeEpsGivenVBoxInputBoundResult(dut_max_eps, result, V, f, G, x_,
+                                            1.3E-5);
 
-  const double eps = 3;
+  const double eps_result = result.GetSolution(dut_max_eps.eps());
   Eigen::Matrix<double, 2, 4> u_vertices;
   u_vertices << 1, 1, -1, -1, 1, -1, 1, -1;
-  ValidateRegionOfAttractionBySample(f, G, V, x_, u_vertices, eps, 100, 1E-5,
-                                     1E-3);
+  ValidateRegionOfAttractionBySample(f, G, V, x_, u_vertices, eps_result, 100,
+                                     1E-5, 1E-3);
+
+  std::vector<std::array<symbolic::Polynomial, 6>> l_result(nu);
+  for (int i = 0; i < nu; ++i) {
+    for (int j = 0; j < 6; ++j) {
+      l_result[i][j] = result.GetSolution(dut_max_eps.lagrangians()[i][j]);
+    }
+  }
+  // Given the lagrangians, test search Lyapunov.
+  const int V_degree{2};
+  SearchLyapunovGivenLagrangianBoxInputBound dut_search_V(
+      f, G, V_degree, eps_result, l_result, b_degrees, x_);
+  const Eigen::Vector2d x_equilibrium(0, 0);
+  symbolic::Environment x_equilibrium_env;
+  x_equilibrium_env.insert(x_(0), x_equilibrium(0));
+  x_equilibrium_env.insert(x_(1), x_equilibrium(1));
+  dut_search_V.get_mutable_prog()->AddLinearEqualityConstraint(
+      dut_search_V.V().EvaluatePartial(x_equilibrium_env).ToExpression(), 0);
+  const auto result_search_V = mosek_solver.Solve(dut_search_V.prog());
+  ASSERT_TRUE(result_search_V.is_success());
+  const symbolic::Polynomial V_result =
+      result_search_V.GetSolution(dut_search_V.V());
+  ValidateRegionOfAttractionBySample(f, G, V_result, x_, u_vertices, eps_result,
+                                     100, 1E-5, 1E-3);
 }
 
 }  // namespace analysis

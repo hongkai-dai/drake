@@ -163,18 +163,20 @@ class ControlLyapunovBoxInputBound {
  * For u bounded in a unit box -1 <= u <= 1.
  * Given the control Lyapunov function candidate V, together with the Lagrangian
  * multipliers lᵢ₁(x), lᵢ₂(x), search for b and Lagrangian multipliers lᵢ₃(x),
- * lᵢ₄(x), lᵢ₅(x), lᵢ₆(x), so as to maximize the convergence rate ε
+ * lᵢ₄(x), lᵢ₅(x), lᵢ₆(x), satisfying the following constraint
  *
- *     max ε
- *     s.t
  *     ∂V/∂x*f(x) + εV = ∑ᵢ bᵢ(x)
  *     (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
  *     (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
  *     lᵢ₃(x) >= 0, lᵢ₄(x) >= 0, lᵢ₅(x) >= 0, lᵢ₆(x) >= 0
+ *
+ * The variables are ε, b(x), lₖ₃(x), lₖ₄(x), lₖ₅(x), lₖ₆(x)
+ * This is the starting step of the search, where we can get a good guess
+ * of V(x), lₖ₁(x), lₖ₂(x).
  */
-class MaximizeEpsGivenVBoxInputBound {
+class SearchLagrangianAndBGivenVBoxInputBound {
  public:
-  DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(MaximizeEpsGivenVBoxInputBound)
+  DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(SearchLagrangianAndBGivenVBoxInputBound)
 
   /**
    * @param l_given l_given[i][0] is lᵢ₁(x), l_given[i][1] is lᵢ₂(x).
@@ -182,7 +184,7 @@ class MaximizeEpsGivenVBoxInputBound {
    * Lagrangian multiplier lᵢⱼ₊₁(x).
    * @param b_degrees b_degrees[i] is the degree of the polynomial b(i).
    */
-  MaximizeEpsGivenVBoxInputBound(
+  SearchLagrangianAndBGivenVBoxInputBound(
       symbolic::Polynomial V, VectorX<symbolic::Polynomial> f,
       MatrixX<symbolic::Polynomial> G,
       const std::vector<std::array<symbolic::Polynomial, 2>>& l_given,
@@ -330,6 +332,7 @@ class SearchLagrangianGivenVBoxInputBound {
   std::vector<std::array<int, 6>> lagrangian_degrees_;
   std::vector<std::array<MatrixX<symbolic::Variable>, 6>> lagrangian_grams_;
 };
+
 }  // namespace analysis
 }  // namespace systems
 }  // namespace drake

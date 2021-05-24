@@ -64,8 +64,8 @@ class SimpleLinearSystemTest : public ::testing::Test {
   Vector2<symbolic::Variable> x_;
 };
 
-void CheckMaximizeEpsGivenVBoxInputBoundResult(
-    const MaximizeEpsGivenVBoxInputBound& dut,
+void CheckSearchLagrangianAndBResult(
+    const SearchLagrangianAndBGivenVBoxInputBound& dut,
     const solvers::MathematicalProgramResult& result,
     const symbolic::Polynomial& V, const VectorX<symbolic::Polynomial>& f,
     const MatrixX<symbolic::Polynomial>& G,
@@ -158,7 +158,7 @@ void ValidateRegionOfAttractionBySample(const VectorX<symbolic::Polynomial>& f,
   }
 }
 
-TEST_F(SimpleLinearSystemTest, MaximizeEpsAndSearchVBoxInputBound) {
+TEST_F(SimpleLinearSystemTest, SearchLagrangianAndBGivenVBoxInputBound) {
   // We first compute LQR cost-to-go as the candidate Lyapunov function, and
   // show that we can search the Lagrangians. Then we fix the Lagrangian, and
   // show that we can search the Lyapunov. We compute the LQR cost-to-go as the
@@ -202,20 +202,19 @@ TEST_F(SimpleLinearSystemTest, MaximizeEpsAndSearchVBoxInputBound) {
 
   std::vector<int> b_degrees(nu, 2);
 
-  MaximizeEpsGivenVBoxInputBound dut_max_eps(V, f, G, l_given,
-                                             lagrangian_degrees, b_degrees, x_);
-  dut_max_eps.get_mutable_prog()->AddBoundingBoxConstraint(3, kInf,
-                                                           dut_max_eps.eps());
+  SearchLagrangianAndBGivenVBoxInputBound dut_search_l_b(
+      V, f, G, l_given, lagrangian_degrees, b_degrees, x_);
+  dut_search_l_b.get_mutable_prog()->AddBoundingBoxConstraint(
+      3, kInf, dut_search_l_b.eps());
 
   solvers::MosekSolver mosek_solver;
   solvers::CsdpSolver csdp_solver;
   mosek_solver.set_stream_logging(true, "");
-  const auto result = mosek_solver.Solve(dut_max_eps.prog());
+  const auto result = mosek_solver.Solve(dut_search_l_b.prog());
   EXPECT_TRUE(result.is_success());
-  CheckMaximizeEpsGivenVBoxInputBoundResult(dut_max_eps, result, V, f, G, x_,
-                                            1.3E-5);
+  CheckSearchLagrangianAndBResult(dut_search_l_b, result, V, f, G, x_, 1.3E-5);
 
-  const double eps_result = result.GetSolution(dut_max_eps.eps());
+  const double eps_result = result.GetSolution(dut_search_l_b.eps());
   Eigen::Matrix<double, 2, 4> u_vertices;
   u_vertices << 1, 1, -1, -1, 1, -1, 1, -1;
   ValidateRegionOfAttractionBySample(f, G, V, x_, u_vertices, eps_result, 100,
@@ -224,7 +223,7 @@ TEST_F(SimpleLinearSystemTest, MaximizeEpsAndSearchVBoxInputBound) {
   std::vector<std::array<symbolic::Polynomial, 6>> l_result(nu);
   for (int i = 0; i < nu; ++i) {
     for (int j = 0; j < 6; ++j) {
-      l_result[i][j] = result.GetSolution(dut_max_eps.lagrangians()[i][j]);
+      l_result[i][j] = result.GetSolution(dut_search_l_b.lagrangians()[i][j]);
     }
   }
   // Given the lagrangians, test search Lyapunov.

@@ -86,12 +86,13 @@ void AddControlLyapunovBoxInputBoundConstraints(
 }
 }  // namespace
 
-MaximizeEpsGivenVBoxInputBound::MaximizeEpsGivenVBoxInputBound(
-    symbolic::Polynomial V, VectorX<symbolic::Polynomial> f,
-    MatrixX<symbolic::Polynomial> G,
-    const std::vector<std::array<symbolic::Polynomial, 2>>& l_given,
-    std::vector<std::array<int, 6>> lagrangian_degrees,
-    std::vector<int> b_degrees, VectorX<symbolic::Variable> x)
+SearchLagrangianAndBGivenVBoxInputBound::
+    SearchLagrangianAndBGivenVBoxInputBound(
+        symbolic::Polynomial V, VectorX<symbolic::Polynomial> f,
+        MatrixX<symbolic::Polynomial> G,
+        const std::vector<std::array<symbolic::Polynomial, 2>>& l_given,
+        std::vector<std::array<int, 6>> lagrangian_degrees,
+        std::vector<int> b_degrees, VectorX<symbolic::Variable> x)
     : prog_{},
       V_{std::move(V)},
       f_{std::move(f)},
@@ -231,6 +232,7 @@ SearchLagrangianGivenVBoxInputBound::SearchLagrangianGivenVBoxInputBound(
     prog_.AddSosConstraint(p2);
   }
 }
+
 }  // namespace analysis
 }  // namespace systems
 }  // namespace drake

@@ -84,6 +84,39 @@ void AddControlLyapunovBoxInputBoundConstraints(
     (*constraint_grams)[i][1] = prog->AddSosConstraint(p2);
   }
 }
+
+// Add the constraint
+// (1+t(x))((x−x*)ᵀS(x−x*)−ρ) − s(x)(V(x)−1) is sos
+template <typename RhoType>
+
+std::pair<MatrixX<symbolic::Variable>, VectorX<symbolic::Monomial>>
+AddEllipsoidInRoaConstraintHelper(
+    solvers::MathematicalProgram* prog, const symbolic::Polynomial& t,
+    const VectorX<symbolic::Variable>& x,
+    const Eigen::Ref<const Eigen::VectorXd>& x_star,
+    const Eigen::Ref<const Eigen::MatrixXd>& S, const RhoType& rho,
+    const symbolic::Polynomial& s, const symbolic::Polynomial& V) {
+  // The ellipsoid polynomial (x−x*)ᵀS(x−x*)−ρ
+  symbolic::Polynomial::MapType ellipsoid_poly_map;
+  // Add constant term x*ᵀ*x* - ρ
+  ellipsoid_poly_map.emplace(symbolic::Monomial(), x_star.dot(x_star) - rho);
+  const Eigen::VectorXd S_times_x_star = S * x_star;
+  for (int i = 0; i < x.rows(); ++i) {
+    // Add S(i, i) * x(i)²
+    ellipsoid_poly_map.emplace(symbolic::Monomial(x(i), 2), S(i, i));
+    // Add -2 * x_starᵀ * S.col(i) * x(i)
+    ellipsoid_poly_map.emplace(symbolic::Monomial(x(i)),
+                               -2 * S_times_x_star(i));
+    for (int j = i + 1; j < x.rows(); ++j) {
+      // Add 2*S(i, j) * x(i) * x(j)
+      ellipsoid_poly_map.emplace(symbolic::Monomial({{x(i), 1}, {x(j), 1}}),
+                                 2 * S(i, j));
+    }
+  }
+  const symbolic::Polynomial ellipsoid_poly{ellipsoid_poly_map};
+  const symbolic::Polynomial sos_poly = (1 + t) * ellipsoid_poly - s * (V - 1);
+  return prog->AddSosConstraint(sos_poly);
+}
 }  // namespace
 
 SearchLagrangianAndBGivenVBoxInputBound::
@@ -103,11 +136,11 @@ SearchLagrangianAndBGivenVBoxInputBound::
       lagrangian_degrees_{std::move(lagrangian_degrees)},
       b_degrees_{std::move(b_degrees)},
       x_{std::move(x)},
+      x_set_{x_},
       b_{nu_},
       constraint_grams_{static_cast<size_t>(nu_)} {
-  const symbolic::Variables x_set(x_);
   prog_.AddIndeterminates(x_);
-  CheckDynamicsInput(V_, f_, G_, x_set);
+  CheckDynamicsInput(V_, f_, G_, x_set_);
   DRAKE_DEMAND(static_cast<int>(b_degrees_.size()) == nu_);
 
   // Add Lagrangian decision variables.
@@ -119,7 +152,7 @@ SearchLagrangianAndBGivenVBoxInputBound::
     for (int j = 2; j < 6; ++j) {
       MatrixX<symbolic::Variable> lagrangian_gram;
       std::tie(l_[i][j], lagrangian_gram) =
-          prog_.NewSosPolynomial(x_set, lagrangian_degrees_[i][j]);
+          prog_.NewSosPolynomial(x_set_, lagrangian_degrees_[i][j]);
     }
   }
 
@@ -136,7 +169,7 @@ SearchLagrangianAndBGivenVBoxInputBound::
 
   // Add free polynomial b
   for (int i = 0; i < nu_; ++i) {
-    b_(i) = prog_.NewFreePolynomial(x_set, b_degrees_[i], "b");
+    b_(i) = prog_.NewFreePolynomial(x_set_, b_degrees_[i], "b");
   }
 
   // Add the constraint ∂V/∂x*f(x) + εV = ∑ᵢ bᵢ(x)
@@ -147,6 +180,20 @@ SearchLagrangianAndBGivenVBoxInputBound::
   // (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
   AddControlLyapunovBoxInputBoundConstraints(&prog_, l_, V_, dVdx, b_, G_,
                                              &constraint_grams_);
+}
+
+SearchLagrangianAndBGivenVBoxInputBound::EllipsoidInRoaReturn
+SearchLagrangianAndBGivenVBoxInputBound::AddEllipsoidInRoaConstraint(
+    const Eigen::Ref<const Eigen::VectorXd>& x_star,
+    const Eigen::Ref<const Eigen::MatrixXd>& S, int s_degree,
+    const symbolic::Polynomial& t) {
+  EllipsoidInRoaReturn ret;
+  ret.rho = prog_.NewContinuousVariables<1>("rho")(0);
+  std::tie(ret.s, ret.s_gram) = prog_.NewSosPolynomial(x_set_, s_degree);
+  std::tie(ret.constraint_gram, ret.constraint_monomials) =
+      AddEllipsoidInRoaConstraintHelper<symbolic::Variable>(
+          &prog_, t, x_, x_star, S, ret.rho, ret.s, V_);
+  return ret;
 }
 
 SearchLyapunovGivenLagrangianBoxInputBound::

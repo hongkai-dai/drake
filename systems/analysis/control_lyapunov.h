@@ -209,6 +209,41 @@ class SearchLagrangianAndBGivenVBoxInputBound {
     return constraint_grams_;
   }
 
+  /**
+   * The return struct in AddEllipsoidInRoaConstraint
+   */
+  struct EllipsoidInRoaReturn {
+    // The size of the ellipoid.
+    symbolic::Variable rho;
+    // The monomial of the lagrangian multiplier s(x).
+    symbolic::Polynomial s;
+    // The Gram matrix of the lagrangian multiplier s(x).
+    MatrixX<symbolic::Variable> s_gram;
+    // The monomials of the constraint (1+t(x))((x−x*)ᵀS(x−x*)−ρ) − s(x)(V(x)−1)
+    VectorX<symbolic::Monomial> constraint_monomials;
+    // The Gram matrix of the constraint
+    // (1+t(x))((x−x*)ᵀS(x−x*)−ρ) − s(x)(V(x)−1)
+    MatrixX<symbolic::Variable> constraint_gram;
+  };
+
+  /**
+   * Add the constraint that an ellipsoid {x|(x−x*)ᵀS(x−x*)<=ρ} is within the
+   * region-of-attraction (ROA) {x | V(x) <= 1}.
+   * We enforce the constraint
+   * (1+t(x))((x−x*)ᵀS(x−x*)−ρ) − s(x)(V(x)−1) is sos
+   * s(x) is sos.
+   * The symmetric matrix S will be the newly added decision variable.
+   * @param x_star The center of the ellipsoid.
+   * @param S The shape of the ellipsoid.
+   * @param s_degree The degree of the polynomial s(x)
+   * @param t The given polynomial t(x). This polynomial should be positive
+   * semidefinite.
+   */
+  EllipsoidInRoaReturn AddEllipsoidInRoaConstraint(
+      const Eigen::Ref<const Eigen::VectorXd>& x_star,
+      const Eigen::Ref<const Eigen::MatrixXd>& S, int s_degree,
+      const symbolic::Polynomial& t);
+
  private:
   solvers::MathematicalProgram prog_;
   symbolic::Polynomial V_;
@@ -220,6 +255,7 @@ class SearchLagrangianAndBGivenVBoxInputBound {
   std::vector<std::array<int, 6>> lagrangian_degrees_;
   std::vector<int> b_degrees_;
   VectorX<symbolic::Variable> x_;
+  symbolic::Variables x_set_;
   VectorX<symbolic::Polynomial> b_;
   symbolic::Variable eps_;
 

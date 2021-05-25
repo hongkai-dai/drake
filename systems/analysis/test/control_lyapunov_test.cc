@@ -58,6 +58,48 @@ class SimpleLinearSystemTest : public ::testing::Test {
     x_ << symbolic::Variable("x0"), symbolic::Variable("x1");
   }
 
+  void InitializeWithLQR(
+      symbolic::Polynomial* V, Vector2<symbolic::Polynomial>* f,
+      Matrix2<symbolic::Polynomial>* G,
+      std::vector<std::array<symbolic::Polynomial, 2>>* l_given,
+      std::vector<std::array<int, 6>>* lagrangian_degrees) {
+    // We first compute LQR cost-to-go as the candidate Lyapunov function.
+    const controllers::LinearQuadraticRegulatorResult lqr_result =
+        controllers::LinearQuadraticRegulator(
+            A_, B_, Eigen::Matrix2d::Identity(), Eigen::Matrix2d::Identity());
+
+    const symbolic::Variables x_set{x_};
+    // We multiply the LQR cost-to-go by a factor (100 here), so that we start
+    // with a very small neighbourhood around the origin as the initial guess of
+    // ROA V(x) <= 1
+    *V = symbolic::Polynomial(x_.dot(100 * lqr_result.S * x_), x_set);
+
+    (*f)[0] = symbolic::Polynomial(A_.row(0).dot(x_), x_set);
+    (*f)[1] = symbolic::Polynomial(A_.row(1).dot(x_), x_set);
+    for (int i = 0; i < 2; ++i) {
+      for (int j = 0; j < 2; ++j) {
+        (*G)(i, j) = symbolic::Polynomial(B_(i, j));
+      }
+    }
+    // Set l_[i][0] and l_[i][1] to 1 + x.dot(x)
+    const int nu = 2;
+    l_given->resize(nu);
+    for (int i = 0; i < nu; ++i) {
+      (*l_given)[i][0] =
+          symbolic::Polynomial(1 + x_.cast<symbolic::Expression>().dot(x_));
+      (*l_given)[i][1] =
+          symbolic::Polynomial(1 + x_.cast<symbolic::Expression>().dot(x_));
+    }
+    lagrangian_degrees->resize(nu);
+    for (int i = 0; i < nu; ++i) {
+      (*lagrangian_degrees)[i][0] = 2;
+      (*lagrangian_degrees)[i][1] = 2;
+      for (int j = 2; j < 6; ++j) {
+        (*lagrangian_degrees)[i][j] = 2;
+      }
+    }
+  }
+
  protected:
   Eigen::Matrix2d A_;
   Eigen::Matrix2d B_;
@@ -163,43 +205,13 @@ TEST_F(SimpleLinearSystemTest, SearchLagrangianAndBGivenVBoxInputBound) {
   // show that we can search the Lagrangians. Then we fix the Lagrangian, and
   // show that we can search the Lyapunov. We compute the LQR cost-to-go as the
   // candidate Lyapunov function.
-  const controllers::LinearQuadraticRegulatorResult lqr_result =
-      controllers::LinearQuadraticRegulator(A_, B_, Eigen::Matrix2d::Identity(),
-                                            Eigen::Matrix2d::Identity());
-
-  const symbolic::Variables x_set{x_};
-  // We multiply the LQR cost-to-go by a factor (10 here), so that we start with
-  // a very small neighbourhood around the origin as the initial guess of ROA
-  // V(x) <= 1
-  const symbolic::Polynomial V(x_.dot(100 * lqr_result.S * x_), x_set);
-
+  symbolic::Polynomial V;
   Vector2<symbolic::Polynomial> f;
-  f[0] = symbolic::Polynomial(A_.row(0).dot(x_), x_set);
-  f[1] = symbolic::Polynomial(A_.row(1).dot(x_), x_set);
   Matrix2<symbolic::Polynomial> G;
-  for (int i = 0; i < 2; ++i) {
-    for (int j = 0; j < 2; ++j) {
-      G(i, j) = symbolic::Polynomial(B_(i, j));
-    }
-  }
-  // Set l_[i][0] and l_[i][1] to 1 + x.dot(x)
-  const int nu = 2;
-  std::vector<std::array<symbolic::Polynomial, 2>> l_given{nu};
-  for (int i = 0; i < nu; ++i) {
-    l_given[i][0] =
-        symbolic::Polynomial(1 + x_.cast<symbolic::Expression>().dot(x_));
-    l_given[i][1] =
-        symbolic::Polynomial(1 + x_.cast<symbolic::Expression>().dot(x_));
-  }
-  std::vector<std::array<int, 6>> lagrangian_degrees{nu};
-  for (int i = 0; i < nu; ++i) {
-    lagrangian_degrees[i][0] = 2;
-    lagrangian_degrees[i][1] = 2;
-    for (int j = 2; j < 6; ++j) {
-      lagrangian_degrees[i][j] = 2;
-    }
-  }
-
+  std::vector<std::array<symbolic::Polynomial, 2>> l_given;
+  std::vector<std::array<int, 6>> lagrangian_degrees;
+  InitializeWithLQR(&V, &f, &G, &l_given, &lagrangian_degrees);
+  const int nu{2};
   std::vector<int> b_degrees(nu, 2);
 
   SearchLagrangianAndBGivenVBoxInputBound dut_search_l_b(
@@ -244,6 +256,81 @@ TEST_F(SimpleLinearSystemTest, SearchLagrangianAndBGivenVBoxInputBound) {
                                      100, 1E-5, 1E-3);
 }
 
+TEST_F(SimpleLinearSystemTest,
+       SearchLagrangianAndBGivenVBoxInputBoundMaximizeEllipsoid) {
+  // We first compute LQR cost-to-go as the candidate Lyapunov function, and
+  // show that we can search the Lagrangians and maximize the ellipsoid
+  // contained in the ROA.
+  symbolic::Polynomial V;
+  Vector2<symbolic::Polynomial> f;
+  Matrix2<symbolic::Polynomial> G;
+  std::vector<std::array<symbolic::Polynomial, 2>> l_given;
+  std::vector<std::array<int, 6>> lagrangian_degrees;
+  InitializeWithLQR(&V, &f, &G, &l_given, &lagrangian_degrees);
+  const int nu{2};
+  std::vector<int> b_degrees(nu, 2);
+  SearchLagrangianAndBGivenVBoxInputBound dut(
+      V, f, G, l_given, lagrangian_degrees, b_degrees, x_);
+  const Eigen::Vector2d x_star(0.001, 0.0002);
+  // First make sure that x_star satisfies V(x*)<=1
+  const symbolic::Environment env_xstar(
+      {{x_(0), x_star(0)}, {x_(1), x_star(1)}});
+  ASSERT_LE(V.Evaluate(env_xstar), 1);
+  const Eigen::Matrix2d S = Eigen::Matrix2d::Identity();
+  const int s_degree = 2;
+  const symbolic::Variables x_set{x_};
+  const symbolic::Polynomial t(x_.cast<symbolic::Expression>().dot(x_), x_set);
+  const auto ellipsoid_ret =
+      dut.AddEllipsoidInRoaConstraint(x_star, S, s_degree, t);
+  // Maximize the ellipsoid rho.
+  dut.get_mutable_prog()->AddLinearCost(-ellipsoid_ret.rho);
+  // Set the rate-of-convergence epsilon to >= 0.1
+  dut.get_mutable_prog()->AddBoundingBoxConstraint(0.1, kInf, dut.eps());
+  solvers::MosekSolver solver;
+  solver.set_stream_logging(true, "");
+  const auto result = solver.Solve(dut.prog());
+  EXPECT_TRUE(result.is_success());
+  CheckSearchLagrangianAndBResult(dut, result, V, f, G, x_, 1.3E-5);
+  // Check if the ellipsoid is contained in the ROA {V(x) <= 1}
+  const symbolic::Polynomial s_sol = result.GetSolution(ellipsoid_ret.s);
+  const double rho_sol = result.GetSolution(ellipsoid_ret.rho);
+  EXPECT_GT(rho_sol, 0);
+  // Check if s(x) is sos.
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_solver;
+  es_solver.compute(result.GetSolution(ellipsoid_ret.s_gram));
+  const double psd_tol = 1E-6;
+  EXPECT_TRUE((es_solver.eigenvalues().array() >= -psd_tol).all());
+  // Check if the constraint (1+t(x))((x−x*)ᵀS(x−x*)−ρ) − s(x)(V(x)−1) is sos.
+  es_solver.compute(result.GetSolution(ellipsoid_ret.constraint_gram));
+  EXPECT_TRUE((es_solver.eigenvalues().array() >= -psd_tol).all());
+
+  const symbolic::Polynomial ellipsoid_sos_expected =
+      (1 + t) * symbolic::Polynomial(
+                    (x_ - x_star).dot(S * (x_ - x_star)) - rho_sol, x_set) -
+      s_sol * (V - 1);
+  EXPECT_PRED3(symbolic::test::PolynomialEqual, ellipsoid_sos_expected,
+               ellipsoid_ret.constraint_monomials.dot(
+                   result.GetSolution(ellipsoid_ret.constraint_gram) *
+                   ellipsoid_ret.constraint_monomials),
+               1E-5);
+  // Check if any point within the ellipsoid also satisfies V(x)<=1.
+  // A point on the boundary of ellipsoid (x−x*)ᵀS(x−x*)=ρ
+  // can be writeen as x=√ρ*L⁻ᵀ*[cosθ, sinθ]+x*
+  // where L is the Cholesky decomposition of S.
+  Eigen::LLT<Eigen::Matrix2d> llt_solver;
+  llt_solver.compute(S);
+  Eigen::VectorXd theta = Eigen::VectorXd::LinSpaced(100, 0, 2 * M_PI);
+  Eigen::ColPivHouseholderQR<Eigen::Matrix2d> qr_solver;
+  qr_solver.compute(llt_solver.matrixL().transpose());
+  for (int i = 0; i < theta.rows(); ++i) {
+    const Eigen::Vector2d x_val =
+        std::sqrt(rho_sol) * qr_solver.solve(Eigen::Vector2d(
+                                 std::cos(theta(i)), std::sin(theta(i)))) +
+        x_star;
+    const symbolic::Environment env{{{x_(0), x_val(0)}, {x_(1), x_val(1)}}};
+    EXPECT_LE(V.Evaluate(env), 1 + 1E-5);
+  }
+}
 }  // namespace analysis
 }  // namespace systems
 }  // namespace drake

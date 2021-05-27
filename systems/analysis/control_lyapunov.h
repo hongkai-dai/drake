@@ -165,12 +165,12 @@ class ControlLyapunovBoxInputBound {
  * multipliers lᵢ₁(x), lᵢ₂(x), search for b and Lagrangian multipliers lᵢ₃(x),
  * lᵢ₄(x), lᵢ₅(x), lᵢ₆(x), satisfying the following constraint
  *
- *     ∂V/∂x*f(x) + εV = ∑ᵢ bᵢ(x)
+ *     ∂V/∂x*f(x) + ε₂V = ∑ᵢ bᵢ(x)
  *     (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
  *     (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
  *     lᵢ₃(x) >= 0, lᵢ₄(x) >= 0, lᵢ₅(x) >= 0, lᵢ₆(x) >= 0
  *
- * The variables are ε, b(x), lₖ₃(x), lₖ₄(x), lₖ₅(x), lₖ₆(x)
+ * The variables are ε₂, b(x), lₖ₃(x), lₖ₄(x), lₖ₅(x), lₖ₆(x)
  * This is the starting step of the search, where we can get a good guess
  * of V(x), lₖ₁(x), lₖ₂(x).
  */
@@ -199,7 +199,7 @@ class SearchLagrangianAndBGivenVBoxInputBound {
 
   solvers::MathematicalProgram* get_mutable_prog() { return &prog_; }
 
-  const symbolic::Variable& eps() const { return eps_; }
+  const symbolic::Variable& deriv_eps() const { return deriv_eps_; }
 
   const VectorX<symbolic::Polynomial>& b() const { return b_; }
 
@@ -257,7 +257,7 @@ class SearchLagrangianAndBGivenVBoxInputBound {
   VectorX<symbolic::Variable> x_;
   symbolic::Variables x_set_;
   VectorX<symbolic::Polynomial> b_;
-  symbolic::Variable eps_;
+  symbolic::Variable deriv_eps_;
 
   // constraint_grams_[i][0] contains the gram matrix and monomial basis for
   // the constraint
@@ -275,8 +275,9 @@ class SearchLagrangianAndBGivenVBoxInputBound {
  * Given the Lagrangian multiplier, find the Lyapunov function V and slack
  * polynomials b, satisfying the condition
  *
- *     V(x) >= 0
- *     ∂V/∂x*f(x) + εV = ∑ᵢ bᵢ(x)
+ *     V(x) >= ε₁(x-x_des)ᵀ(x-x_des)
+ *     V(x_des) = 0
+ *     ∂V/∂x*f(x) + ε₂V = ∑ᵢ bᵢ(x)
  *     (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
  *     (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
  * where lᵢⱼ(x) are all given.
@@ -285,9 +286,23 @@ class SearchLyapunovGivenLagrangianBoxInputBound {
  public:
   DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(SearchLyapunovGivenLagrangianBoxInputBound)
 
+  /**
+   * @param f The dynamics is ẋ = f(x)+G(x)u
+   * @param G The dynamics is ẋ = f(x)+G(x)u
+   * @param V_degree The degree of the polynomial V(x)
+   * @param positivity_eps ε₁ in the documentation above. Used to constrain V(x)
+   * to be a positive definite function.
+   * @param deriv_eps ε₂ in the documentation above. The rate of exponential
+   * convergence.
+   * @param x_des The goal state where all states should converge to.
+   * @param l_given l_given[i][j] is lᵢⱼ in the documentation above.
+   * @param b_degrees b_degrees[i] is the degree of the polynomial bᵢ(x).
+   * @param x The indeterminates for the state.
+   */
   SearchLyapunovGivenLagrangianBoxInputBound(
       VectorX<symbolic::Polynomial> f, MatrixX<symbolic::Polynomial> G,
-      int V_degree, double eps,
+      int V_degree, double positivity_eps, double deriv_eps,
+      const Eigen::Ref<const Eigen::VectorXd>& x_des,
       std::vector<std::array<symbolic::Polynomial, 6>> l_given,
       const std::vector<int>& b_degrees, VectorX<symbolic::Variable> x);
 
@@ -299,17 +314,24 @@ class SearchLyapunovGivenLagrangianBoxInputBound {
 
   const symbolic::Polynomial& V() const { return V_; }
 
-  const MatrixX<symbolic::Variable>& V_gram() const { return V_gram_; }
+  /**
+   * The Gram matrix of the positivity constraint
+   * V(x) >= ε₁(x-x_des)ᵀ(x-x_des)
+   */
+  const MatrixX<symbolic::Variable>& positivity_constraint_gram() const {
+    return positivity_constraint_gram_;
+  }
 
  private:
   solvers::MathematicalProgram prog_;
   VectorX<symbolic::Polynomial> f_;
   MatrixX<symbolic::Polynomial> G_;
-  double eps_;
+  double deriv_eps_;
   std::vector<std::array<symbolic::Polynomial, 6>> l_;
   VectorX<symbolic::Variable> x_;
+  symbolic::Variables x_set_;
   symbolic::Polynomial V_;
-  MatrixX<symbolic::Variable> V_gram_;
+  MatrixX<symbolic::Variable> positivity_constraint_gram_;
   int nx_;
   int nu_;
   VectorX<symbolic::Polynomial> b_;

@@ -156,7 +156,7 @@ SearchLagrangianAndBGivenVBoxInputBound::
     }
   }
 
-  eps_ = prog_.NewContinuousVariables<1>("eps")(0);
+  deriv_eps_ = prog_.NewContinuousVariables<1>("deriv_eps")(0);
 
   const RowVectorX<symbolic::Polynomial> dVdx = V_.Jacobian(x_);
   // Since we will add the constraint ∂V/∂x*f(x) + εV = ∑ᵢ bᵢ(x), we know that
@@ -174,7 +174,7 @@ SearchLagrangianAndBGivenVBoxInputBound::
 
   // Add the constraint ∂V/∂x*f(x) + εV = ∑ᵢ bᵢ(x)
   prog_.AddEqualityConstraintBetweenPolynomials(b_.sum(),
-                                                dVdx_times_f + eps_ * V_);
+                                                dVdx_times_f + deriv_eps_ * V_);
   // Add the constraint
   // (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
   // (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
@@ -199,33 +199,59 @@ SearchLagrangianAndBGivenVBoxInputBound::AddEllipsoidInRoaConstraint(
 SearchLyapunovGivenLagrangianBoxInputBound::
     SearchLyapunovGivenLagrangianBoxInputBound(
         VectorX<symbolic::Polynomial> f, MatrixX<symbolic::Polynomial> G,
-        int V_degree, double eps,
+        int V_degree, double positivity_eps, double deriv_eps,
+        const Eigen::Ref<const Eigen::VectorXd>& x_des,
         std::vector<std::array<symbolic::Polynomial, 6>> l_given,
         const std::vector<int>& b_degrees, VectorX<symbolic::Variable> x)
     : prog_{},
       f_{std::move(f)},
       G_{std::move(G)},
-      eps_{eps},
+      deriv_eps_{deriv_eps},
       l_{std::move(l_given)},
       x_{std::move(x)},
+      x_set_{x_},
       nx_{static_cast<int>(f_.rows())},
       nu_{static_cast<int>(G_.cols())},
       b_{nu_},
       constraint_grams_{static_cast<size_t>(nu_)} {
-  const symbolic::Variables x_set(x_);
   prog_.AddIndeterminates(x_);
-  CheckDynamicsInput(V_, f_, G_, x_set);
+  CheckDynamicsInput(V_, f_, G_, x_set_);
   DRAKE_DEMAND(static_cast<int>(b_degrees.size()) == nu_);
-  // V >= 0
-  std::tie(V_, V_gram_) = prog_.NewSosPolynomial(x_set, V_degree);
+  DRAKE_DEMAND(positivity_eps >= 0);
+  // V(x) >= ε₁(x-x_des)ᵀ(x-x_des)
+  if (positivity_eps == 0) {
+    std::tie(V_, positivity_constraint_gram_) =
+        prog_.NewSosPolynomial(x_set_, V_degree);
+  } else {
+    V_ = prog_.NewFreePolynomial(x_set_, V_degree);
+    // quadratic_poly_map stores the mapping for the polynomial
+    // ε₁(x-x_des)ᵀ(x-x_des)
+    symbolic::Polynomial::MapType quadratic_poly_map;
+    quadratic_poly_map.emplace(symbolic::Monomial(),
+                               positivity_eps * x_des.dot(x_des));
+    for (int i = 0; i < nx_; ++i) {
+      quadratic_poly_map.emplace(symbolic::Monomial(x_(i), 2), positivity_eps);
+      quadratic_poly_map.emplace(symbolic::Monomial(x_(i)),
+                                 -2 * x_des(i) * positivity_eps);
+    }
+    std::tie(positivity_constraint_gram_, std::ignore) =
+        prog_.AddSosConstraint(V_ - symbolic::Polynomial(quadratic_poly_map));
+  }
+  // Add the constraint V(x_des) = 0
+  symbolic::Environment env_x_des;
+  for (int i = 0; i < nx_; ++i) {
+    env_x_des.insert(x_(i), x_des(i));
+  }
+  prog_.AddLinearEqualityConstraint(
+      V_.ToExpression().EvaluatePartial(env_x_des), 0.);
 
   // ∂V/∂x*f(x) + εV = ∑ᵢ bᵢ(x)
   for (int i = 0; i < nu_; ++i) {
-    b_(i) = prog_.NewFreePolynomial(x_set, b_degrees[i]);
+    b_(i) = prog_.NewFreePolynomial(x_set_, b_degrees[i]);
   }
   const RowVectorX<symbolic::Polynomial> dVdx = V_.Jacobian(x_);
-  prog_.AddEqualityConstraintBetweenPolynomials((dVdx * f_)(0) + eps_ * V_,
-                                                b_.sum());
+  prog_.AddEqualityConstraintBetweenPolynomials(
+      (dVdx * f_)(0) + deriv_eps_ * V_, b_.sum());
   // Add the constraint
   // (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
   // (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0

@@ -823,8 +823,10 @@ drake_cc_googletest(
     deps = [
         ":control_lyapunov",
         "//common/test_utilities:symbolic_test_util",
-        "//solvers:solve",
         "//solvers:mosek_solver",
+        "//solvers:csdp_solver",
+        "//solvers:scs_solver",
+        "//solvers:solve",
         "//systems/controllers:linear_quadratic_regulator",
     ],
 )

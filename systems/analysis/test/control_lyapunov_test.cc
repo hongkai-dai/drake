@@ -4,9 +4,11 @@
 
 #include <gtest/gtest.h>
 
+#include "drake/common/symbolic_monomial_util.h"
 #include "drake/common/test_utilities/symbolic_test_util.h"
 #include "drake/solvers/csdp_solver.h"
 #include "drake/solvers/mosek_solver.h"
+#include "drake/solvers/scs_solver.h"
 #include "drake/solvers/solve.h"
 #include "drake/systems/controllers/linear_quadratic_regulator.h"
 
@@ -56,6 +58,7 @@ class SimpleLinearSystemTest : public ::testing::Test {
     A_ << 1, 2, -1, 3;
     B_ << 1, 0.5, 0.5, 1;
     x_ << symbolic::Variable("x0"), symbolic::Variable("x1");
+    x_set_ = symbolic::Variables(x_);
   }
 
   void InitializeWithLQR(
@@ -104,6 +107,7 @@ class SimpleLinearSystemTest : public ::testing::Test {
   Eigen::Matrix2d A_;
   Eigen::Matrix2d B_;
   Vector2<symbolic::Variable> x_;
+  symbolic::Variables x_set_;
 };
 
 void CheckSearchLagrangianAndBResult(
@@ -114,14 +118,14 @@ void CheckSearchLagrangianAndBResult(
     const VectorX<symbolic::Variable>& x, double tol) {
   ASSERT_TRUE(result.is_success());
   const RowVectorX<symbolic::Polynomial> dVdx = V.Jacobian(x);
-  const double eps_val = result.GetSolution(dut.eps());
+  const double deriv_eps_val = result.GetSolution(dut.deriv_eps());
   const int nu = G.cols();
   VectorX<symbolic::Polynomial> b_result(nu);
   for (int i = 0; i < nu; ++i) {
     b_result(i) = result.GetSolution(dut.b()(i));
   }
 
-  EXPECT_TRUE(symbolic::test::PolynomialEqual((dVdx * f)(0) + eps_val * V,
+  EXPECT_TRUE(symbolic::test::PolynomialEqual((dVdx * f)(0) + deriv_eps_val * V,
                                               b_result.sum(), tol));
   std::vector<std::array<symbolic::Polynomial, 6>> lagrangians_result(nu);
   for (int i = 0; i < nu; ++i) {
@@ -160,13 +164,13 @@ void CheckSearchLagrangianAndBResult(
 }
 
 // Sample many points inside the level set V(x) <= 1, and verify that min_u
-// Vdot(x, u) (-1 <= u <= 1) is less than -eps * V.
+// Vdot(x, u) (-1 <= u <= 1) is less than -deriv_eps * V.
 void ValidateRegionOfAttractionBySample(const VectorX<symbolic::Polynomial>& f,
                                         const MatrixX<symbolic::Polynomial>& G,
                                         const symbolic::Polynomial& V,
                                         const VectorX<symbolic::Variable>& x,
                                         const Eigen::MatrixXd& u_vertices,
-                                        double eps, int num_samples,
+                                        double deriv_eps, int num_samples,
                                         double abs_tol, double rel_tol) {
   int sample_count = 0;
   const int nx = f.rows();
@@ -192,8 +196,8 @@ void ValidateRegionOfAttractionBySample(const VectorX<symbolic::Polynomial>& f,
            dVdx_times_G_val * u_vertices)
               .array()
               .minCoeff();
-      EXPECT_TRUE(-Vdot / V_val > eps - rel_tol ||
-                  -Vdot > V_val * eps - abs_tol);
+      EXPECT_TRUE(-Vdot / V_val > deriv_eps - rel_tol ||
+                  -Vdot > V_val * deriv_eps - abs_tol);
 
       sample_count++;
     }
@@ -217,7 +221,7 @@ TEST_F(SimpleLinearSystemTest, SearchLagrangianAndBGivenVBoxInputBound) {
   SearchLagrangianAndBGivenVBoxInputBound dut_search_l_b(
       V, f, G, l_given, lagrangian_degrees, b_degrees, x_);
   dut_search_l_b.get_mutable_prog()->AddBoundingBoxConstraint(
-      3, kInf, dut_search_l_b.eps());
+      3, kInf, dut_search_l_b.deriv_eps());
 
   solvers::MosekSolver mosek_solver;
   solvers::CsdpSolver csdp_solver;
@@ -226,11 +230,11 @@ TEST_F(SimpleLinearSystemTest, SearchLagrangianAndBGivenVBoxInputBound) {
   EXPECT_TRUE(result.is_success());
   CheckSearchLagrangianAndBResult(dut_search_l_b, result, V, f, G, x_, 1.3E-5);
 
-  const double eps_result = result.GetSolution(dut_search_l_b.eps());
+  const double deriv_eps_sol = result.GetSolution(dut_search_l_b.deriv_eps());
   Eigen::Matrix<double, 2, 4> u_vertices;
   u_vertices << 1, 1, -1, -1, 1, -1, 1, -1;
-  ValidateRegionOfAttractionBySample(f, G, V, x_, u_vertices, eps_result, 100,
-                                     1E-5, 1E-3);
+  ValidateRegionOfAttractionBySample(f, G, V, x_, u_vertices, deriv_eps_sol,
+                                     100, 1E-5, 1E-3);
 
   std::vector<std::array<symbolic::Polynomial, 6>> l_result(nu);
   for (int i = 0; i < nu; ++i) {
@@ -240,20 +244,38 @@ TEST_F(SimpleLinearSystemTest, SearchLagrangianAndBGivenVBoxInputBound) {
   }
   // Given the lagrangians, test search Lyapunov.
   const int V_degree{2};
-  SearchLyapunovGivenLagrangianBoxInputBound dut_search_V(
-      f, G, V_degree, eps_result, l_result, b_degrees, x_);
   const Eigen::Vector2d x_equilibrium(0, 0);
-  symbolic::Environment x_equilibrium_env;
-  x_equilibrium_env.insert(x_(0), x_equilibrium(0));
-  x_equilibrium_env.insert(x_(1), x_equilibrium(1));
-  dut_search_V.get_mutable_prog()->AddLinearEqualityConstraint(
-      dut_search_V.V().EvaluatePartial(x_equilibrium_env).ToExpression(), 0);
-  const auto result_search_V = mosek_solver.Solve(dut_search_V.prog());
+  const double positivity_eps = 1E-3;
+  SearchLyapunovGivenLagrangianBoxInputBound dut_search_V(
+      f, G, V_degree, positivity_eps, deriv_eps_sol, x_equilibrium, l_result,
+      b_degrees, x_);
+  const auto result_search_V = csdp_solver.Solve(dut_search_V.prog());
   ASSERT_TRUE(result_search_V.is_success());
-  const symbolic::Polynomial V_result =
+  const symbolic::Polynomial V_sol =
       result_search_V.GetSolution(dut_search_V.V());
-  ValidateRegionOfAttractionBySample(f, G, V_result, x_, u_vertices, eps_result,
+  ValidateRegionOfAttractionBySample(f, G, V_sol, x_, u_vertices, deriv_eps_sol,
                                      100, 1E-5, 1E-3);
+  // Check if the V(x_equilibrium) = 0.
+  symbolic::Environment env_x_equilibrium;
+  env_x_equilibrium.insert(x_(0), x_equilibrium(0));
+  env_x_equilibrium.insert(x_(1), x_equilibrium(1));
+  EXPECT_NEAR(V_sol.Evaluate(env_x_equilibrium), 0., 1E-5);
+  // Make sure V(x) - ε₁(x-x_des)ᵀ(x-x_des) is SOS.
+  const Eigen::MatrixXd positivity_constraint_gram_sol =
+      result_search_V.GetSolution(dut_search_V.positivity_constraint_gram());
+  EXPECT_PRED3(
+      symbolic::test::PolynomialEqual,
+      V_sol - positivity_eps *
+                  symbolic::Polynomial(
+                      (x_ - x_equilibrium).dot(x_ - x_equilibrium), x_set_),
+      symbolic::MonomialBasis(x_set_, V_degree / 2)
+          .dot(positivity_constraint_gram_sol *
+               symbolic::MonomialBasis(x_set_, V_degree / 2)),
+      1E-6);
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_solver;
+  es_solver.compute(positivity_constraint_gram_sol);
+  const double psd_tol = 1E-6;
+  EXPECT_TRUE((es_solver.eigenvalues().array() >= -psd_tol).all());
 }
 
 TEST_F(SimpleLinearSystemTest,
@@ -285,7 +307,7 @@ TEST_F(SimpleLinearSystemTest,
   // Maximize the ellipsoid rho.
   dut.get_mutable_prog()->AddLinearCost(-ellipsoid_ret.rho);
   // Set the rate-of-convergence epsilon to >= 0.1
-  dut.get_mutable_prog()->AddBoundingBoxConstraint(0.1, kInf, dut.eps());
+  dut.get_mutable_prog()->AddBoundingBoxConstraint(0.1, kInf, dut.deriv_eps());
   solvers::MosekSolver solver;
   solver.set_stream_logging(true, "");
   const auto result = solver.Solve(dut.prog());

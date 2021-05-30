@@ -70,9 +70,7 @@ void AddControlLyapunovBoxInputBoundConstraints(
     const symbolic::Polynomial& V, const RowVectorX<symbolic::Polynomial>& dVdx,
     const VectorX<symbolic::Polynomial>& b,
     const MatrixX<symbolic::Polynomial>& G,
-    std::vector<std::array<
-        std::pair<MatrixX<symbolic::Variable>, VectorX<symbolic::Monomial>>,
-        2>>* constraint_grams) {
+    VdotSosConstraintReturn* vdot_sos_constraint) {
   const int nu = G.cols();
   for (int i = 0; i < nu; ++i) {
     const symbolic::Polynomial dVdx_times_Gi = (dVdx * G.col(i))(0);
@@ -80,8 +78,10 @@ void AddControlLyapunovBoxInputBoundConstraints(
                                     l[i][2] * dVdx_times_Gi - l[i][4] * (1 - V);
     const symbolic::Polynomial p2 = (l[i][1] + 1) * (-dVdx_times_Gi - b(i)) +
                                     l[i][3] * dVdx_times_Gi - l[i][5] * (1 - V);
-    (*constraint_grams)[i][0] = prog->AddSosConstraint(p1);
-    (*constraint_grams)[i][1] = prog->AddSosConstraint(p2);
+    std::tie(vdot_sos_constraint->grams[i][0],
+             vdot_sos_constraint->monomials[i][0]) = prog->AddSosConstraint(p1);
+    std::tie(vdot_sos_constraint->grams[i][1],
+             vdot_sos_constraint->monomials[i][1]) = prog->AddSosConstraint(p2);
   }
 }
 
@@ -110,7 +110,7 @@ AddEllipsoidInRoaConstraintHelper(
     for (int j = i + 1; j < x.rows(); ++j) {
       // Add 2*S(i, j) * x(i) * x(j)
       ellipsoid_poly_map.emplace(symbolic::Monomial({{x(i), 1}, {x(j), 1}}),
-                                 2 * S(i, j));
+                                 S(i, j) + S(j, i));
     }
   }
   const symbolic::Polynomial ellipsoid_poly{ellipsoid_poly_map};
@@ -118,6 +118,17 @@ AddEllipsoidInRoaConstraintHelper(
   return prog->AddSosConstraint(sos_poly);
 }
 }  // namespace
+
+std::array<symbolic::Polynomial, 2>
+VdotSosConstraintReturn::ComputeSosConstraint(
+    int i, const solvers::MathematicalProgramResult& result) const {
+  std::array<symbolic::Polynomial, 2> ret;
+  for (int j = 0; j < 2; ++j) {
+    const Eigen::MatrixXd gram_sol = result.GetSolution(grams[i][j]);
+    ret[j] = monomials[i][j].dot(gram_sol * monomials[i][j]);
+  }
+  return ret;
+}
 
 SearchLagrangianAndBGivenVBoxInputBound::
     SearchLagrangianAndBGivenVBoxInputBound(
@@ -134,11 +145,12 @@ SearchLagrangianAndBGivenVBoxInputBound::
       nu_{static_cast<int>(G_.cols())},
       l_{static_cast<size_t>(nu_)},
       lagrangian_degrees_{std::move(lagrangian_degrees)},
+      lagrangian_grams_{static_cast<size_t>(nu_)},
       b_degrees_{std::move(b_degrees)},
       x_{std::move(x)},
       x_set_{x_},
       b_{nu_},
-      constraint_grams_{static_cast<size_t>(nu_)} {
+      vdot_sos_constraint_{nu_} {
   prog_.AddIndeterminates(x_);
   CheckDynamicsInput(V_, f_, G_, x_set_);
   DRAKE_DEMAND(static_cast<int>(b_degrees_.size()) == nu_);
@@ -150,8 +162,7 @@ SearchLagrangianAndBGivenVBoxInputBound::
     l_[i][0] = l_given[i][0];
     l_[i][1] = l_given[i][1];
     for (int j = 2; j < 6; ++j) {
-      MatrixX<symbolic::Variable> lagrangian_gram;
-      std::tie(l_[i][j], lagrangian_gram) =
+      std::tie(l_[i][j], lagrangian_grams_[i][j]) =
           prog_.NewSosPolynomial(x_set_, lagrangian_degrees_[i][j]);
     }
   }
@@ -179,7 +190,7 @@ SearchLagrangianAndBGivenVBoxInputBound::
   // (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
   // (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
   AddControlLyapunovBoxInputBoundConstraints(&prog_, l_, V_, dVdx, b_, G_,
-                                             &constraint_grams_);
+                                             &vdot_sos_constraint_);
 }
 
 SearchLagrangianAndBGivenVBoxInputBound::EllipsoidInRoaReturn
@@ -213,7 +224,7 @@ SearchLyapunovGivenLagrangianBoxInputBound::
       nx_{static_cast<int>(f_.rows())},
       nu_{static_cast<int>(G_.cols())},
       b_{nu_},
-      constraint_grams_{static_cast<size_t>(nu_)} {
+      vdot_sos_constraint_{nu_} {
   prog_.AddIndeterminates(x_);
   CheckDynamicsInput(V_, f_, G_, x_set_);
   DRAKE_DEMAND(static_cast<int>(b_degrees.size()) == nu_);
@@ -256,7 +267,20 @@ SearchLyapunovGivenLagrangianBoxInputBound::
   // (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
   // (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
   AddControlLyapunovBoxInputBoundConstraints(&prog_, l_, V_, dVdx, b_, G_,
-                                             &constraint_grams_);
+                                             &vdot_sos_constraint_);
+}
+
+SearchLyapunovGivenLagrangianBoxInputBound::EllipsoidInRoaReturn
+SearchLyapunovGivenLagrangianBoxInputBound::AddEllipsoidInRoaConstraint(
+    const Eigen::Ref<const Eigen::VectorXd>& x_star,
+    const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& t,
+    const symbolic::Polynomial& s) {
+  EllipsoidInRoaReturn ret;
+  ret.rho = prog_.NewContinuousVariables<1>("rho")(0);
+  std::tie(ret.constraint_gram, ret.constraint_monomials) =
+      AddEllipsoidInRoaConstraintHelper<symbolic::Variable>(
+          &prog_, t, x_, x_star, S, ret.rho, s, V_);
+  return ret;
 }
 
 SearchLagrangianGivenVBoxInputBound::SearchLagrangianGivenVBoxInputBound(
@@ -269,23 +293,24 @@ SearchLagrangianGivenVBoxInputBound::SearchLagrangianGivenVBoxInputBound(
       G_{std::move(G)},
       b_{std::move(b)},
       x_{std::move(x)},
+      x_set_{x_},
       prog_{},
       nu_{static_cast<int>(G_.cols())},
       nx_{static_cast<int>(f.rows())},
       l_{static_cast<size_t>(nu_)},
       lagrangian_degrees_{std::move(lagrangian_degrees)},
-      lagrangian_grams_{static_cast<size_t>(nu_)} {
-  const symbolic::Variables x_set{x_};
-  CheckDynamicsInput(V_, f_, G_, x_set);
-  DRAKE_DEMAND(b.rows() == nu_);
+      lagrangian_grams_{static_cast<size_t>(nu_)},
+      vdot_sos_constraint_{nu_} {
+  CheckDynamicsInput(V_, f_, G_, x_set_);
+  DRAKE_DEMAND(b_.rows() == nu_);
   for (int i = 0; i < nu_; ++i) {
-    DRAKE_DEMAND(b_(i).indeterminates().IsSubsetOf(x_set));
+    DRAKE_DEMAND(b_(i).indeterminates().IsSubsetOf(x_set_));
   }
   prog_.AddIndeterminates(x_);
   for (int i = 0; i < nu_; ++i) {
     for (int j = 0; j < 6; ++j) {
       std::tie(l_[i][j], lagrangian_grams_[i][j]) =
-          prog_.NewSosPolynomial(x_set, lagrangian_degrees_[i][j]);
+          prog_.NewSosPolynomial(x_set_, lagrangian_degrees_[i][j]);
     }
   }
 
@@ -293,19 +318,23 @@ SearchLagrangianGivenVBoxInputBound::SearchLagrangianGivenVBoxInputBound(
   // Now impose the constraint
   // (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
   // (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
-  for (int i = 0; i < nu_; ++i) {
-    const symbolic::Polynomial dVdx_times_Gi = dVdx * G_.col(i);
-    const symbolic::Polynomial p1 =
-        (l_[i][0] + 1) * (dVdx_times_Gi - b_(i)) -
-        l_[i][2] * dVdx_times_Gi * l_[i][4] * (1 - V_);
-    const symbolic::Polynomial p2 = (l_[i][1] + 1) * (-dVdx_times_Gi - b_(i)) +
-                                    l_[i][3] * dVdx_times_Gi -
-                                    l_[i][5] * (1 - V_);
-    prog_.AddSosConstraint(p1);
-    prog_.AddSosConstraint(p2);
-  }
+  AddControlLyapunovBoxInputBoundConstraints(&prog_, l_, V_, dVdx, b_, G_,
+                                             &vdot_sos_constraint_);
 }
 
+SearchLagrangianGivenVBoxInputBound::EllipsoidInRoaReturn
+SearchLagrangianGivenVBoxInputBound::AddEllipsoidInRoaConstraint(
+    const Eigen::Ref<const Eigen::VectorXd>& x_star,
+    const Eigen::Ref<const Eigen::MatrixXd>& S, int s_degree,
+    const symbolic::Polynomial& t) {
+  EllipsoidInRoaReturn ret;
+  ret.rho = prog_.NewContinuousVariables<1>("rho")(0);
+  std::tie(ret.s, ret.s_gram) = prog_.NewSosPolynomial(x_set_, s_degree);
+  std::tie(ret.constraint_gram, ret.constraint_monomials) =
+      AddEllipsoidInRoaConstraintHelper<symbolic::Variable>(
+          &prog_, t, x_, x_star, S, ret.rho, ret.s, V_);
+  return ret;
+}
 }  // namespace analysis
 }  // namespace systems
 }  // namespace drake

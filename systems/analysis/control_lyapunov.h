@@ -1,6 +1,7 @@
 #pragma once
 
 #include "drake/solvers/mathematical_program.h"
+#include "drake/solvers/mathematical_program_result.h"
 
 namespace drake {
 namespace systems {
@@ -91,6 +92,39 @@ class VdotCalculator {
 };
 
 /**
+ * We need to impose the constraint
+ * (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
+ * (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
+ * We store the monomial basis and the Gram matrix of these two SOS constraint.
+ */
+struct VdotSosConstraintReturn {
+  VdotSosConstraintReturn(int nu)
+      : monomials{static_cast<size_t>(nu)}, grams{static_cast<size_t>(nu)} {}
+
+  /**
+   * Compute the i'th pair of SOS constraint (the polynomial on the left
+   * handside)
+   * (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
+   * (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
+   * @param i Compute the i'th pair.
+   * @param result The result after solving the program.
+   */
+  std::array<symbolic::Polynomial, 2> ComputeSosConstraint(
+      int i, const solvers::MathematicalProgramResult& result) const;
+
+  // monomials[i][0] is the monomial basis for the constraint
+  // (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
+  // monomials[i][1] is the monomial basis for the constraint
+  // (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
+  std::vector<std::array<VectorX<symbolic::Monomial>, 2>> monomials;
+  // grams[i][0] is the Gram matrix for the constraint
+  // (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
+  // grams[i][1] is the Gram matrix for the constraint
+  // (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
+  std::vector<std::array<MatrixX<symbolic::Variable>, 2>> grams;
+};
+
+/**
  * Search a control Lyapunov function (together with its region of attraction)
  * for a control affine system with box-shaped input limits. Namely the system
  * dynamics is ẋ = f(x) + G(x)u where the input bounds are -1 <= u <= 1.
@@ -128,18 +162,18 @@ class VdotCalculator {
  *     (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x) − bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x)>=0
  *     lᵢ₁(x) >= 0, lᵢ₂(x) >= 0, lᵢ₃(x) >= 0, lᵢ₄(x) >= 0
  *
- * To summarize, in order to prove the control Lyapunov function with region of
- * attraction V(x) ≤ 1, we impose the following constraint
+ * To summarize, in order to prove the control Lyapunov function with region
+ * of attraction V(x) ≤ 1, we impose the following constraint
  *
  *     V(x) > 0
  *     ∂V/∂x*f(x) + εV = ∑ᵢ bᵢ(x)
- *     (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
- *     (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
+ *     (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >=
+ * 0 (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
  *     lᵢ₁(x) >= 0, lᵢ₂(x) >= 0,
  *     lᵢ₃(x) >= 0, lᵢ₄(x) >= 0, lᵢ₅(x) >= 0, lᵢ₆(x) >= 0
  *
- * We will use bilinear alternation to search for the control Lyapunov function
- * V, the Lagrangian multipliers and the slack polynomials b(x).
+ * We will use bilinear alternation to search for the control Lyapunov
+ * function V, the Lagrangian multipliers and the slack polynomials b(x).
  */
 class ControlLyapunovBoxInputBound {
  public:
@@ -161,13 +195,14 @@ class ControlLyapunovBoxInputBound {
 
 /**
  * For u bounded in a unit box -1 <= u <= 1.
- * Given the control Lyapunov function candidate V, together with the Lagrangian
- * multipliers lᵢ₁(x), lᵢ₂(x), search for b and Lagrangian multipliers lᵢ₃(x),
- * lᵢ₄(x), lᵢ₅(x), lᵢ₆(x), satisfying the following constraint
+ * Given the control Lyapunov function candidate V, together with the
+ * Lagrangian multipliers lᵢ₁(x), lᵢ₂(x), search for b and Lagrangian
+ * multipliers lᵢ₃(x), lᵢ₄(x), lᵢ₅(x), lᵢ₆(x), satisfying the following
+ * constraint
  *
  *     ∂V/∂x*f(x) + ε₂V = ∑ᵢ bᵢ(x)
- *     (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
- *     (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
+ *     (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >=
+ * 0 (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
  *     lᵢ₃(x) >= 0, lᵢ₄(x) >= 0, lᵢ₅(x) >= 0, lᵢ₆(x) >= 0
  *
  * The variables are ε₂, b(x), lₖ₃(x), lₖ₄(x), lₖ₅(x), lₖ₆(x)
@@ -195,6 +230,15 @@ class SearchLagrangianAndBGivenVBoxInputBound {
     return l_;
   }
 
+  /**
+   * The gram matrix of each lagrangian. Note that lagrangian_grams()[i][0]
+   * and lagrangian_grams()[i][1] are empty.
+   */
+  const std::vector<std::array<MatrixX<symbolic::Variable>, 6>>&
+  lagrangian_grams() const {
+    return lagrangian_grams_;
+  }
+
   const solvers::MathematicalProgram& prog() const { return prog_; }
 
   solvers::MathematicalProgram* get_mutable_prog() { return &prog_; }
@@ -203,10 +247,8 @@ class SearchLagrangianAndBGivenVBoxInputBound {
 
   const VectorX<symbolic::Polynomial>& b() const { return b_; }
 
-  const std::vector<std::array<
-      std::pair<MatrixX<symbolic::Variable>, VectorX<symbolic::Monomial>>, 2>>&
-  constraint_grams() const {
-    return constraint_grams_;
+  const VdotSosConstraintReturn& vdot_sos_constraint() const {
+    return vdot_sos_constraint_;
   }
 
   /**
@@ -219,7 +261,8 @@ class SearchLagrangianAndBGivenVBoxInputBound {
     symbolic::Polynomial s;
     // The Gram matrix of the lagrangian multiplier s(x).
     MatrixX<symbolic::Variable> s_gram;
-    // The monomials of the constraint (1+t(x))((x−x*)ᵀS(x−x*)−ρ) − s(x)(V(x)−1)
+    // The monomials of the constraint (1+t(x))((x−x*)ᵀS(x−x*)−ρ) −
+    // s(x)(V(x)−1)
     VectorX<symbolic::Monomial> constraint_monomials;
     // The Gram matrix of the constraint
     // (1+t(x))((x−x*)ᵀS(x−x*)−ρ) − s(x)(V(x)−1)
@@ -232,7 +275,6 @@ class SearchLagrangianAndBGivenVBoxInputBound {
    * We enforce the constraint
    * (1+t(x))((x−x*)ᵀS(x−x*)−ρ) − s(x)(V(x)−1) is sos
    * s(x) is sos.
-   * The symmetric matrix S will be the newly added decision variable.
    * @param x_star The center of the ellipsoid.
    * @param S The shape of the ellipsoid.
    * @param s_degree The degree of the polynomial s(x)
@@ -253,21 +295,14 @@ class SearchLagrangianAndBGivenVBoxInputBound {
   int nu_{};
   std::vector<std::array<symbolic::Polynomial, 6>> l_;
   std::vector<std::array<int, 6>> lagrangian_degrees_;
+  std::vector<std::array<MatrixX<symbolic::Variable>, 6>> lagrangian_grams_;
   std::vector<int> b_degrees_;
   VectorX<symbolic::Variable> x_;
   symbolic::Variables x_set_;
   VectorX<symbolic::Polynomial> b_;
   symbolic::Variable deriv_eps_;
 
-  // constraint_grams_[i][0] contains the gram matrix and monomial basis for
-  // the constraint
-  // (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
-  // constraint_grams_[i][1] contains the gram matrix and monomial basis for
-  // the constraint
-  // (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
-  std::vector<std::array<
-      std::pair<MatrixX<symbolic::Variable>, VectorX<symbolic::Monomial>>, 2>>
-      constraint_grams_;
+  VdotSosConstraintReturn vdot_sos_constraint_;
 };
 
 /**
@@ -278,8 +313,8 @@ class SearchLagrangianAndBGivenVBoxInputBound {
  *     V(x) >= ε₁(x-x_des)ᵀ(x-x_des)
  *     V(x_des) = 0
  *     ∂V/∂x*f(x) + ε₂V = ∑ᵢ bᵢ(x)
- *     (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
- *     (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
+ *     (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >=
+ * 0 (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
  * where lᵢⱼ(x) are all given.
  */
 class SearchLyapunovGivenLagrangianBoxInputBound {
@@ -290,8 +325,8 @@ class SearchLyapunovGivenLagrangianBoxInputBound {
    * @param f The dynamics is ẋ = f(x)+G(x)u
    * @param G The dynamics is ẋ = f(x)+G(x)u
    * @param V_degree The degree of the polynomial V(x)
-   * @param positivity_eps ε₁ in the documentation above. Used to constrain V(x)
-   * to be a positive definite function.
+   * @param positivity_eps ε₁ in the documentation above. Used to constrain
+   * V(x) to be a positive definite function.
    * @param deriv_eps ε₂ in the documentation above. The rate of exponential
    * convergence.
    * @param x_des The goal state where all states should converge to.
@@ -322,6 +357,35 @@ class SearchLyapunovGivenLagrangianBoxInputBound {
     return positivity_constraint_gram_;
   }
 
+  /**
+   * The return struct in AddEllipsoidInRoaConstraint
+   */
+  struct EllipsoidInRoaReturn {
+    // The size of the ellipoid.
+    symbolic::Variable rho;
+    // The monomials of the constraint (1+t(x))((x−x*)ᵀS(x−x*)−ρ) −
+    // s(x)(V(x)−1)
+    VectorX<symbolic::Monomial> constraint_monomials;
+    // The Gram matrix of the constraint
+    // (1+t(x))((x−x*)ᵀS(x−x*)−ρ) − s(x)(V(x)−1)
+    MatrixX<symbolic::Variable> constraint_gram;
+  };
+
+  /**
+   * Add the constraint that an ellipsoid {x|(x−x*)ᵀS(x−x*)<=ρ} is within the
+   * region-of-attraction (ROA) {x | V(x) <= 1}.
+   * We enforce the constraint
+   * (1+t(x))((x−x*)ᵀS(x−x*)−ρ) − s(x)(V(x)−1) is sos
+   * @param x_star The center of the ellipsoid.
+   * @param S The shape of the ellipsoid.
+   * @param t The Lagrangian multipler t(x).
+   * @param s The Lagrangian multiplier s(x).
+   */
+  EllipsoidInRoaReturn AddEllipsoidInRoaConstraint(
+      const Eigen::Ref<const Eigen::VectorXd>& x_star,
+      const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& t,
+      const symbolic::Polynomial& s);
+
  private:
   solvers::MathematicalProgram prog_;
   VectorX<symbolic::Polynomial> f_;
@@ -335,24 +399,17 @@ class SearchLyapunovGivenLagrangianBoxInputBound {
   int nx_;
   int nu_;
   VectorX<symbolic::Polynomial> b_;
-  // constraint_grams_[i][0] contains the gram matrix and monomial basis for
-  // the constraint
-  // (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
-  // constraint_grams_[i][1] contains the gram matrix and monomial basis for
-  // the constraint
-  // (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
-  std::vector<std::array<
-      std::pair<MatrixX<symbolic::Variable>, VectorX<symbolic::Monomial>>, 2>>
-      constraint_grams_;
+  VdotSosConstraintReturn vdot_sos_constraint_;
 };
 
 /**
  * This is the Lagrangian step in ControlLaypunovBoxInputBound. The control
- * Lyapunov function V is fixed, and we search for the Lagrangian multipliers
+ * Lyapunov function V, together with b are fixed, and we search for the
+ * Lagrangian multipliers
  * lᵢ₁(x), lᵢ₂(x), lᵢ₃(x), lᵢ₄(x), lᵢ₅(x), lᵢ₆(x) satisfying the constraints
  *
- *     (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
- *     (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
+ *     (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >=
+ * 0 (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
  *     lᵢ₁(x) >= 0, lᵢ₂(x) >= 0,
  *     lᵢ₃(x) >= 0, lᵢ₄(x) >= 0, lᵢ₅(x) >= 0, lᵢ₆(x) >= 0
  */
@@ -371,10 +428,62 @@ class SearchLagrangianGivenVBoxInputBound {
       VectorX<symbolic::Variable> x,
       std::vector<std::array<int, 6>> lagrangian_degrees);
 
+  struct EllipsoidInRoaReturn {
+    symbolic::Variable rho;
+    // The Lagrangian multiplier s(x)
+    symbolic::Polynomial s;
+    // The Gram matrix of the lagrangian multiplier s(x).
+    MatrixX<symbolic::Variable> s_gram;
+    // The monomials of the constraint (1+t(x))((x−x*)ᵀS(x−x*)−ρ) −
+    // s(x)(V(x)−1)
+    VectorX<symbolic::Monomial> constraint_monomials;
+    // The Gram matrix of the constraint
+    // (1+t(x))((x−x*)ᵀS(x−x*)−ρ) − s(x)(V(x)−1)
+    MatrixX<symbolic::Variable> constraint_gram;
+  };
+
+  /**
+   * Add the constraint that an ellipsoid {x|(x−x*)ᵀS(x−x*)<=ρ} is within the
+   * region-of-attraction (ROA) {x | V(x) <= 1}.
+   * We enforce the constraint
+   * (1+t(x))((x−x*)ᵀS(x−x*)−ρ) − s(x)(V(x)−1) is sos
+   * s(x) is sos.
+   * @param x_star The center of the ellipsoid.
+   * @param S The shape of the ellipsoid.
+   * @param t The Lagrangian multipler t(x).
+   */
+  EllipsoidInRoaReturn AddEllipsoidInRoaConstraint(
+      const Eigen::Ref<const Eigen::VectorXd>& x_star,
+      const Eigen::Ref<const Eigen::MatrixXd>& S, int s_degree,
+      const symbolic::Polynomial& t);
+
   const solvers::MathematicalProgram& prog() const { return prog_; }
+
+  solvers::MathematicalProgram* get_mutable_prog() { return &prog_; }
+
+  int nu() const { return nu_; }
+
+  const symbolic::Polynomial& V() const { return V_; }
+
+  const VectorX<symbolic::Variable>& x() const { return x_; }
+
+  const VectorX<symbolic::Polynomial>& f() const { return f_; }
+
+  const MatrixX<symbolic::Polynomial>& G() const { return G_; }
+
+  const VectorX<symbolic::Polynomial>& b() const { return b_; }
 
   const std::vector<std::array<symbolic::Polynomial, 6>>& lagrangians() const {
     return l_;
+  }
+
+  const std::vector<std::array<MatrixX<symbolic::Variable>, 6>>&
+  lagrangian_grams() const {
+    return lagrangian_grams_;
+  }
+
+  const VdotSosConstraintReturn& vdot_sos_constraint() const {
+    return vdot_sos_constraint_;
   }
 
  private:
@@ -383,12 +492,14 @@ class SearchLagrangianGivenVBoxInputBound {
   MatrixX<symbolic::Polynomial> G_;
   VectorX<symbolic::Polynomial> b_;
   VectorX<symbolic::Variable> x_;
+  symbolic::Variables x_set_;
   solvers::MathematicalProgram prog_;
   int nu_;
   int nx_;
   std::vector<std::array<symbolic::Polynomial, 6>> l_;
   std::vector<std::array<int, 6>> lagrangian_degrees_;
   std::vector<std::array<MatrixX<symbolic::Variable>, 6>> lagrangian_grams_;
+  VdotSosConstraintReturn vdot_sos_constraint_;
 };
 
 }  // namespace analysis

@@ -1,8 +1,14 @@
 #include "drake/systems/analysis/control_lyapunov.h"
 
+#include <limits.h>
+
+#include "drake/solvers/choose_best_solver.h"
+
 namespace drake {
 namespace systems {
 namespace analysis {
+const double kInf = std::numeric_limits<double>::infinity();
+
 SearchControlLyapunov::SearchControlLyapunov(
     const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
     const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
@@ -174,13 +180,14 @@ SearchLagrangianAndBGivenVBoxInputBound::
   // the highest degree of b should be at least degree(∂V/∂x*f(x) + εV).
   const symbolic::Polynomial dVdx_times_f = (dVdx * f_)(0);
   if (*std::max_element(b_degrees_.begin(), b_degrees_.end()) <
-      std::max(dVdx_times_f.TotalDegree(), V.TotalDegree())) {
+      std::max(dVdx_times_f.TotalDegree(), V_.TotalDegree())) {
     throw std::invalid_argument("The degree of b is too low.");
   }
 
   // Add free polynomial b
   for (int i = 0; i < nu_; ++i) {
-    b_(i) = prog_.NewFreePolynomial(x_set_, b_degrees_[i], "b");
+    b_(i) =
+        prog_.NewFreePolynomial(x_set_, b_degrees_[i], "b" + std::to_string(i));
   }
 
   // Add the constraint ∂V/∂x*f(x) + εV = ∑ᵢ bᵢ(x)
@@ -333,6 +340,181 @@ SearchLagrangianGivenVBoxInputBound::AddEllipsoidInRoaConstraint(
   std::tie(ret.constraint_gram, ret.constraint_monomials) =
       AddEllipsoidInRoaConstraintHelper<symbolic::Variable>(
           &prog_, t, x_, x_star, S, ret.rho, ret.s, V_);
+  return ret;
+}
+
+namespace {
+solvers::MathematicalProgramResult SearchWithBackoff(
+    solvers::MathematicalProgram* prog, const symbolic::Variable& rho,
+    const solvers::SolverId& solver_id,
+    const std::optional<solvers::SolverOptions>& solver_options,
+    double backoff_scale) {
+  auto cost = prog->AddLinearCost(-rho);
+  auto solver = solvers::MakeSolver(solver_id);
+  if (solver_id == solvers::MosekSolver::id()) {
+    auto mosek_solver = dynamic_cast<solvers::MosekSolver*>(solver.get());
+    mosek_solver->set_stream_logging(true, "");
+  }
+  solvers::MathematicalProgramResult result;
+  solver->Solve(*prog, std::nullopt, solver_options, &result);
+  DRAKE_DEMAND(result.is_success());
+  DRAKE_DEMAND(backoff_scale >= 0 && backoff_scale <= 1);
+  if (backoff_scale < 1) {
+    std::cout << "backoff\n";
+    prog->AddBoundingBoxConstraint(result.GetSolution(rho) * backoff_scale,
+                                   kInf, rho);
+    cost.evaluator()->UpdateCoefficients(Vector1d(0.));
+    solver->Solve(*prog, std::nullopt, solver_options, &result);
+    DRAKE_DEMAND(result.is_success());
+  }
+  return result;
+}
+
+}  // namespace
+
+ControlLyapunovBoxInputBound::ControlLyapunovBoxInputBound(
+    const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
+    const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
+    const Eigen::Ref<const Eigen::VectorXd>& x_des,
+    const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+    double positivity_eps)
+    : f_{f}, G_{G}, x_des_{x_des}, x_{x}, positivity_eps_{positivity_eps} {}
+
+void ControlLyapunovBoxInputBound::SearchLagrangianAndB(
+    const symbolic::Polynomial& V,
+    const std::vector<std::array<symbolic::Polynomial, 2>>& l_given,
+    const std::vector<std::array<int, 6>>& lagrangian_degrees,
+    const std::vector<int>& b_degrees,
+    const Eigen::Ref<const Eigen::VectorXd>& x_star,
+    const Eigen::Ref<const Eigen::MatrixXd>& S, int s_degree,
+    const symbolic::Polynomial& t, double deriv_eps_lower,
+    double deriv_eps_upper, const solvers::SolverId& solver_id,
+    const std::optional<solvers::SolverOptions>& solver_options,
+    double backoff_scale, double* deriv_eps, VectorX<symbolic::Polynomial>* b,
+    std::vector<std::array<symbolic::Polynomial, 6>>* l, double* rho,
+    symbolic::Polynomial* s) const {
+  // Check if V(x_des) = 0
+  symbolic::Environment env_x_des;
+  for (int i = 0; i < G_.rows(); ++i) {
+    env_x_des.insert(x_(i), x_des_(i));
+  }
+  DRAKE_DEMAND(std::abs(V.Evaluate(env_x_des)) < 1E-5);
+  SearchLagrangianAndBGivenVBoxInputBound searcher(
+      V, f_, G_, l_given, lagrangian_degrees, b_degrees, x_);
+  const auto ellipsoid_ret =
+      searcher.AddEllipsoidInRoaConstraint(x_star, S, s_degree, t);
+  searcher.get_mutable_prog()->AddBoundingBoxConstraint(
+      deriv_eps_lower, deriv_eps_upper, searcher.deriv_eps());
+  const auto result =
+      SearchWithBackoff(searcher.get_mutable_prog(), ellipsoid_ret.rho,
+                        solver_id, solver_options, backoff_scale);
+  *deriv_eps = result.GetSolution(searcher.deriv_eps());
+  *rho = result.GetSolution(ellipsoid_ret.rho);
+  const int nu = G_.cols();
+  b->resize(nu);
+  l->resize(nu);
+  for (int i = 0; i < nu; ++i) {
+    (*b)(i) = result.GetSolution(searcher.b()(i));
+    for (int j = 0; j < 2; ++j) {
+      (*l)[i][j] = l_given[i][j];
+    }
+    for (int j = 2; j < 6; ++j) {
+      (*l)[i][j] = result.GetSolution(searcher.lagrangians()[i][j]);
+    }
+  }
+  *s = result.GetSolution(ellipsoid_ret.s);
+}
+
+void ControlLyapunovBoxInputBound::SearchLyapunov(
+    const std::vector<std::array<symbolic::Polynomial, 6>>& l,
+    const std::vector<int>& b_degrees, int V_degree, double positivity_eps,
+    double deriv_eps, const Eigen::Ref<const Eigen::VectorXd>& x_star,
+    const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& s,
+    const symbolic::Polynomial& t, const solvers::SolverId& solver_id,
+    const std::optional<solvers::SolverOptions>& solver_options,
+    double backoff_scale, symbolic::Polynomial* V,
+    VectorX<symbolic::Polynomial>* b, double* rho) const {
+  SearchLyapunovGivenLagrangianBoxInputBound searcher(
+      f_, G_, V_degree, positivity_eps, deriv_eps, x_des_, l, b_degrees, x_);
+  const auto ellipsoid_ret =
+      searcher.AddEllipsoidInRoaConstraint(x_star, S, t, s);
+  const auto result =
+      SearchWithBackoff(searcher.get_mutable_prog(), ellipsoid_ret.rho,
+                        solver_id, solver_options, backoff_scale);
+  *rho = result.GetSolution(ellipsoid_ret.rho);
+  *V = result.GetSolution(searcher.V());
+  const int nu = G_.cols();
+  b->resize(nu);
+  for (int i = 0; i < nu; ++i) {
+    (*b)(i) = result.GetSolution(searcher.b()(i));
+  }
+}
+
+void ControlLyapunovBoxInputBound::SearchLagrangian(
+    const symbolic::Polynomial& V, const VectorX<symbolic::Polynomial>& b,
+    const std::vector<std::array<int, 6>>& lagrangian_degrees,
+    const Eigen::Ref<const Eigen::VectorXd>& x_star,
+    const Eigen::Ref<const Eigen::MatrixXd>& S, int s_degree,
+    const symbolic::Polynomial& t, const solvers::SolverId& solver_id,
+    const std::optional<solvers::SolverOptions>& solver_options,
+    double backoff_scale, std::vector<std::array<symbolic::Polynomial, 6>>* l,
+    symbolic::Polynomial* s, double* rho) const {
+  SearchLagrangianGivenVBoxInputBound searcher(V, f_, G_, b, x_,
+                                               lagrangian_degrees);
+  const auto ellipsoid_ret =
+      searcher.AddEllipsoidInRoaConstraint(x_star, S, s_degree, t);
+  const auto result =
+      SearchWithBackoff(searcher.get_mutable_prog(), ellipsoid_ret.rho,
+                        solver_id, solver_options, backoff_scale);
+  const int nu = G_.cols();
+  l->resize(nu);
+  for (int i = 0; i < nu; ++i) {
+    for (int j = 0; j < 6; ++j) {
+      (*l)[i][j] = result.GetSolution(searcher.lagrangians()[i][j]);
+    }
+  }
+  *s = result.GetSolution(ellipsoid_ret.s);
+  *rho = result.GetSolution(ellipsoid_ret.rho);
+}
+
+ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(
+    const symbolic::Polynomial& V_init,
+    const std::vector<std::array<symbolic::Polynomial, 2>>& l_given,
+    const std::vector<std::array<int, 6>>& lagrangian_degrees,
+    const std::vector<int>& b_degrees,
+    const Eigen::Ref<const Eigen::VectorXd>& x_star,
+    const Eigen::Ref<const Eigen::MatrixXd>& S, int s_degree,
+    const symbolic::Polynomial& t_given, int V_degree, double deriv_eps_lower,
+    double deriv_eps_upper, const SearchOptions& options) const {
+  // First search for b and lagrangians.
+  SearchReturn ret;
+  SearchLagrangianAndB(
+      V_init, l_given, lagrangian_degrees, b_degrees, x_star, S, s_degree,
+      t_given, deriv_eps_lower, deriv_eps_upper, options.lagrangian_step_solver,
+      options.lagrangian_step_solver_options, options.backoff_scale,
+      &(ret.deriv_eps), &(ret.b), &(ret.l), &(ret.rho), &(ret.s));
+
+  int iter = 0;
+  bool converged = false;
+  while (iter < options.bilinear_iterations && !converged) {
+    double rho_new;
+    std::cout << "search Lyapunov\n";
+    SearchLyapunov(ret.l, b_degrees, V_degree, positivity_eps_, ret.deriv_eps,
+                   x_star, S, ret.s, t_given, options.lyap_step_solver,
+                   options.lyap_step_solver_options, options.backoff_scale,
+                   &(ret.V), &(ret.b), &rho_new);
+    std::cout << "search Lagrangian\n";
+    SearchLagrangian(ret.V, ret.b, lagrangian_degrees, x_star, S, s_degree,
+                     t_given, options.lagrangian_step_solver,
+                     options.lagrangian_step_solver_options,
+                     options.backoff_scale, &(ret.l), &(ret.s), &rho_new);
+    std::cout << "iter: " << iter << ", rho: " << rho_new << "\n";
+    if (rho_new - ret.rho < options.rho_converge_tol) {
+      converged = true;
+    }
+    ret.rho = rho_new;
+    iter += 1;
+  }
   return ret;
 }
 }  // namespace analysis

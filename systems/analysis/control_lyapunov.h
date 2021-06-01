@@ -1,7 +1,9 @@
 #pragma once
 
+#include "drake/solvers/csdp_solver.h"
 #include "drake/solvers/mathematical_program.h"
 #include "drake/solvers/mathematical_program_result.h"
+#include "drake/solvers/mosek_solver.h"
 
 namespace drake {
 namespace systems {
@@ -125,75 +127,6 @@ struct VdotSosConstraintReturn {
 };
 
 /**
- * Search a control Lyapunov function (together with its region of attraction)
- * for a control affine system with box-shaped input limits. Namely the system
- * dynamics is ẋ = f(x) + G(x)u where the input bounds are -1 <= u <= 1.
- * If we denote the Lyapunov function as V(x), then the control Lyapunov
- * condition is
- *
- *     if x ≠ x*
- *     V(x) > 0                                                 (1)
- *     -εV >= minᵤ V̇(x, u) = minᵤ ∂V/∂x*f(x) + ∂V/∂x * G(x)u    (2)
- *
- * where ε is a small positive constant, that proves the system is
- * exponentially stable with convegence rate ε.
- * since minᵤ ∂V/∂x*f(x) + ∂V/∂x G(x)u = ∂V/∂x*f(x) - |∂V/∂x G(x)|₁
- * when -1 <= u <= 1, where |∂V/∂x G(x)|₁ is the 1-norm of ∂V/∂x G(x).
- * we know the condition (2) is equivalent to
- *
- *     |∂V/∂x G(x)|₁ >= ∂V/∂x*f(x) + εV                          (3)
- *
- * Note that ∂V/∂x G(x) is a vector of size nᵤ, where nᵤ is the input size.
- * Condition (3) is equivalent to
- *
- *     ∃ bᵢ(x), such that ∂V/∂x*f(x) + εV = ∑ᵢ bᵢ(x)
- *     bᵢ(x) <= |∂V/∂x * Gᵢ(x)|,
- *
- * where Gᵢ(x) is the i'th column of the matrix G(x).
- * We know that bᵢ(x) <= |∂V/∂x * Gᵢ(x)| if and only if
- *
- *     when ∂V/∂x * Gᵢ(x) > 0, then bᵢ(x) <= ∂V/∂x * Gᵢ(x)
- *     when ∂V/∂x * Gᵢ(x) <= 0, then bᵢ(x) <= -∂V/∂x * Gᵢ(x)
- *
- * So to impose the constraint bᵢ(x) <= |∂V/∂x * Gᵢ(x)|, we introduce the
- * Lagrangian multiplier lᵢ₁(x), lᵢ₂(x),lᵢ₃(x), lᵢ₄(x)with the constraint
- *
- *     (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x) − bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x)>=0
- *     (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x) − bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x)>=0
- *     lᵢ₁(x) >= 0, lᵢ₂(x) >= 0, lᵢ₃(x) >= 0, lᵢ₄(x) >= 0
- *
- * To summarize, in order to prove the control Lyapunov function with region
- * of attraction V(x) ≤ 1, we impose the following constraint
- *
- *     V(x) > 0
- *     ∂V/∂x*f(x) + εV = ∑ᵢ bᵢ(x)
- *     (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >=
- * 0 (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
- *     lᵢ₁(x) >= 0, lᵢ₂(x) >= 0,
- *     lᵢ₃(x) >= 0, lᵢ₄(x) >= 0, lᵢ₅(x) >= 0, lᵢ₆(x) >= 0
- *
- * We will use bilinear alternation to search for the control Lyapunov
- * function V, the Lagrangian multipliers and the slack polynomials b(x).
- */
-class ControlLyapunovBoxInputBound {
- public:
-  DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(ControlLyapunovBoxInputBound)
-
-  ControlLyapunovBoxInputBound(
-      const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
-      const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
-      const Eigen::Ref<const Eigen::VectorXd>& x_equilibrium,
-      const Eigen::Ref<const VectorX<symbolic::Variable>>& x);
-
- private:
-  VectorX<symbolic::Polynomial> f_;
-  MatrixX<symbolic::Polynomial> G_;
-  Eigen::VectorXd x_equilibrium_;
-  // The indeterminates as the state.
-  VectorX<symbolic::Variable> x_;
-};
-
-/**
  * For u bounded in a unit box -1 <= u <= 1.
  * Given the control Lyapunov function candidate V, together with the
  * Lagrangian multipliers lᵢ₁(x), lᵢ₂(x), search for b and Lagrangian
@@ -202,7 +135,8 @@ class ControlLyapunovBoxInputBound {
  *
  *     ∂V/∂x*f(x) + ε₂V = ∑ᵢ bᵢ(x)
  *     (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >=
- * 0 (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
+ * 0
+ *     (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
  *     lᵢ₃(x) >= 0, lᵢ₄(x) >= 0, lᵢ₅(x) >= 0, lᵢ₆(x) >= 0
  *
  * The variables are ε₂, b(x), lₖ₃(x), lₖ₄(x), lₖ₅(x), lₖ₆(x)
@@ -287,6 +221,20 @@ class SearchLagrangianAndBGivenVBoxInputBound {
       const symbolic::Polynomial& t);
 
  private:
+  // Step 1 of Search() function. Search for Lagrangian multipliers and b.
+  void SearchLagrangianAndB(
+      const symbolic::Polynomial& V,
+      const std::vector<std::array<symbolic::Polynomial, 2>>& l_given,
+      const std::vector<std::array<int, 6>>& lagrangian_degrees,
+      const std::vector<int>& b_degrees,
+      const Eigen::Ref<const Eigen::VectorXd>& x_star,
+      const Eigen::Ref<const Eigen::MatrixXd>& S, int s_degree,
+      const symbolic::Polynomial& t, double deriv_eps_lower,
+      double deriv_eps_upper, const solvers::SolverId& solver_id,
+      const solvers::SolverOptions& solver_options, double backoff_scale,
+      double* deriv_eps, VectorX<symbolic::Polynomial>* b,
+      std::vector<std::array<symbolic::Polynomial, 6>>* l, double* rho) const;
+
   solvers::MathematicalProgram prog_;
   symbolic::Polynomial V_;
   VectorX<symbolic::Polynomial> f_;
@@ -500,6 +448,167 @@ class SearchLagrangianGivenVBoxInputBound {
   std::vector<std::array<int, 6>> lagrangian_degrees_;
   std::vector<std::array<MatrixX<symbolic::Variable>, 6>> lagrangian_grams_;
   VdotSosConstraintReturn vdot_sos_constraint_;
+};
+
+/**
+ * Search a control Lyapunov function (together with its region of attraction)
+ * for a control affine system with box-shaped input limits. Namely the system
+ * dynamics is ẋ = f(x) + G(x)u where the input bounds are -1 <= u <= 1.
+ * If we denote the Lyapunov function as V(x), then the control Lyapunov
+ * condition is
+ *
+ *     if x ≠ x_des     V(x) > 0                                (1a)
+ *     V(x_des) = 0                                             (1b)
+ *     -ε₂V >= minᵤ V̇(x, u) = minᵤ ∂V/∂x*f(x) + ∂V/∂x * G(x)u    (2)
+ *
+ * where ε₂ is a small positive constant, that proves the system is
+ * exponentially stable with convegence rate ε₂.
+ * since minᵤ ∂V/∂x*f(x) + ∂V/∂x G(x)u = ∂V/∂x*f(x) - |∂V/∂x G(x)|₁
+ * when -1 <= u <= 1, where |∂V/∂x G(x)|₁ is the 1-norm of ∂V/∂x G(x).
+ * we know the condition (2) is equivalent to
+ *
+ *     |∂V/∂x G(x)|₁ >= ∂V/∂x*f(x) + ε₂V                          (3)
+ *
+ * Note that ∂V/∂x G(x) is a vector of size nᵤ, where nᵤ is the input size.
+ * Condition (3) is equivalent to
+ *
+ *     ∃ bᵢ(x), such that ∂V/∂x*f(x) + ε₂V = ∑ᵢ bᵢ(x)
+ *     bᵢ(x) <= |∂V/∂x * Gᵢ(x)|,
+ *
+ * where Gᵢ(x) is the i'th column of the matrix G(x).
+ * We know that bᵢ(x) <= |∂V/∂x * Gᵢ(x)| if and only if
+ *
+ *     when ∂V/∂x * Gᵢ(x) > 0, then bᵢ(x) <= ∂V/∂x * Gᵢ(x)
+ *     when ∂V/∂x * Gᵢ(x) <= 0, then bᵢ(x) <= -∂V/∂x * Gᵢ(x)
+ *
+ * So to impose the constraint bᵢ(x) <= |∂V/∂x * Gᵢ(x)|, we introduce the
+ * Lagrangian multiplier lᵢ₁(x), lᵢ₂(x),lᵢ₃(x), lᵢ₄(x)with the constraint
+ *
+ *     (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x) − bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x)>=0
+ *     (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x) − bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x)>=0
+ *     lᵢ₁(x) >= 0, lᵢ₂(x) >= 0, lᵢ₃(x) >= 0, lᵢ₄(x) >= 0
+ *
+ * To summarize, in order to prove the control Lyapunov function with region
+ * of attraction V(x) ≤ 1, we impose the following constraint
+ *
+ *    V(x) ≥ ε₁(x−x_des)ᵀ(x-x_des)
+ *    V(x_des) = 0
+ *    ∂V/∂x*f(x) + ε₂V = ∑ᵢ bᵢ(x)
+ *    (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) ≥ 0
+ *    (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) ≥ 0
+ *     lᵢ₁(x) ≥ 0, lᵢ₂(x) ≥ 0,
+ *     lᵢ₃(x) ≥ 0, lᵢ₄(x) ≥ 0, lᵢ₅(x) ≥ 0, lᵢ₆(x) ≥ 0
+ *
+ * We will use bilinear alternation to search for the control Lyapunov
+ * function V, the Lagrangian multipliers and the slack polynomials b(x).
+ *
+ * During bilinear alternation, our goal is to maximize the region-of-attraction
+ * (ROA). We measure the size of the ROA by an inner ellipsoid (x-x*)ᵀS(x-x*)≤ρ,
+ * where the shape of the ellipsoid (S) and the center of the ellipsoid x* are
+ * both given, and we want to maximize ρ.
+ */
+class ControlLyapunovBoxInputBound {
+ public:
+  DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(ControlLyapunovBoxInputBound)
+
+  /**
+   * @param positivity_eps ε₁ in the documentation above, to enforce the
+   * positivity constraint V(x) > 0.
+   */
+  ControlLyapunovBoxInputBound(
+      const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
+      const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
+      const Eigen::Ref<const Eigen::VectorXd>& x_des,
+      const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+      double positivity_eps);
+
+  struct SearchReturn {
+    symbolic::Polynomial V;
+    VectorX<symbolic::Polynomial> b;
+    double deriv_eps;
+    std::vector<std::array<symbolic::Polynomial, 6>> l;
+    symbolic::Polynomial s;
+    double rho;
+  };
+
+  struct SearchOptions {
+    solvers::SolverId lyap_step_solver{solvers::CsdpSolver::id()};
+    solvers::SolverId lagrangian_step_solver{solvers::MosekSolver::id()};
+    int bilinear_iterations{10};
+    // Stop when the improvement on rho is below this tolerance.
+    double rho_converge_tol{1E-5};
+    // Back off in each steps.
+    double backoff_scale{1.};
+    std::optional<solvers::SolverOptions> lagrangian_step_solver_options{
+        std::nullopt};
+    std::optional<solvers::SolverOptions> lyap_step_solver_options{
+        std::nullopt};
+  };
+
+  /**
+   * Given V_init(x) and lᵢ₀(x), lᵢ₁(x), we search the control Lyapunov function
+   * and maximize the ROA through the following process
+   * 1. Fix V_init(x), lᵢ₁(x), lᵢ₂(x), search for lᵢ₃(x),...,lᵢ₆(x), s(x),
+   *    bᵢ(x).
+   * 2. Fix Lagrangian multipliers lᵢ₁(x),..., lᵢ₆(x), s(x), search V(x) and
+   *    bᵢ(x).
+   * 3. Fix V(x), bᵢ(x), and search for Lagrangian multipliers
+   *    lᵢ₁(x),..., lᵢ₆(x), s(x). Go to step 2.
+   */
+  SearchReturn Search(
+      const symbolic::Polynomial& V_init,
+      const std::vector<std::array<symbolic::Polynomial, 2>>& l_given,
+      const std::vector<std::array<int, 6>>& lagrangian_degrees,
+      const std::vector<int>& b_degrees,
+      const Eigen::Ref<const Eigen::VectorXd>& x_star,
+      const Eigen::Ref<const Eigen::MatrixXd>& S, int s_degree,
+      const symbolic::Polynomial& t_given, int V_degree, double deriv_eps_lower,
+      double deriv_eps_upper, const SearchOptions& options) const;
+
+ private:
+  // Step 1 in Search() function.
+  void SearchLagrangianAndB(
+      const symbolic::Polynomial& V,
+      const std::vector<std::array<symbolic::Polynomial, 2>>& l_given,
+      const std::vector<std::array<int, 6>>& lagrangian_degrees,
+      const std::vector<int>& b_degrees,
+      const Eigen::Ref<const Eigen::VectorXd>& x_star,
+      const Eigen::Ref<const Eigen::MatrixXd>& S, int s_degree,
+      const symbolic::Polynomial& t, double deriv_eps_lower,
+      double deriv_eps_upper, const solvers::SolverId& solver_id,
+      const std::optional<solvers::SolverOptions>& solver_options,
+      double backoff_scale, double* deriv_eps, VectorX<symbolic::Polynomial>* b,
+      std::vector<std::array<symbolic::Polynomial, 6>>* l, double* rho,
+      symbolic::Polynomial* s) const;
+
+  // Step 2 in Search() function.
+  void SearchLyapunov(
+      const std::vector<std::array<symbolic::Polynomial, 6>>& l,
+      const std::vector<int>& b_degrees, int V_degree, double positivity_eps,
+      double deriv_eps, const Eigen::Ref<const Eigen::VectorXd>& x_star,
+      const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& s,
+      const symbolic::Polynomial& t, const solvers::SolverId& solver_id,
+      const std::optional<solvers::SolverOptions>& solver_options,
+      double backoff_scale, symbolic::Polynomial* V,
+      VectorX<symbolic::Polynomial>* b, double* rho) const;
+
+  // Step 3 in Search() function.
+  void SearchLagrangian(
+      const symbolic::Polynomial& V, const VectorX<symbolic::Polynomial>& b,
+      const std::vector<std::array<int, 6>>& lagrangian_degrees,
+      const Eigen::Ref<const Eigen::VectorXd>& x_star,
+      const Eigen::Ref<const Eigen::MatrixXd>& S, int s_degree,
+      const symbolic::Polynomial& t, const solvers::SolverId& solver_id,
+      const std::optional<solvers::SolverOptions>& solver_options,
+      double backoff_scale, std::vector<std::array<symbolic::Polynomial, 6>>* l,
+      symbolic::Polynomial* s, double* rho) const;
+
+  VectorX<symbolic::Polynomial> f_;
+  MatrixX<symbolic::Polynomial> G_;
+  Eigen::VectorXd x_des_;
+  // The indeterminates as the state.
+  VectorX<symbolic::Variable> x_;
+  double positivity_eps_;
 };
 
 }  // namespace analysis

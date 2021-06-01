@@ -512,6 +512,59 @@ TEST_F(SimpleLinearSystemTest, SearchLagrangianGivenVBoxInputBound) {
                    ellipsoid_ret_search_l.constraint_monomials),
                3E-5);
 }
+
+TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound) {
+  // We first compute LQR cost-to-go as the candidate Lyapunov function. We
+  // first fix V and search for Lagangians and b. And then fix V and b to search
+  // for Lagrangians only.
+  symbolic::Polynomial V;
+  Vector2<symbolic::Polynomial> f;
+  Matrix2<symbolic::Polynomial> G;
+  std::vector<std::array<symbolic::Polynomial, 2>> l_given;
+  std::vector<std::array<int, 6>> lagrangian_degrees;
+  InitializeWithLQR(&V, &f, &G, &l_given, &lagrangian_degrees);
+  const int nu{2};
+  std::vector<int> b_degrees(nu, 2);
+
+  const Eigen::Vector2d x_des(0., 0.);
+  const double positivity_eps{0.};
+  ControlLyapunovBoxInputBound dut(f, G, x_des, x_, positivity_eps);
+
+  ControlLyapunovBoxInputBound::SearchOptions search_options;
+  search_options.lyap_step_solver = solvers::MosekSolver::id();
+  search_options.bilinear_iterations = 7;
+
+  const Eigen::Vector2d x_star(0.001, 0.002);
+  const Eigen::Matrix2d S = Eigen::Vector2d(1, 2).asDiagonal();
+  const int s_degree{2};
+  const symbolic::Polynomial t_given(x_.cast<symbolic::Expression>().dot(x_),
+                                     x_set_);
+  const int V_degree{2};
+  const double deriv_eps_lower{0.01};
+  const double deriv_eps_upper{kInf};
+  // Search without backoff.
+  search_options.backoff_scale = 1.;
+  const auto search_result = dut.Search(
+      V, l_given, lagrangian_degrees, b_degrees, x_star, S, s_degree, t_given,
+      V_degree, deriv_eps_lower, deriv_eps_upper, search_options);
+  Eigen::Matrix<double, 2, 4> u_vertices;
+  u_vertices << 1, 1, -1, -1, 1, -1, 1, -1;
+  EXPECT_GE(search_result.deriv_eps, deriv_eps_lower);
+  EXPECT_LE(search_result.deriv_eps, deriv_eps_upper);
+  ValidateRegionOfAttractionBySample(f, G, search_result.V, x_, u_vertices,
+                                     search_result.deriv_eps, 1000, 1E-5, 1E-3);
+
+  // Search with backoff.
+  search_options.backoff_scale = 0.95;
+  search_options.lyap_step_solver = solvers::CsdpSolver::id();
+  search_options.bilinear_iterations = 10;
+  const auto search_result_backoff = dut.Search(
+      V, l_given, lagrangian_degrees, b_degrees, x_star, S, s_degree, t_given,
+      V_degree, deriv_eps_lower, deriv_eps_upper, search_options);
+  ValidateRegionOfAttractionBySample(
+      f, G, search_result_backoff.V, x_, u_vertices,
+      search_result_backoff.deriv_eps, 1000, 1E-5, 1E-3);
+}
 }  // namespace analysis
 }  // namespace systems
 }  // namespace drake

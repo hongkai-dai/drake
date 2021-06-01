@@ -116,8 +116,11 @@ drake_cc_library(
     srcs = ["control_lyapunov.cc"],
     hdrs = ["control_lyapunov.h"],
     deps = [
+        "//solvers:choose_best_solver",
         "//solvers:mathematical_program",
         "//solvers:mathematical_program_result",
+        "//solvers:mosek_solver",
+        "//solvers:csdp_solver",
     ],
 )
 

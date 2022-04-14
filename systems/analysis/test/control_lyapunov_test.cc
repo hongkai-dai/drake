@@ -6,6 +6,7 @@
 
 #include "drake/common/symbolic_monomial_util.h"
 #include "drake/common/test_utilities/symbolic_test_util.h"
+#include "drake/solvers/common_solver_option.h"
 #include "drake/solvers/csdp_solver.h"
 #include "drake/solvers/mosek_solver.h"
 #include "drake/solvers/scs_solver.h"
@@ -257,11 +258,12 @@ TEST_F(SimpleLinearSystemTest, SearchLagrangianAndBGivenVBoxInputBound) {
       3, kInf, dut_search_l_b.deriv_eps());
 
   solvers::MosekSolver mosek_solver;
-  solvers::CsdpSolver csdp_solver;
-  mosek_solver.set_stream_logging(true, "");
-  const auto result = mosek_solver.Solve(dut_search_l_b.prog());
+  solvers::SolverOptions solver_options;
+  solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
+  const auto result =
+      mosek_solver.Solve(dut_search_l_b.prog(), std::nullopt, solver_options);
   EXPECT_TRUE(result.is_success());
-  CheckSearchLagrangianAndBResult(dut_search_l_b, result, V, f, G, x_, 1.3E-5);
+  CheckSearchLagrangianAndBResult(dut_search_l_b, result, V, f, G, x_, 5.3E-5);
 
   const double deriv_eps_sol = result.GetSolution(dut_search_l_b.deriv_eps());
   Eigen::Matrix<double, 2, 4> u_vertices;
@@ -299,7 +301,8 @@ TEST_F(SimpleLinearSystemTest, SearchLagrangianAndBGivenVBoxInputBound) {
   SearchLyapunovGivenLagrangianBoxInputBound dut_search_V(
       f, G, V_degree, positivity_eps, deriv_eps_sol, x_equilibrium, l_result,
       b_degrees, x_);
-  const auto result_search_V = csdp_solver.Solve(dut_search_V.prog());
+  const auto result_search_V =
+      mosek_solver.Solve(dut_search_V.prog(), std::nullopt, solver_options);
   ASSERT_TRUE(result_search_V.is_success());
   const symbolic::Polynomial V_sol =
       result_search_V.GetSolution(dut_search_V.V());
@@ -357,9 +360,10 @@ TEST_F(SimpleLinearSystemTest, MaximizeEllipsoid) {
   // Set the rate-of-convergence epsilon to >= 0.1
   dut.get_mutable_prog()->AddBoundingBoxConstraint(0.1, kInf, dut.deriv_eps());
   solvers::MosekSolver mosek_solver;
-  solvers::CsdpSolver csdp_solver;
-  mosek_solver.set_stream_logging(true, "");
-  const auto result = mosek_solver.Solve(dut.prog());
+  solvers::SolverOptions solver_options;
+  solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
+  const auto result =
+      mosek_solver.Solve(dut.prog(), std::nullopt, solver_options);
   EXPECT_TRUE(result.is_success());
   CheckSearchLagrangianAndBResult(dut, result, V, f, G, x_, 1.3E-5);
   // Check if the ellipsoid is contained in the ROA {V(x) <= 1}
@@ -459,9 +463,10 @@ TEST_F(SimpleLinearSystemTest, SearchLagrangianGivenVBoxInputBound) {
   // Set the rate-of-convergence epsilon to >= 0.1
   dut.get_mutable_prog()->AddBoundingBoxConstraint(0.1, kInf, dut.deriv_eps());
   solvers::MosekSolver mosek_solver;
-  solvers::CsdpSolver csdp_solver;
-  mosek_solver.set_stream_logging(true, "");
-  const auto result = mosek_solver.Solve(dut.prog());
+  solvers::SolverOptions solver_options;
+  solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
+  const auto result =
+      mosek_solver.Solve(dut.prog(), std::nullopt, solver_options);
   ASSERT_TRUE(result.is_success());
   VectorX<symbolic::Polynomial> b_sol(nu);
   for (int i = 0; i < nu; ++i) {
@@ -556,7 +561,7 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound) {
 
   // Search with backoff.
   search_options.backoff_scale = 0.95;
-  search_options.lyap_step_solver = solvers::CsdpSolver::id();
+  search_options.lyap_step_solver = solvers::MosekSolver::id();
   search_options.bilinear_iterations = 10;
   const auto search_result_backoff = dut.Search(
       V, l_given, lagrangian_degrees, b_degrees, x_star, S, s_degree, t_given,

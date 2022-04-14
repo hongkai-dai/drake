@@ -351,10 +351,6 @@ solvers::MathematicalProgramResult SearchWithBackoff(
     double backoff_scale) {
   auto cost = prog->AddLinearCost(-rho);
   auto solver = solvers::MakeSolver(solver_id);
-  if (solver_id == solvers::MosekSolver::id()) {
-    auto mosek_solver = dynamic_cast<solvers::MosekSolver*>(solver.get());
-    mosek_solver->set_stream_logging(true, "");
-  }
   solvers::MathematicalProgramResult result;
   solver->Solve(*prog, std::nullopt, solver_options, &result);
   DRAKE_DEMAND(result.is_success());

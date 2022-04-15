@@ -549,6 +549,7 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound) {
   const double deriv_eps_upper{kInf};
   // Search without backoff.
   search_options.backoff_scale = 1.;
+  search_options.bilinear_iterations = 5;
   const auto search_result = dut.Search(
       V, l_given, lagrangian_degrees, b_degrees, x_star, S, s_degree, t_given,
       V_degree, deriv_eps_lower, deriv_eps_upper, search_options);
@@ -562,13 +563,79 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound) {
   // Search with backoff.
   search_options.backoff_scale = 0.95;
   search_options.lyap_step_solver = solvers::MosekSolver::id();
-  search_options.bilinear_iterations = 10;
+  search_options.bilinear_iterations = 5;
   const auto search_result_backoff = dut.Search(
       V, l_given, lagrangian_degrees, b_degrees, x_star, S, s_degree, t_given,
       V_degree, deriv_eps_lower, deriv_eps_upper, search_options);
   ValidateRegionOfAttractionBySample(
       f, G, search_result_backoff.V, x_, u_vertices,
       search_result_backoff.deriv_eps, 1000, 1E-5, 1E-3);
+}
+
+GTEST_TEST(MaximizeInnerEllipsoidRho, Test1) {
+  // Test a 2D case with known solution.
+  // Find the largest x²+4y² <= ρ within the circle 2x²+2y² <= 1
+  const Vector2<symbolic::Variable> x(symbolic::Variable("x0"),
+                                      symbolic::Variable("x1"));
+  const Eigen::Vector2d x_star(0, 0);
+  Eigen::Matrix2d S;
+  // clang-format off
+  S << 1, 0,
+       0, 4;
+  // clang-format on
+  const symbolic::Polynomial V(2 * x(0) * x(0) + 2 * x(1) * x(1));
+  const symbolic::Polynomial t(x(0) * x(0) + x(1) * x(1));
+  const int s_degree(2);
+  const double backoff_scale = 1.;
+  double rho_sol;
+  symbolic::Polynomial s_sol;
+  MaximizeInnerEllipsoidRho(x, x_star, S, V, t, s_degree,
+                            solvers::MosekSolver::id(), std::nullopt,
+                            backoff_scale, &rho_sol, &s_sol);
+  const double tol = 1E-5;
+  EXPECT_NEAR(rho_sol, 0.5, tol);
+}
+
+GTEST_TEST(MaximizeInnerEllipsoidRho, Test2) {
+  // Test a case that I cannot compute the solution analytically.
+  const Vector2<symbolic::Variable> x(symbolic::Variable("x0"),
+                                      symbolic::Variable("x1"));
+  const Eigen::Vector2d x_star(1, 2);
+  Eigen::Matrix2d S;
+  // clang-format off
+  S << 1, 2,
+       2, 9;
+  // clang-format on
+  using std::pow;
+  const symbolic::Polynomial V(pow(x(0), 4) + pow(x(1), 4) - 2 * x(0) * x(0) -
+                               4 * x(1) * x(1) - 20 * x(0) * x(1));
+  ASSERT_LE(
+      V.Evaluate(symbolic::Environment({{x(0), x_star(0)}, {x(1), x_star(1)}})),
+      1);
+  const symbolic::Polynomial t(0);
+  const int s_degree = 2;
+  const double backoff_scale = 0.95;
+  double rho_sol;
+  symbolic::Polynomial s_sol;
+  solvers::SolverOptions solver_options;
+  solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
+  MaximizeInnerEllipsoidRho(x, x_star, S, V, t, s_degree,
+                            solvers::MosekSolver::id(), solver_options,
+                            backoff_scale, &rho_sol, &s_sol);
+}
+
+GTEST_TEST(EllipsoidPolynomial, Test) {
+  const Vector2<symbolic::Variable> x(symbolic::Variable("x0"),
+                                      symbolic::Variable("x1"));
+  const Eigen::Vector2d x_star(2, 3);
+  Eigen::Matrix2d S;
+  S << 1, 1, 3, 9;
+  const double rho = 2;
+  const symbolic::Polynomial poly =
+      internal::EllipsoidPolynomial(x, x_star, S, rho);
+  const symbolic::Polynomial poly_expected(
+      (x - x_star).dot(S * (x - x_star)) - rho, symbolic::Variables(x));
+  EXPECT_PRED2(symbolic::test::PolyEqualAfterExpansion, poly, poly_expected);
 }
 }  // namespace analysis
 }  // namespace systems

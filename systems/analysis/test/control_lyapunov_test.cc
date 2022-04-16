@@ -353,10 +353,6 @@ TEST_F(SimpleLinearSystemTest, MaximizeEllipsoid) {
   const int s_degree = 2;
   const symbolic::Variables x_set{x_};
   const symbolic::Polynomial t(x_.cast<symbolic::Expression>().dot(x_), x_set);
-  const auto ellipsoid_ret =
-      dut.AddEllipsoidInRoaConstraint(x_star, S, s_degree, t);
-  // Maximize the ellipsoid rho.
-  dut.get_mutable_prog()->AddLinearCost(-ellipsoid_ret.rho);
   // Set the rate-of-convergence epsilon to >= 0.1
   dut.get_mutable_prog()->AddBoundingBoxConstraint(0.1, kInf, dut.deriv_eps());
   solvers::MosekSolver mosek_solver;
@@ -365,46 +361,7 @@ TEST_F(SimpleLinearSystemTest, MaximizeEllipsoid) {
   const auto result =
       mosek_solver.Solve(dut.prog(), std::nullopt, solver_options);
   EXPECT_TRUE(result.is_success());
-  CheckSearchLagrangianAndBResult(dut, result, V, f, G, x_, 1.3E-5);
-  // Check if the ellipsoid is contained in the ROA {V(x) <= 1}
-  const symbolic::Polynomial s_sol = result.GetSolution(ellipsoid_ret.s);
-  const double rho_sol = result.GetSolution(ellipsoid_ret.rho);
-  EXPECT_GT(rho_sol, 0);
-  // Check if s(x) is sos.
-  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_solver;
-  es_solver.compute(result.GetSolution(ellipsoid_ret.s_gram));
-  const double psd_tol = 1E-6;
-  EXPECT_TRUE((es_solver.eigenvalues().array() >= -psd_tol).all());
-  // Check if the constraint (1+t(x))((x−x*)ᵀS(x−x*)−ρ) − s(x)(V(x)−1) is sos.
-  es_solver.compute(result.GetSolution(ellipsoid_ret.constraint_gram));
-  EXPECT_TRUE((es_solver.eigenvalues().array() >= -psd_tol).all());
-
-  const symbolic::Polynomial ellipsoid_sos_expected =
-      (1 + t) * symbolic::Polynomial(
-                    (x_ - x_star).dot(S * (x_ - x_star)) - rho_sol, x_set) -
-      s_sol * (V - 1);
-  EXPECT_PRED3(symbolic::test::PolynomialEqual, ellipsoid_sos_expected,
-               ellipsoid_ret.constraint_monomials.dot(
-                   result.GetSolution(ellipsoid_ret.constraint_gram) *
-                   ellipsoid_ret.constraint_monomials),
-               1E-5);
-  // Check if any point within the ellipsoid also satisfies V(x)<=1.
-  // A point on the boundary of ellipsoid (x−x*)ᵀS(x−x*)=ρ
-  // can be writeen as x=√ρ*L⁻ᵀ*[cosθ, sinθ]+x*
-  // where L is the Cholesky decomposition of S.
-  Eigen::LLT<Eigen::Matrix2d> llt_solver;
-  llt_solver.compute(S);
-  Eigen::VectorXd theta = Eigen::VectorXd::LinSpaced(100, 0, 2 * M_PI);
-  Eigen::ColPivHouseholderQR<Eigen::Matrix2d> qr_solver;
-  qr_solver.compute(llt_solver.matrixL().transpose());
-  for (int i = 0; i < theta.rows(); ++i) {
-    const Eigen::Vector2d x_val =
-        std::sqrt(rho_sol) * qr_solver.solve(Eigen::Vector2d(
-                                 std::cos(theta(i)), std::sin(theta(i)))) +
-        x_star;
-    const symbolic::Environment env{{{x_(0), x_val(0)}, {x_(1), x_val(1)}}};
-    EXPECT_LE(V.Evaluate(env), 1 + 1E-5);
-  }
+  CheckSearchLagrangianAndBResult(dut, result, V, f, G, x_, 1.7E-5);
   // Retrieve solution of Lagrangian multipliers.
   std::vector<std::array<symbolic::Polynomial, 6>> l_sol(nu);
   for (int i = 0; i < nu; ++i) {
@@ -415,6 +372,12 @@ TEST_F(SimpleLinearSystemTest, MaximizeEllipsoid) {
     }
   }
   const double deriv_eps_sol = result.GetSolution(dut.deriv_eps());
+
+  double rho_sol;
+  symbolic::Polynomial s_sol;
+  MaximizeInnerEllipsoidRho(x_, x_star, S, V, t, s_degree,
+                            solvers::MosekSolver::id(), std::nullopt, 1.,
+                            &rho_sol, &s_sol);
 
   // Now fix the Lagrangian multiplier and search for V
   const Eigen::Vector2d x_des(0, 0);
@@ -456,10 +419,7 @@ TEST_F(SimpleLinearSystemTest, SearchLagrangianGivenVBoxInputBound) {
   const int s_degree = 2;
   const symbolic::Variables x_set{x_};
   const symbolic::Polynomial t(x_.cast<symbolic::Expression>().dot(x_), x_set);
-  const auto ellipsoid_ret =
-      dut.AddEllipsoidInRoaConstraint(x_star, S, s_degree, t);
-  // Maximize the ellipsoid rho.
-  dut.get_mutable_prog()->AddLinearCost(-ellipsoid_ret.rho);
+
   // Set the rate-of-convergence epsilon to >= 0.1
   dut.get_mutable_prog()->AddBoundingBoxConstraint(0.1, kInf, dut.deriv_eps());
   solvers::MosekSolver mosek_solver;
@@ -472,50 +432,20 @@ TEST_F(SimpleLinearSystemTest, SearchLagrangianGivenVBoxInputBound) {
   for (int i = 0; i < nu; ++i) {
     b_sol(i) = result.GetSolution(dut.b()(i));
   }
+  double rho_sol;
+  symbolic::Polynomial s_sol;
+  MaximizeInnerEllipsoidRho(x_, x_star, S, V, t, s_degree,
+                            solvers::MosekSolver::id(), std::nullopt, 1.,
+                            &rho_sol, &s_sol);
 
   // Now fix V and b, search for Lagrangians.
   SearchLagrangianGivenVBoxInputBound dut_search_l(V, f, G, b_sol, x_,
                                                    lagrangian_degrees);
-  const auto result_search_l = mosek_solver.Solve(dut_search_l.prog());
+  solvers::CsdpSolver csdp_solver;
+  const auto result_search_l =
+      csdp_solver.Solve(dut_search_l.prog(), std::nullopt, solver_options);
   ASSERT_TRUE(result_search_l.is_success());
   CheckSearchLagrangianResult(dut_search_l, result_search_l, 3E-5, 1E-6);
-
-  // Now maximize the ellipsoid. I should get the same rho as when searching for
-  // both Lagrangian and b.
-  const auto ellipsoid_ret_search_l =
-      dut_search_l.AddEllipsoidInRoaConstraint(x_star, S, s_degree, t);
-  dut_search_l.get_mutable_prog()->AddLinearCost(-ellipsoid_ret_search_l.rho);
-  const auto result_search_l_max_ellipsoid =
-      mosek_solver.Solve(dut_search_l.prog());
-  ASSERT_TRUE(result_search_l_max_ellipsoid.is_success());
-  EXPECT_NEAR(
-      result_search_l_max_ellipsoid.GetSolution(ellipsoid_ret_search_l.rho),
-      result.GetSolution(ellipsoid_ret.rho), 1E-6);
-  // Check if s(x) is sos.
-  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_solver;
-  const Eigen::MatrixXd s_gram_sol =
-      result_search_l_max_ellipsoid.GetSolution(ellipsoid_ret_search_l.s_gram);
-  es_solver.compute(s_gram_sol);
-  const double psd_tol{1E-6};
-  EXPECT_TRUE((es_solver.eigenvalues().array() > -psd_tol).all());
-  const Eigen::MatrixXd ellipsoid_constraint_gram =
-      result_search_l_max_ellipsoid.GetSolution(
-          ellipsoid_ret_search_l.constraint_gram);
-  es_solver.compute(ellipsoid_constraint_gram);
-  EXPECT_TRUE((es_solver.eigenvalues().array() > -psd_tol).all());
-  const symbolic::Polynomial s_sol =
-      result_search_l_max_ellipsoid.GetSolution(ellipsoid_ret_search_l.s);
-  EXPECT_PRED3(symbolic::test::PolynomialEqual,
-               (1 + t) * symbolic::Polynomial(
-                             (x_ - x_star).dot(S * (x_ - x_star)) -
-                                 result_search_l_max_ellipsoid.GetSolution(
-                                     ellipsoid_ret_search_l.rho),
-                             x_set_) -
-                   s_sol * (V - 1),
-               ellipsoid_ret_search_l.constraint_monomials.dot(
-                   ellipsoid_constraint_gram *
-                   ellipsoid_ret_search_l.constraint_monomials),
-               3E-5);
 }
 
 TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound) {
@@ -536,8 +466,6 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound) {
   ControlLyapunovBoxInputBound dut(f, G, x_des, x_, positivity_eps);
 
   ControlLyapunovBoxInputBound::SearchOptions search_options;
-  search_options.lyap_step_solver = solvers::MosekSolver::id();
-  search_options.bilinear_iterations = 7;
 
   const Eigen::Vector2d x_star(0.001, 0.002);
   const Eigen::Matrix2d S = Eigen::Vector2d(1, 2).asDiagonal();
@@ -572,6 +500,37 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound) {
       search_result_backoff.deriv_eps, 1000, 1E-5, 1E-3);
 }
 
+void CheckEllipsoidInRoa(const Eigen::Ref<const VectorX<symbolic::Variable>> x,
+                         const Eigen::Ref<const Eigen::VectorXd>& x_star,
+                         const Eigen::Ref<const Eigen::MatrixXd>& S, double rho,
+                         const symbolic::Polynomial& V) {
+  // Check if any point within the ellipsoid also satisfies V(x)<=1.
+  // A point on the boundary of ellipsoid (x−x*)ᵀS(x−x*)=ρ
+  // can be writeen as x=√ρ*L⁻ᵀ*u+x*
+  // where L is the Cholesky decomposition of S, u is a vector with norm < 1.
+  Eigen::LLT<Eigen::Matrix2d> llt_solver;
+  llt_solver.compute(S);
+  const int x_dim = x.rows();
+  srand(0);
+  Eigen::MatrixXd u_samples = Eigen::MatrixXd::Random(x_dim, 1000);
+  std::default_random_engine generator;
+  std::uniform_real_distribution<double> distribution(0., 1.);
+  for (int i = 0; i < u_samples.cols(); ++i) {
+    u_samples.col(i) /= u_samples.col(i).norm();
+    u_samples.col(i) *= distribution(generator);
+  }
+
+  Eigen::ColPivHouseholderQR<Eigen::Matrix2d> qr_solver;
+  qr_solver.compute(llt_solver.matrixL().transpose());
+  for (int i = 0; i < u_samples.cols(); ++i) {
+    const Eigen::VectorXd x_val =
+        std::sqrt(rho) * qr_solver.solve(u_samples.col(i)) + x_star;
+    symbolic::Environment env;
+    env.insert(x, x_val);
+    EXPECT_LE(V.Evaluate(env), 1 + 1E-5);
+  }
+}
+
 GTEST_TEST(MaximizeInnerEllipsoidRho, Test1) {
   // Test a 2D case with known solution.
   // Find the largest x²+4y² <= ρ within the circle 2x²+2y² <= 1
@@ -594,6 +553,8 @@ GTEST_TEST(MaximizeInnerEllipsoidRho, Test1) {
                             backoff_scale, &rho_sol, &s_sol);
   const double tol = 1E-5;
   EXPECT_NEAR(rho_sol, 0.5, tol);
+
+  CheckEllipsoidInRoa(x, x_star, S, rho_sol, V);
 }
 
 GTEST_TEST(MaximizeInnerEllipsoidRho, Test2) {
@@ -618,10 +579,10 @@ GTEST_TEST(MaximizeInnerEllipsoidRho, Test2) {
   double rho_sol;
   symbolic::Polynomial s_sol;
   solvers::SolverOptions solver_options;
-  solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
   MaximizeInnerEllipsoidRho(x, x_star, S, V, t, s_degree,
                             solvers::MosekSolver::id(), solver_options,
                             backoff_scale, &rho_sol, &s_sol);
+  CheckEllipsoidInRoa(x, x_star, S, rho_sol, V);
 }
 
 GTEST_TEST(EllipsoidPolynomial, Test) {

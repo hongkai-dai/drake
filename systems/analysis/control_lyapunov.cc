@@ -3,6 +3,7 @@
 #include <limits.h>
 
 #include "drake/solvers/choose_best_solver.h"
+#include "drake/solvers/mathematical_program_result.h"
 
 namespace drake {
 namespace systems {
@@ -183,20 +184,6 @@ SearchLagrangianAndBGivenVBoxInputBound::
                                              &vdot_sos_constraint_);
 }
 
-SearchLagrangianAndBGivenVBoxInputBound::EllipsoidInRoaReturn
-SearchLagrangianAndBGivenVBoxInputBound::AddEllipsoidInRoaConstraint(
-    const Eigen::Ref<const Eigen::VectorXd>& x_star,
-    const Eigen::Ref<const Eigen::MatrixXd>& S, int s_degree,
-    const symbolic::Polynomial& t) {
-  EllipsoidInRoaReturn ret;
-  ret.rho = prog_.NewContinuousVariables<1>("rho")(0);
-  std::tie(ret.s, ret.s_gram) = prog_.NewSosPolynomial(x_set_, s_degree);
-  std::tie(ret.constraint_gram, ret.constraint_monomials) =
-      AddEllipsoidInRoaConstraintHelper<symbolic::Variable>(
-          &prog_, t, x_, x_star, S, ret.rho, ret.s, V_);
-  return ret;
-}
-
 SearchLyapunovGivenLagrangianBoxInputBound::
     SearchLyapunovGivenLagrangianBoxInputBound(
         VectorX<symbolic::Polynomial> f, MatrixX<symbolic::Polynomial> G,
@@ -312,20 +299,6 @@ SearchLagrangianGivenVBoxInputBound::SearchLagrangianGivenVBoxInputBound(
                                              &vdot_sos_constraint_);
 }
 
-SearchLagrangianGivenVBoxInputBound::EllipsoidInRoaReturn
-SearchLagrangianGivenVBoxInputBound::AddEllipsoidInRoaConstraint(
-    const Eigen::Ref<const Eigen::VectorXd>& x_star,
-    const Eigen::Ref<const Eigen::MatrixXd>& S, int s_degree,
-    const symbolic::Polynomial& t) {
-  EllipsoidInRoaReturn ret;
-  ret.rho = prog_.NewContinuousVariables<1>("rho")(0);
-  std::tie(ret.s, ret.s_gram) = prog_.NewSosPolynomial(x_set_, s_degree);
-  std::tie(ret.constraint_gram, ret.constraint_monomials) =
-      AddEllipsoidInRoaConstraintHelper<symbolic::Variable>(
-          &prog_, t, x_, x_star, S, ret.rho, ret.s, V_);
-  return ret;
-}
-
 namespace {
 solvers::MathematicalProgramResult SearchWithBackoff(
     solvers::MathematicalProgram* prog, const symbolic::Variable& rho,
@@ -383,28 +356,29 @@ void ControlLyapunovBoxInputBound::SearchLagrangianAndB(
   DRAKE_DEMAND(std::abs(V.Evaluate(env_x_des)) < 1E-5);
   SearchLagrangianAndBGivenVBoxInputBound searcher(
       V, f_, G_, l_given, lagrangian_degrees, b_degrees, x_);
-  const auto ellipsoid_ret =
-      searcher.AddEllipsoidInRoaConstraint(x_star, S, s_degree, t);
   searcher.get_mutable_prog()->AddBoundingBoxConstraint(
       deriv_eps_lower, deriv_eps_upper, searcher.deriv_eps());
-  const auto result =
-      SearchWithBackoff(searcher.get_mutable_prog(), ellipsoid_ret.rho,
-                        solver_id, solver_options, backoff_scale);
-  *deriv_eps = result.GetSolution(searcher.deriv_eps());
-  *rho = result.GetSolution(ellipsoid_ret.rho);
+  auto solver = solvers::MakeSolver(solver_id);
+  solvers::MathematicalProgramResult result_searcher;
+  solver->Solve(searcher.prog(), std::nullopt, solver_options,
+                &result_searcher);
+  *deriv_eps = result_searcher.GetSolution(searcher.deriv_eps());
   const int nu = G_.cols();
   b->resize(nu);
   l->resize(nu);
   for (int i = 0; i < nu; ++i) {
-    (*b)(i) = result.GetSolution(searcher.b()(i));
+    (*b)(i) = result_searcher.GetSolution(searcher.b()(i));
     for (int j = 0; j < 2; ++j) {
       (*l)[i][j] = l_given[i][j];
     }
     for (int j = 2; j < 6; ++j) {
-      (*l)[i][j] = result.GetSolution(searcher.lagrangians()[i][j]);
+      (*l)[i][j] = result_searcher.GetSolution(searcher.lagrangians()[i][j]);
     }
   }
-  *s = result.GetSolution(ellipsoid_ret.s);
+
+  // Solve a separate program to find the inscribed ellipsoid.
+  MaximizeInnerEllipsoidRho(x_, x_star, S, V, t, s_degree, solver_id,
+                            solver_options, backoff_scale, rho, s);
 }
 
 void ControlLyapunovBoxInputBound::SearchLyapunov(
@@ -443,20 +417,24 @@ void ControlLyapunovBoxInputBound::SearchLagrangian(
     symbolic::Polynomial* s, double* rho) const {
   SearchLagrangianGivenVBoxInputBound searcher(V, f_, G_, b, x_,
                                                lagrangian_degrees);
-  const auto ellipsoid_ret =
-      searcher.AddEllipsoidInRoaConstraint(x_star, S, s_degree, t);
-  const auto result =
-      SearchWithBackoff(searcher.get_mutable_prog(), ellipsoid_ret.rho,
-                        solver_id, solver_options, backoff_scale);
+  solvers::MathematicalProgramResult result_searcher;
+  auto solver = solvers::MakeSolver(solver_id);
+  solver->Solve(searcher.prog(), std::nullopt, solver_options,
+                &result_searcher);
+  if (!result_searcher.is_success()) {
+    throw std::runtime_error("Failed to find Lagrangian.");
+  }
   const int nu = G_.cols();
   l->resize(nu);
   for (int i = 0; i < nu; ++i) {
     for (int j = 0; j < 6; ++j) {
-      (*l)[i][j] = result.GetSolution(searcher.lagrangians()[i][j]);
+      (*l)[i][j] = result_searcher.GetSolution(searcher.lagrangians()[i][j]);
     }
   }
-  *s = result.GetSolution(ellipsoid_ret.s);
-  *rho = result.GetSolution(ellipsoid_ret.rho);
+
+  // Solve a separate program to find the innner ellipsoid.
+  MaximizeInnerEllipsoidRho(x_, x_star, S, V, t, s_degree, solver_id,
+                            solver_options, backoff_scale, rho, s);
 }
 
 ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(

@@ -476,7 +476,7 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound) {
   const double deriv_eps_lower{0.01};
   const double deriv_eps_upper{kInf};
   // Search without backoff.
-  search_options.backoff_scale = 1.;
+  search_options.backoff_scale = 0.;
   search_options.bilinear_iterations = 5;
   const auto search_result = dut.Search(
       V, l_given, lagrangian_degrees, b_degrees, x_star, S, s_degree, t_given,
@@ -489,7 +489,7 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound) {
                                      search_result.deriv_eps, 1000, 1E-5, 1E-3);
 
   // Search with backoff.
-  search_options.backoff_scale = 0.95;
+  search_options.backoff_scale = 0.05;
   search_options.lyap_step_solver = solvers::MosekSolver::id();
   search_options.bilinear_iterations = 5;
   const auto search_result_backoff = dut.Search(
@@ -545,7 +545,7 @@ GTEST_TEST(MaximizeInnerEllipsoidRho, Test1) {
   const symbolic::Polynomial V(2 * x(0) * x(0) + 2 * x(1) * x(1));
   const symbolic::Polynomial t(x(0) * x(0) + x(1) * x(1));
   const int s_degree(2);
-  const double backoff_scale = 1.;
+  const double backoff_scale = 0.;
   double rho_sol;
   symbolic::Polynomial s_sol;
   MaximizeInnerEllipsoidRho(x, x_star, S, V, t, s_degree,
@@ -575,10 +575,11 @@ GTEST_TEST(MaximizeInnerEllipsoidRho, Test2) {
       1);
   const symbolic::Polynomial t(0);
   const int s_degree = 2;
-  const double backoff_scale = 0.95;
+  const double backoff_scale = 0.05;
   double rho_sol;
   symbolic::Polynomial s_sol;
   solvers::SolverOptions solver_options;
+  solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
   MaximizeInnerEllipsoidRho(x, x_star, S, V, t, s_degree,
                             solvers::MosekSolver::id(), solver_options,
                             backoff_scale, &rho_sol, &s_sol);

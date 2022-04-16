@@ -492,7 +492,7 @@ class ControlLyapunovBoxInputBound {
     // Stop when the improvement on rho is below this tolerance.
     double rho_converge_tol{1E-5};
     // Back off in each steps.
-    double backoff_scale{1.};
+    double backoff_scale{0.};
     std::optional<solvers::SolverOptions> lagrangian_step_solver_options{
         std::nullopt};
     std::optional<solvers::SolverOptions> lyap_step_solver_options{

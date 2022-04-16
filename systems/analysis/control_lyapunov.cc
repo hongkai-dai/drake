@@ -301,21 +301,26 @@ SearchLagrangianGivenVBoxInputBound::SearchLagrangianGivenVBoxInputBound(
 
 namespace {
 solvers::MathematicalProgramResult SearchWithBackoff(
-    solvers::MathematicalProgram* prog, const symbolic::Variable& rho,
-    const solvers::SolverId& solver_id,
+    solvers::MathematicalProgram* prog, const solvers::SolverId& solver_id,
     const std::optional<solvers::SolverOptions>& solver_options,
     double backoff_scale) {
-  auto cost = prog->AddLinearCost(-rho);
+  DRAKE_DEMAND(prog->linear_costs().size() == 1u);
+  DRAKE_DEMAND(prog->quadratic_costs().size() == 0u);
   auto solver = solvers::MakeSolver(solver_id);
   solvers::MathematicalProgramResult result;
   solver->Solve(*prog, std::nullopt, solver_options, &result);
   DRAKE_DEMAND(result.is_success());
   DRAKE_DEMAND(backoff_scale >= 0 && backoff_scale <= 1);
-  if (backoff_scale < 1) {
+  if (backoff_scale > 0) {
     std::cout << "backoff\n";
-    prog->AddBoundingBoxConstraint(result.GetSolution(rho) * backoff_scale,
-                                   kInf, rho);
-    cost.evaluator()->UpdateCoefficients(Vector1d(0.));
+    auto cost = prog->linear_costs()[0];
+    prog->RemoveCost(cost);
+    const double cost_val = result.get_optimal_cost();
+    const double cost_ub = cost_val >= 0 ? (1 + backoff_scale) * cost_val
+                                         : (1 - backoff_scale) * cost_val;
+    prog->AddLinearConstraint(cost.evaluator()->a(), -kInf,
+                              cost_ub - cost.evaluator()->b(),
+                              cost.variables());
     solver->Solve(*prog, std::nullopt, solver_options, &result);
     if (!result.is_success()) {
       throw std::runtime_error("Backoff failed\n");
@@ -394,9 +399,9 @@ void ControlLyapunovBoxInputBound::SearchLyapunov(
       f_, G_, V_degree, positivity_eps, deriv_eps, x_des_, l, b_degrees, x_);
   const auto ellipsoid_ret =
       searcher.AddEllipsoidInRoaConstraint(x_star, S, t, s);
-  const auto result =
-      SearchWithBackoff(searcher.get_mutable_prog(), ellipsoid_ret.rho,
-                        solver_id, solver_options, backoff_scale);
+  searcher.get_mutable_prog()->AddLinearCost(-ellipsoid_ret.rho);
+  const auto result = SearchWithBackoff(searcher.get_mutable_prog(), solver_id,
+                                        solver_options, backoff_scale);
   *rho = result.GetSolution(ellipsoid_ret.rho);
   *V = result.GetSolution(searcher.V());
   const int nu = G_.cols();
@@ -500,8 +505,9 @@ void MaximizeInnerEllipsoidRho(
   }
 
   AddEllipsoidInRoaConstraintHelper(&prog, t, x, x_star, S, rho, s, V);
+  prog.AddLinearCost(-rho);
   const auto result =
-      SearchWithBackoff(&prog, rho, solver_id, solver_options, backoff_scale);
+      SearchWithBackoff(&prog, solver_id, solver_options, backoff_scale);
   DRAKE_DEMAND(result.is_success());
   *rho_sol = result.GetSolution(rho);
   *s_sol = result.GetSolution(s);

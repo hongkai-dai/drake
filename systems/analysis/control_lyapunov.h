@@ -203,23 +203,6 @@ class SearchLagrangianAndBGivenVBoxInputBound {
     MatrixX<symbolic::Variable> constraint_gram;
   };
 
-  /**
-   * Add the constraint that an ellipsoid {x|(x−x*)ᵀS(x−x*)<=ρ} is within the
-   * region-of-attraction (ROA) {x | V(x) <= 1}.
-   * We enforce the constraint
-   * (1+t(x))((x−x*)ᵀS(x−x*)−ρ) − s(x)(V(x)−1) is sos
-   * s(x) is sos.
-   * @param x_star The center of the ellipsoid.
-   * @param S The shape of the ellipsoid.
-   * @param s_degree The degree of the polynomial s(x)
-   * @param t The given polynomial t(x). This polynomial should be positive
-   * semidefinite.
-   */
-  EllipsoidInRoaReturn AddEllipsoidInRoaConstraint(
-      const Eigen::Ref<const Eigen::VectorXd>& x_star,
-      const Eigen::Ref<const Eigen::MatrixXd>& S, int s_degree,
-      const symbolic::Polynomial& t);
-
  private:
   // Step 1 of Search() function. Search for Lagrangian multipliers and b.
   void SearchLagrangianAndB(
@@ -376,35 +359,6 @@ class SearchLagrangianGivenVBoxInputBound {
       VectorX<symbolic::Variable> x,
       std::vector<std::array<int, 6>> lagrangian_degrees);
 
-  struct EllipsoidInRoaReturn {
-    symbolic::Variable rho;
-    // The Lagrangian multiplier s(x)
-    symbolic::Polynomial s;
-    // The Gram matrix of the lagrangian multiplier s(x).
-    MatrixX<symbolic::Variable> s_gram;
-    // The monomials of the constraint (1+t(x))((x−x*)ᵀS(x−x*)−ρ) −
-    // s(x)(V(x)−1)
-    VectorX<symbolic::Monomial> constraint_monomials;
-    // The Gram matrix of the constraint
-    // (1+t(x))((x−x*)ᵀS(x−x*)−ρ) − s(x)(V(x)−1)
-    MatrixX<symbolic::Variable> constraint_gram;
-  };
-
-  /**
-   * Add the constraint that an ellipsoid {x|(x−x*)ᵀS(x−x*)<=ρ} is within the
-   * region-of-attraction (ROA) {x | V(x) <= 1}.
-   * We enforce the constraint
-   * (1+t(x))((x−x*)ᵀS(x−x*)−ρ) − s(x)(V(x)−1) is sos
-   * s(x) is sos.
-   * @param x_star The center of the ellipsoid.
-   * @param S The shape of the ellipsoid.
-   * @param t The Lagrangian multipler t(x).
-   */
-  EllipsoidInRoaReturn AddEllipsoidInRoaConstraint(
-      const Eigen::Ref<const Eigen::VectorXd>& x_star,
-      const Eigen::Ref<const Eigen::MatrixXd>& S, int s_degree,
-      const symbolic::Polynomial& t);
-
   const solvers::MathematicalProgram& prog() const { return prog_; }
 
   solvers::MathematicalProgram* get_mutable_prog() { return &prog_; }
@@ -532,7 +486,7 @@ class ControlLyapunovBoxInputBound {
   };
 
   struct SearchOptions {
-    solvers::SolverId lyap_step_solver{solvers::CsdpSolver::id()};
+    solvers::SolverId lyap_step_solver{solvers::MosekSolver::id()};
     solvers::SolverId lagrangian_step_solver{solvers::MosekSolver::id()};
     int bilinear_iterations{10};
     // Stop when the improvement on rho is below this tolerance.

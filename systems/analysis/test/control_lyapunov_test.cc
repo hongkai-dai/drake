@@ -160,10 +160,8 @@ void CheckSearchLagrangianAndBResult(
   }
 }
 
-void CheckSearchLagrangianResult(
-    const SearchLagrangianGivenVBoxInputBound& dut,
-    const solvers::MathematicalProgramResult& result, double tol,
-    double psd_tol) {
+void CheckSearchLagrangianResult(const SearchLagrangianGivenVBoxInputBound& dut,
+                                 double tol, double psd_tol) {
   // Check if the constraint
   // (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
   // (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
@@ -172,25 +170,30 @@ void CheckSearchLagrangianResult(
   Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_solver;
   for (int i = 0; i < dut.nu(); ++i) {
     std::array<symbolic::Polynomial, 6> l_sol;
-    for (int j = 0; j < 6; ++j) {
-      l_sol[j] = result.GetSolution(dut.lagrangians()[i][j]);
-    }
-    const symbolic::Polynomial dVdx_times_Gi = dVdx * dut.G().col(i);
-    const symbolic::Polynomial p1 =
-        (l_sol[0] + 1) * (dVdx_times_Gi - dut.b()(i)) -
-        l_sol[2] * dVdx_times_Gi - l_sol[4] * (1 - dut.V());
-    const symbolic::Polynomial p2 =
-        (l_sol[1] + 1) * (-dVdx_times_Gi - dut.b()(i)) +
-        l_sol[3] * dVdx_times_Gi - l_sol[5] * (1 - dut.V());
-    const std::array<symbolic::Polynomial, 2> p_expected =
-        dut.vdot_sos_constraint().ComputeSosConstraint(i, result);
-    EXPECT_PRED3(symbolic::test::PolynomialEqual, p1, p_expected[0], tol);
-    EXPECT_PRED3(symbolic::test::PolynomialEqual, p2, p_expected[1], tol);
-
-    // Check if the Gram matrices are PSD.
+    const symbolic::Polynomial dVdx_times_Gi = dVdx.dot(dut.G().col(i));
     for (int j = 0; j < 2; ++j) {
+      // Surprisingly Mosek really doesn't like solving Lagrangian problem. I
+      // often observe numerical errors.
+      solvers::CsdpSolver csdp_solver;
+      solvers::SolverOptions solver_options;
+      const auto result_ij =
+          csdp_solver.Solve(dut.prog(i, j), std::nullopt, solver_options);
+      ASSERT_TRUE(result_ij.is_success());
+      for (int k = 0; k < 3; ++k) {
+        l_sol[j + 2 * k] =
+            result_ij.GetSolution(dut.lagrangians()[i][j + 2 * k]);
+      }
+      const symbolic::Polynomial p =
+          j == 0 ? (l_sol[0] + 1) * (dVdx_times_Gi - dut.b()(i)) -
+                       l_sol[2] * dVdx_times_Gi - l_sol[4] * (1 - dut.V())
+                 : (l_sol[1] + 1) * (-dVdx_times_Gi - dut.b()(i)) +
+                       l_sol[3] * dVdx_times_Gi - l_sol[5] * (1 - dut.V());
+      const symbolic::Polynomial p_expected =
+          dut.vdot_sos_constraint().ComputeSosConstraint(i, j, result_ij);
+      EXPECT_PRED3(symbolic::test::PolynomialEqual, p, p_expected, tol);
+      // Check if the Gram matrices are PSD.
       const Eigen::MatrixXd gram_sol =
-          result.GetSolution(dut.vdot_sos_constraint().grams[i][j]);
+          result_ij.GetSolution(dut.vdot_sos_constraint().grams[i][j]);
       es_solver.compute(gram_sol);
       EXPECT_TRUE((es_solver.eigenvalues().array() > -psd_tol).all());
     }
@@ -443,11 +446,7 @@ TEST_F(SimpleLinearSystemTest, SearchLagrangianGivenVBoxInputBound) {
   // Now fix V and b, search for Lagrangians.
   SearchLagrangianGivenVBoxInputBound dut_search_l(V, f, G, b_sol, x_,
                                                    lagrangian_degrees);
-  solvers::CsdpSolver csdp_solver;
-  const auto result_search_l =
-      csdp_solver.Solve(dut_search_l.prog(), std::nullopt, solver_options);
-  ASSERT_TRUE(result_search_l.is_success());
-  CheckSearchLagrangianResult(dut_search_l, result_search_l, 3E-5, 1E-6);
+  CheckSearchLagrangianResult(dut_search_l, 3E-5, 1E-6);
 }
 
 TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound) {
@@ -583,6 +582,10 @@ GTEST_TEST(MaximizeInnerEllipsoidRho, Test2) {
   symbolic::Polynomial s_sol;
   solvers::SolverOptions solver_options;
   solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
+  // I am really surprised that this SOS finds a solution with rho > 0. AFAIK,
+  // t(x) is constant, hence (1+t(x))((x-x*)ᵀS(x-x*)-ρ) is a degree 2
+  // polynomial, while -s(x)*(V(x)-1) has much higher degree (>6) with negative
+  // leading terms. The resulting polynomial cannot be sos.
   MaximizeInnerEllipsoidRho(x, x_star, S, V, t, s_degree,
                             solvers::MosekSolver::id(), solver_options,
                             backoff_scale, &rho_sol, &s_sol);

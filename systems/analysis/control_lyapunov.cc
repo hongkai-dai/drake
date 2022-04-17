@@ -69,9 +69,30 @@ void CheckDynamicsInput(const symbolic::Polynomial& V,
 }
 
 namespace {
+// For a specific i
+// if j = 0, add the constraint
+// (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
+// if j = 1, add the constraint
+// (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
+void AddControlLyapunovBoxInputBoundConstraints(
+    solvers::MathematicalProgram* prog, int j,
+    const std::array<symbolic::Polynomial, 6>& l_i,
+    const symbolic::Polynomial& V, const symbolic::Polynomial& dVdx_times_Gi,
+    const symbolic::Polynomial& b_i, MatrixX<symbolic::Variable>* gram,
+    VectorX<symbolic::Monomial>* monomials) {
+  DRAKE_DEMAND(j == 0 || j == 1);
+  const symbolic::Polynomial p =
+      j == 0 ? (l_i[0] + 1) * (dVdx_times_Gi - b_i) - l_i[2] * dVdx_times_Gi -
+                   l_i[4] * (1 - V)
+             : (l_i[1] + 1) * (-dVdx_times_Gi - b_i) + l_i[3] * dVdx_times_Gi -
+                   l_i[5] * (1 - V);
+  std::tie(*gram, *monomials) = prog->AddSosConstraint(p);
+}
+
 // Add the constraint
 // (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
 // (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
+// for all i = 0, ..., nᵤ-1
 void AddControlLyapunovBoxInputBoundConstraints(
     solvers::MathematicalProgram* prog,
     const std::vector<std::array<symbolic::Polynomial, 6>>& l,
@@ -81,15 +102,13 @@ void AddControlLyapunovBoxInputBoundConstraints(
     VdotSosConstraintReturn* vdot_sos_constraint) {
   const int nu = G.cols();
   for (int i = 0; i < nu; ++i) {
-    const symbolic::Polynomial dVdx_times_Gi = (dVdx * G.col(i))(0);
-    const symbolic::Polynomial p1 = (l[i][0] + 1) * (dVdx_times_Gi - b(i)) -
-                                    l[i][2] * dVdx_times_Gi - l[i][4] * (1 - V);
-    const symbolic::Polynomial p2 = (l[i][1] + 1) * (-dVdx_times_Gi - b(i)) +
-                                    l[i][3] * dVdx_times_Gi - l[i][5] * (1 - V);
-    std::tie(vdot_sos_constraint->grams[i][0],
-             vdot_sos_constraint->monomials[i][0]) = prog->AddSosConstraint(p1);
-    std::tie(vdot_sos_constraint->grams[i][1],
-             vdot_sos_constraint->monomials[i][1]) = prog->AddSosConstraint(p2);
+    const symbolic::Polynomial dVdx_times_Gi = dVdx.dot(G.col(i));
+    for (int j = 0; j < 2; ++j) {
+      AddControlLyapunovBoxInputBoundConstraints(
+          prog, j, l[i], V, dVdx_times_Gi, b(i),
+          &(vdot_sos_constraint->grams[i][j]),
+          &(vdot_sos_constraint->monomials[i][j]));
+    }
   }
 }
 
@@ -119,6 +138,11 @@ VdotSosConstraintReturn::ComputeSosConstraint(
     ret[j] = monomials[i][j].dot(gram_sol * monomials[i][j]);
   }
   return ret;
+}
+
+symbolic::Polynomial VdotSosConstraintReturn::ComputeSosConstraint(
+    int i, int j, const solvers::MathematicalProgramResult& result) const {
+  return monomials[i][j].dot(result.GetSolution(grams[i][j]) * monomials[i][j]);
 }
 
 SearchLagrangianAndBGivenVBoxInputBound::
@@ -296,7 +320,7 @@ SearchLagrangianGivenVBoxInputBound::SearchLagrangianGivenVBoxInputBound(
       b_{std::move(b)},
       x_{std::move(x)},
       x_set_{x_},
-      prog_{},
+      progs_{static_cast<size_t>(G_.cols())},
       nu_{static_cast<int>(G_.cols())},
       nx_{static_cast<int>(f.rows())},
       l_{static_cast<size_t>(nu_)},
@@ -307,12 +331,18 @@ SearchLagrangianGivenVBoxInputBound::SearchLagrangianGivenVBoxInputBound(
   DRAKE_DEMAND(b_.rows() == nu_);
   for (int i = 0; i < nu_; ++i) {
     DRAKE_DEMAND(b_(i).indeterminates().IsSubsetOf(x_set_));
+    for (int j = 0; j < 2; ++j) {
+      progs_[i][j] = std::make_unique<solvers::MathematicalProgram>();
+      progs_[i][j]->AddIndeterminates(x_);
+    }
   }
-  prog_.AddIndeterminates(x_);
   for (int i = 0; i < nu_; ++i) {
-    for (int j = 0; j < 6; ++j) {
-      std::tie(l_[i][j], lagrangian_grams_[i][j]) =
-          prog_.NewSosPolynomial(x_set_, lagrangian_degrees_[i][j]);
+    for (int j = 0; j < 2; ++j) {
+      for (int k = 0; k < 3; ++k) {
+        std::tie(l_[i][j + 2 * k], lagrangian_grams_[i][j + 2 * k]) =
+            progs_[i][j]->NewSosPolynomial(x_set_,
+                                           lagrangian_degrees_[i][j + 2 * k]);
+      }
     }
   }
 
@@ -320,8 +350,15 @@ SearchLagrangianGivenVBoxInputBound::SearchLagrangianGivenVBoxInputBound(
   // Now impose the constraint
   // (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
   // (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
-  AddControlLyapunovBoxInputBoundConstraints(&prog_, l_, V_, dVdx, b_, G_,
-                                             &vdot_sos_constraint_);
+  for (int i = 0; i < nu_; ++i) {
+    const symbolic::Polynomial dVdx_times_Gi = dVdx.dot(G_.col(i));
+    for (int j = 0; j < 2; ++j) {
+      AddControlLyapunovBoxInputBoundConstraints(
+          progs_[i][j].get(), j, l_[i], V_, dVdx_times_Gi, b_(i),
+          &(vdot_sos_constraint_.grams[i][j]),
+          &(vdot_sos_constraint_.monomials[i][j]));
+    }
+  }
 }
 
 namespace {
@@ -337,7 +374,7 @@ solvers::MathematicalProgramResult SearchWithBackoff(
   DRAKE_DEMAND(result.is_success());
   DRAKE_DEMAND(backoff_scale >= 0 && backoff_scale <= 1);
   if (backoff_scale > 0) {
-    std::cout << "backoff\n";
+    drake::log()->info("backoff");
     auto cost = prog->linear_costs()[0];
     prog->RemoveCost(cost);
     const double cost_val = result.get_optimal_cost();
@@ -454,18 +491,21 @@ void ControlLyapunovBoxInputBound::SearchLagrangian(
     symbolic::Polynomial* s, double* rho) const {
   SearchLagrangianGivenVBoxInputBound searcher(V, f_, G_, b, x_,
                                                lagrangian_degrees);
-  solvers::MathematicalProgramResult result_searcher;
   auto solver = solvers::MakeSolver(solver_id);
-  solver->Solve(searcher.prog(), std::nullopt, solver_options,
-                &result_searcher);
-  if (!result_searcher.is_success()) {
-    drake::log()->error("Failed to find Lagrangian.");
-  }
   const int nu = G_.cols();
   l->resize(nu);
   for (int i = 0; i < nu; ++i) {
-    for (int j = 0; j < 6; ++j) {
-      (*l)[i][j] = result_searcher.GetSolution(searcher.lagrangians()[i][j]);
+    for (int j = 0; j < 2; ++j) {
+      solvers::MathematicalProgramResult result_searcher;
+      solver->Solve(searcher.prog(i, j), std::nullopt, solver_options,
+                    &result_searcher);
+      if (!result_searcher.is_success()) {
+        drake::log()->error("Failed to find Lagrangian for i={}, j={}", i, j);
+      }
+      for (int k = 0; k < 3; ++k) {
+        (*l)[i][j + 2 * k] =
+            result_searcher.GetSolution(searcher.lagrangians()[i][j + 2 * k]);
+      }
     }
   }
 
@@ -497,17 +537,17 @@ ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(
   bool converged = false;
   while (iter < options.bilinear_iterations && !converged) {
     double rho_new;
-    std::cout << "search Lyapunov\n";
+    drake::log()->info("search Lyapunov");
     SearchLyapunov(ret.l, b_degrees, V_monomial, positivity_eps_, ret.deriv_eps,
                    x_star, S, ret.s, t_given, options.lyap_step_solver,
                    options.lyap_step_solver_options, options.backoff_scale,
                    &(ret.V), &(ret.b), &rho_new);
-    std::cout << "search Lagrangian\n";
+    drake::log()->info("search Lagrangian");
     SearchLagrangian(ret.V, ret.b, lagrangian_degrees, x_star, S, s_degree,
                      t_given, options.lagrangian_step_solver,
                      options.lagrangian_step_solver_options,
                      options.backoff_scale, &(ret.l), &(ret.s), &rho_new);
-    std::cout << "iter: " << iter << ", rho: " << rho_new << "\n";
+    drake::log()->info("iter: {}, rho: {}", iter, rho_new);
     if (rho_new - ret.rho < options.rho_converge_tol) {
       converged = true;
     }

@@ -114,6 +114,18 @@ struct VdotSosConstraintReturn {
   std::array<symbolic::Polynomial, 2> ComputeSosConstraint(
       int i, const solvers::MathematicalProgramResult& result) const;
 
+  /**
+   * If j == 0, compute the SOS constraint (the polynomial on the left handside)
+   * (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
+   * if j == 1, compute the polynomial on the left handside
+   * (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
+   * @param i Compute the i'th pair.
+   * @param j
+   * @param result The result after solving the program.
+   */
+  symbolic::Polynomial ComputeSosConstraint(
+      int i, int j, const solvers::MathematicalProgramResult& result) const;
+
   // monomials[i][0] is the monomial basis for the constraint
   // (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
   // monomials[i][1] is the monomial basis for the constraint
@@ -350,10 +362,14 @@ class SearchLyapunovGivenLagrangianBoxInputBound {
  * Lagrangian multipliers
  * lᵢ₁(x), lᵢ₂(x), lᵢ₃(x), lᵢ₄(x), lᵢ₅(x), lᵢ₆(x) satisfying the constraints
  *
- *     (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >=
- * 0 (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
- *     lᵢ₁(x) >= 0, lᵢ₂(x) >= 0,
- *     lᵢ₃(x) >= 0, lᵢ₄(x) >= 0, lᵢ₅(x) >= 0, lᵢ₆(x) >= 0
+ *     (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) ≥ 0
+ *     (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) ≥ 0
+ *     lᵢ₁(x) >= 0, lᵢ₃(x) >= 0, lᵢ₅(x) >= 0,
+ *     lᵢ₂(x) >= 0, lᵢ₄(x) >= 0, lᵢ₆(x) >= 0
+ *     for i = 0, ..., nᵤ-1
+ *
+ * We will create 2*nᵤ SOS problems for each i = 0, ..., nᵤ - 1. Note that for
+ * each i we can solve two programs separately.
  */
 class SearchLagrangianGivenVBoxInputBound {
  public:
@@ -370,9 +386,27 @@ class SearchLagrangianGivenVBoxInputBound {
       VectorX<symbolic::Variable> x,
       std::vector<std::array<int, 6>> lagrangian_degrees);
 
-  const solvers::MathematicalProgram& prog() const { return prog_; }
+  /**
+   * If j = 0, then this is the program
+   *
+   *     (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) ≥ 0
+   *     lᵢ₁(x) >= 0, lᵢ₃(x) >= 0, lᵢ₅(x) >= 0,
+   *
+   * If j = 1, then this is the program
+   *
+   *     (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1−V) ≥ 0
+   *     lᵢ₂(x) >= 0, lᵢ₄(x) >= 0, lᵢ₆(x) >= 0
+   */
+  const solvers::MathematicalProgram& prog(int i, int j) const {
+    return *(progs_[i][j]);
+  }
 
-  solvers::MathematicalProgram* get_mutable_prog() { return &prog_; }
+  /**
+   * Get the mutable version of prog().
+   */
+  solvers::MathematicalProgram* get_mutable_prog(int i, int j) {
+    return progs_[i][j].get();
+  }
 
   int nu() const { return nu_; }
 
@@ -406,7 +440,8 @@ class SearchLagrangianGivenVBoxInputBound {
   VectorX<symbolic::Polynomial> b_;
   VectorX<symbolic::Variable> x_;
   symbolic::Variables x_set_;
-  solvers::MathematicalProgram prog_;
+  std::vector<std::array<std::unique_ptr<solvers::MathematicalProgram>, 2>>
+      progs_;
   int nu_;
   int nx_;
   std::vector<std::array<symbolic::Polynomial, 6>> l_;

@@ -477,6 +477,8 @@ void ControlLyapunovBoxInputBound::SearchLyapunov(
   b->resize(nu);
   for (int i = 0; i < nu; ++i) {
     (*b)(i) = result.GetSolution(searcher.b()(i));
+    // Need to remove small terms so that the next Lagrangian step can succeed.
+    (*b)(i) = (*b)(i).RemoveTermsWithSmallCoefficients(1E-7);
   }
 }
 

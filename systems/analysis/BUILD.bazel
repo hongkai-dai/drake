@@ -822,8 +822,18 @@ drake_cc_googletest(
     ],
 )
 
+drake_cc_binary(
+    name = "pendulum_clf_demo",
+    srcs = ["test/pendulum_clf_demo.cc"],
+    deps = [
+        ":control_lyapunov",
+        "//systems/controllers:linear_quadratic_regulator",
+    ],
+)
+
 drake_cc_googletest(
     name = "control_lyapunov_test",
+    timeout = "moderate",
     deps = [
         ":control_lyapunov",
         "//common/test_utilities:symbolic_test_util",

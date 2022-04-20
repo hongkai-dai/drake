@@ -175,9 +175,10 @@ void CheckSearchLagrangianResult(const SearchLagrangianGivenVBoxInputBound& dut,
       // Surprisingly Mosek really doesn't like solving Lagrangian problem. I
       // often observe numerical errors.
       solvers::CsdpSolver csdp_solver;
+      solvers::MosekSolver mosek_solver;
       solvers::SolverOptions solver_options;
       const auto result_ij =
-          csdp_solver.Solve(dut.prog(i, j), std::nullopt, solver_options);
+          mosek_solver.Solve(dut.prog(i, j), std::nullopt, solver_options);
       ASSERT_TRUE(result_ij.is_success());
       for (int k = 0; k < 3; ++k) {
         l_sol[j + 2 * k] =
@@ -436,6 +437,7 @@ TEST_F(SimpleLinearSystemTest, SearchLagrangianGivenVBoxInputBound) {
   VectorX<symbolic::Polynomial> b_sol(nu);
   for (int i = 0; i < nu; ++i) {
     b_sol(i) = result.GetSolution(dut.b()(i));
+    b_sol(i) = b_sol(i).RemoveTermsWithSmallCoefficients(1e-7);
   }
   double rho_sol;
   symbolic::Polynomial s_sol;
@@ -446,7 +448,7 @@ TEST_F(SimpleLinearSystemTest, SearchLagrangianGivenVBoxInputBound) {
   // Now fix V and b, search for Lagrangians.
   SearchLagrangianGivenVBoxInputBound dut_search_l(V, f, G, b_sol, x_,
                                                    lagrangian_degrees);
-  CheckSearchLagrangianResult(dut_search_l, 3E-5, 1E-6);
+  CheckSearchLagrangianResult(dut_search_l, 5E-5, 1E-6);
 }
 
 TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound) {
@@ -480,6 +482,8 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound) {
   // Search without backoff.
   search_options.backoff_scale = 0.;
   search_options.bilinear_iterations = 5;
+  search_options.lyap_step_solver_options = solvers::SolverOptions();
+  search_options.lagrangian_step_solver_options = solvers::SolverOptions();
   const auto search_result = dut.Search(
       V, l_given, lagrangian_degrees, b_degrees, x_star, S, s_degree, t_given,
       V_monomial, deriv_eps_lower, deriv_eps_upper, search_options);

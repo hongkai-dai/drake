@@ -269,8 +269,7 @@ class SearchLyapunovGivenLagrangianBoxInputBound {
    * Lyapunov function given Lagrangian multipliers.
    * @param f The dynamics is ẋ = f(x)+G(x)u
    * @param G The dynamics is ẋ = f(x)+G(x)u
-   * @param V_monomial The monomial basis m(x) for Lyapunov function V(x) =
-   * m(x)ᵀQm(x) where Q is a PSD matrix.
+   * @param V_degree The polynomial V(x) has highest degree=V_degree.
    * @param positivity_eps ε₁ in the documentation above. Used to constrain
    * V(x) to be a positive definite function.
    * @param deriv_eps ε₂ in the documentation above. The rate of exponential
@@ -281,8 +280,7 @@ class SearchLyapunovGivenLagrangianBoxInputBound {
    */
   SearchLyapunovGivenLagrangianBoxInputBound(
       VectorX<symbolic::Polynomial> f, MatrixX<symbolic::Polynomial> G,
-      const Eigen::Ref<const VectorX<symbolic::Monomial>>& V_monomial,
-      double positivity_eps, double deriv_eps,
+      int V_degree, double positivity_eps, double deriv_eps,
       std::vector<std::array<symbolic::Polynomial, 6>> l_given,
       const std::vector<int>& b_degrees, VectorX<symbolic::Variable> x);
 
@@ -554,8 +552,6 @@ class ControlLyapunovBoxInputBound {
    * 3. Fix V(x), bᵢ(x), and search for Lagrangian multipliers
    *    lᵢ₁(x),..., lᵢ₆(x), s(x). Go to step 2.
    *
-   * @param V_monomial The monomial basis m(x) of the Lyapunov function V(x) =
-   * m(x)ᵀQm(x).
    */
   SearchReturn Search(
       const symbolic::Polynomial& V_init,
@@ -564,10 +560,8 @@ class ControlLyapunovBoxInputBound {
       const std::vector<int>& b_degrees,
       const Eigen::Ref<const Eigen::VectorXd>& x_star,
       const Eigen::Ref<const Eigen::MatrixXd>& S, int s_degree,
-      const symbolic::Polynomial& t_given,
-      const Eigen::Ref<const VectorX<symbolic::Monomial>>& V_monomial,
-      double deriv_eps_lower, double deriv_eps_upper,
-      const SearchOptions& options) const;
+      const symbolic::Polynomial& t_given, int V_degree, double deriv_eps_lower,
+      double deriv_eps_upper, const SearchOptions& options) const;
 
  private:
   // Step 1 in Search() function.
@@ -588,10 +582,8 @@ class ControlLyapunovBoxInputBound {
   // Step 2 in Search() function.
   void SearchLyapunov(
       const std::vector<std::array<symbolic::Polynomial, 6>>& l,
-      const std::vector<int>& b_degrees,
-      const Eigen::Ref<const VectorX<symbolic::Monomial>>& V_monomial,
-      double positivity_eps, double deriv_eps,
-      const Eigen::Ref<const Eigen::VectorXd>& x_star,
+      const std::vector<int>& b_degrees, int V_degree, double positivity_eps,
+      double deriv_eps, const Eigen::Ref<const Eigen::VectorXd>& x_star,
       const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& s,
       const symbolic::Polynomial& t, const solvers::SolverId& solver_id,
       const std::optional<solvers::SolverOptions>& solver_options,

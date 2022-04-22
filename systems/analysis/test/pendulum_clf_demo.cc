@@ -84,6 +84,20 @@ int DoMain() {
   solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
   const auto result =
       mosek_solver.Solve(dut.prog(), std::nullopt, solver_options);
+
+  const double positivity_eps = 0.;
+  ControlLyapunovBoxInputBound searcher(f, G, x, positivity_eps);
+  const Eigen::Vector2d x_star(0, 0);
+  Eigen::Matrix2d S = Eigen::Matrix2d::Identity();
+  int s_degree = 0;
+  symbolic::Polynomial t_given{0};
+  const int V_degree = 2;
+  const double deriv_eps_lower = 0.01;
+  const double deriv_eps_upper = kInf;
+  ControlLyapunovBoxInputBound::SearchOptions search_options;
+  searcher.Search(V, l_given, lagrangian_degrees, b_degrees, x_star, S,
+                  s_degree, t_given, V_degree, deriv_eps_lower, deriv_eps_upper,
+                  search_options);
   return 0;
 }
 

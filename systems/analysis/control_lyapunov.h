@@ -253,8 +253,8 @@ class SearchLagrangianAndBGivenVBoxInputBound {
  * Given the Lagrangian multiplier, find the Lyapunov function V and slack
  * polynomials b, satisfying the condition
  *
- *     V(x) >= ε₁(x-x_des)ᵀ(x-x_des)
- *     V(x_des) = 0
+ *     V(x) >= ε₁xᵀx
+ *     V(0) = 0
  *     ∂V/∂x*f(x) + ε₂V = ∑ᵢ bᵢ(x)
  *     (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >=
  * 0 (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
@@ -265,6 +265,8 @@ class SearchLyapunovGivenLagrangianBoxInputBound {
   DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(SearchLyapunovGivenLagrangianBoxInputBound)
 
   /**
+   * For a control affine system with 0 being the goal state, we find the
+   * Lyapunov function given Lagrangian multipliers.
    * @param f The dynamics is ẋ = f(x)+G(x)u
    * @param G The dynamics is ẋ = f(x)+G(x)u
    * @param V_monomial The monomial basis m(x) for Lyapunov function V(x) =
@@ -273,7 +275,6 @@ class SearchLyapunovGivenLagrangianBoxInputBound {
    * V(x) to be a positive definite function.
    * @param deriv_eps ε₂ in the documentation above. The rate of exponential
    * convergence.
-   * @param x_des The goal state where all states should converge to.
    * @param l_given l_given[i][j] is lᵢⱼ in the documentation above.
    * @param b_degrees b_degrees[i] is the degree of the polynomial bᵢ(x).
    * @param x The indeterminates for the state.
@@ -282,7 +283,6 @@ class SearchLyapunovGivenLagrangianBoxInputBound {
       VectorX<symbolic::Polynomial> f, MatrixX<symbolic::Polynomial> G,
       const Eigen::Ref<const VectorX<symbolic::Monomial>>& V_monomial,
       double positivity_eps, double deriv_eps,
-      const Eigen::Ref<const Eigen::VectorXd>& x_des,
       std::vector<std::array<symbolic::Polynomial, 6>> l_given,
       const std::vector<int>& b_degrees, VectorX<symbolic::Variable> x);
 
@@ -296,7 +296,7 @@ class SearchLyapunovGivenLagrangianBoxInputBound {
 
   /**
    * The Gram matrix of the positivity constraint
-   * V(x) >= ε₁(x-x_des)ᵀ(x-x_des)
+   * V(x) >= ε₁xᵀx
    */
   const MatrixX<symbolic::Variable>& positivity_constraint_gram() const {
     return positivity_constraint_gram_;
@@ -304,7 +304,7 @@ class SearchLyapunovGivenLagrangianBoxInputBound {
 
   /**
    * The monomial basis m(x) for the positivity constraint
-   * V(x) - ε₁(x-x_des)ᵀ(x-x_des) = m(x)ᵀQm(x)
+   * V(x) - ε₁xᵀx = m(x)ᵀQm(x)
    */
   const VectorX<symbolic::Monomial>& positivity_constraint_monomial() const {
     return positivity_constraint_monomial_;
@@ -453,12 +453,12 @@ class SearchLagrangianGivenVBoxInputBound {
 /**
  * Search a control Lyapunov function (together with its region of attraction)
  * for a control affine system with box-shaped input limits. Namely the system
- * dynamics is ẋ = f(x) + G(x)u where the input bounds are -1 <= u <= 1.
- * If we denote the Lyapunov function as V(x), then the control Lyapunov
- * condition is
+ * dynamics is ẋ = f(x) + G(x)u where the input bounds are -1 <= u <= 1 and the
+ * goal state being x=0. If we denote the Lyapunov function as V(x), then the
+ * control Lyapunov condition is
  *
- *     if x ≠ x_des     V(x) > 0                                (1a)
- *     V(x_des) = 0                                             (1b)
+ *     if x ≠ 0     V(x) > 0                                (1a)
+ *     V(0) = 0                                             (1b)
  *     -ε₂V >= minᵤ V̇(x, u) = minᵤ ∂V/∂x*f(x) + ∂V/∂x * G(x)u    (2)
  *
  * where ε₂ is a small positive constant, that proves the system is
@@ -491,8 +491,8 @@ class SearchLagrangianGivenVBoxInputBound {
  * To summarize, in order to prove the control Lyapunov function with region
  * of attraction V(x) ≤ 1, we impose the following constraint
  *
- *    V(x) ≥ ε₁(x−x_des)ᵀ(x-x_des)
- *    V(x_des) = 0
+ *    V(x) ≥ ε₁xᵀx
+ *    V(0) = 0
  *    ∂V/∂x*f(x) + ε₂V = ∑ᵢ bᵢ(x)
  *    (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) ≥ 0
  *    (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) ≥ 0
@@ -512,16 +512,12 @@ class ControlLyapunovBoxInputBound {
   DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(ControlLyapunovBoxInputBound)
 
   /**
-   * @param x_des The desired state that the system should converge to.
    * @param positivity_eps ε₁ in the documentation above, to enforce the
    * positivity constraint V(x) > 0.
-   * @note It is numerically preferrable to set x_des = 0, you can always modify
-   * the dynamics equation f and G to shift the state.
    */
   ControlLyapunovBoxInputBound(
       const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
       const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
-      const Eigen::Ref<const Eigen::VectorXd>& x_des,
       const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
       double positivity_eps);
 
@@ -615,7 +611,6 @@ class ControlLyapunovBoxInputBound {
 
   VectorX<symbolic::Polynomial> f_;
   MatrixX<symbolic::Polynomial> G_;
-  Eigen::VectorXd x_des_;
   // The indeterminates as the state.
   VectorX<symbolic::Variable> x_;
   double positivity_eps_;
@@ -646,6 +641,13 @@ symbolic::Polynomial EllipsoidPolynomial(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
     const Eigen::Ref<const Eigen::VectorXd>& x_star,
     const Eigen::Ref<const Eigen::MatrixXd>& S, const RhoType& rho);
+
+/**
+ * Compute the monomial basis for a given set of variables up to a certain
+ * degree, but remove the constant term 1 from the basis.
+ */
+VectorX<symbolic::Monomial> ComputeMonomialBasisNoConstant(
+    const symbolic::Variables& vars, int degree);
 }  // namespace internal
 }  // namespace analysis
 }  // namespace systems

@@ -27,6 +27,22 @@ symbolic::Polynomial NewFreePolynomialNoConstant(
   }
   return symbolic::Polynomial(poly_map);
 }
+
+[[maybe_unused]] void PrintPsdConstraintStat(
+    const solvers::MathematicalProgram& prog,
+    const solvers::MathematicalProgramResult& result) {
+  for (const auto& psd_constraint : prog.positive_semidefinite_constraints()) {
+    const Eigen::MatrixXd psd_sol = Eigen::Map<Eigen::MatrixXd>(
+        result.GetSolution(psd_constraint.variables()).data(),
+        psd_constraint.evaluator()->matrix_rows(),
+        psd_constraint.evaluator()->matrix_rows());
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(psd_sol);
+    drake::log()->info(
+        fmt::format("rows: {}, min eigen: {}, cond number: {}\n",
+                    psd_sol.rows(), es.eigenvalues().minCoeff(),
+                    es.eigenvalues().maxCoeff() / es.eigenvalues().minCoeff()));
+  }
+}
 }  // namespace
 
 SearchControlLyapunov::SearchControlLyapunov(
@@ -271,8 +287,7 @@ symbolic::Polynomial ComputePolynomialFromMonomialBasisAndGramMatrix(
 SearchLyapunovGivenLagrangianBoxInputBound::
     SearchLyapunovGivenLagrangianBoxInputBound(
         VectorX<symbolic::Polynomial> f, MatrixX<symbolic::Polynomial> G,
-        const Eigen::Ref<const VectorX<symbolic::Monomial>>& V_monomial,
-        double positivity_eps, double deriv_eps,
+        int V_degree, double positivity_eps, double deriv_eps,
         std::vector<std::array<symbolic::Polynomial, 6>> l_given,
         const std::vector<int>& b_degrees, VectorX<symbolic::Variable> x)
     : prog_{},
@@ -290,6 +305,9 @@ SearchLyapunovGivenLagrangianBoxInputBound::
   CheckDynamicsInput(V_, f_, G_, x_set_);
   DRAKE_DEMAND(static_cast<int>(b_degrees.size()) == nu_);
   DRAKE_DEMAND(positivity_eps >= 0);
+  DRAKE_DEMAND(V_degree >= 0 && V_degree % 2 == 0);
+  const VectorX<symbolic::Monomial> V_monomial =
+      internal::ComputeMonomialBasisNoConstant(x_set_, V_degree / 2);
   // V(x) >= ε₁xᵀx
   if (positivity_eps == 0) {
     std::tie(V_, positivity_constraint_gram_) =
@@ -410,6 +428,7 @@ solvers::MathematicalProgramResult SearchWithBackoff(
   if (!result.is_success()) {
     drake::log()->error("Failed before backoff\n");
   }
+  // PrintPsdConstraintStat(*prog, result);
   DRAKE_DEMAND(backoff_scale >= 0 && backoff_scale <= 1);
   if (backoff_scale > 0) {
     drake::log()->info("backoff");
@@ -425,7 +444,7 @@ solvers::MathematicalProgramResult SearchWithBackoff(
     if (!result.is_success()) {
       drake::log()->error("Backoff failed\n");
     }
-    DRAKE_DEMAND(result.is_success());
+    // PrintPsdConstraintStat(*prog, result);
   }
   return result;
 }
@@ -467,6 +486,10 @@ void ControlLyapunovBoxInputBound::SearchLagrangianAndB(
   solvers::MathematicalProgramResult result_searcher;
   solver->Solve(searcher.prog(), std::nullopt, solver_options,
                 &result_searcher);
+  if (!result_searcher.is_success()) {
+    log()->error("Failed to find Lagrangian and b(x)");
+  }
+  // PrintPsdConstraintStat(searcher.prog(), result_searcher);
   *deriv_eps = result_searcher.GetSolution(searcher.deriv_eps());
   const int nu = G_.cols();
   b->resize(nu);
@@ -488,17 +511,15 @@ void ControlLyapunovBoxInputBound::SearchLagrangianAndB(
 
 void ControlLyapunovBoxInputBound::SearchLyapunov(
     const std::vector<std::array<symbolic::Polynomial, 6>>& l,
-    const std::vector<int>& b_degrees,
-    const Eigen::Ref<const VectorX<symbolic::Monomial>>& V_monomial,
-    double positivity_eps, double deriv_eps,
-    const Eigen::Ref<const Eigen::VectorXd>& x_star,
+    const std::vector<int>& b_degrees, int V_degree, double positivity_eps,
+    double deriv_eps, const Eigen::Ref<const Eigen::VectorXd>& x_star,
     const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& s,
     const symbolic::Polynomial& t, const solvers::SolverId& solver_id,
     const std::optional<solvers::SolverOptions>& solver_options,
     double backoff_scale, symbolic::Polynomial* V,
     VectorX<symbolic::Polynomial>* b, double* rho) const {
   SearchLyapunovGivenLagrangianBoxInputBound searcher(
-      f_, G_, V_monomial, positivity_eps, deriv_eps, l, b_degrees, x_);
+      f_, G_, V_degree, positivity_eps, deriv_eps, l, b_degrees, x_);
   const auto ellipsoid_ret =
       searcher.AddEllipsoidInRoaConstraint(x_star, S, t, s);
   searcher.get_mutable_prog()->AddLinearCost(-ellipsoid_ret.rho);
@@ -535,6 +556,7 @@ void ControlLyapunovBoxInputBound::SearchLagrangian(
       if (!result_searcher.is_success()) {
         drake::log()->error("Failed to find Lagrangian for i={}, j={}", i, j);
       }
+      // PrintPsdConstraintStat(searcher.prog(i, j), result_searcher);
       for (int k = 0; k < 3; ++k) {
         (*l)[i][j + 2 * k] =
             result_searcher.GetSolution(searcher.lagrangians()[i][j + 2 * k]);
@@ -554,10 +576,8 @@ ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(
     const std::vector<int>& b_degrees,
     const Eigen::Ref<const Eigen::VectorXd>& x_star,
     const Eigen::Ref<const Eigen::MatrixXd>& S, int s_degree,
-    const symbolic::Polynomial& t_given,
-    const Eigen::Ref<const VectorX<symbolic::Monomial>>& V_monomial,
-    double deriv_eps_lower, double deriv_eps_upper,
-    const SearchOptions& options) const {
+    const symbolic::Polynomial& t_given, int V_degree, double deriv_eps_lower,
+    double deriv_eps_upper, const SearchOptions& options) const {
   // First search for b and lagrangians.
   SearchReturn ret;
   SearchLagrangianAndB(
@@ -571,7 +591,7 @@ ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(
   while (iter < options.bilinear_iterations && !converged) {
     double rho_new;
     drake::log()->info("search Lyapunov");
-    SearchLyapunov(ret.l, b_degrees, V_monomial, positivity_eps_, ret.deriv_eps,
+    SearchLyapunov(ret.l, b_degrees, V_degree, positivity_eps_, ret.deriv_eps,
                    x_star, S, ret.s, t_given, options.lyap_step_solver,
                    options.lyap_step_solver_options, options.backoff_scale,
                    &(ret.V), &(ret.b), &rho_new);

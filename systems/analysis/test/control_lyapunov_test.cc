@@ -305,11 +305,10 @@ TEST_F(SimpleLinearSystemTest, SearchLagrangianAndBGivenVBoxInputBound) {
     }
   }
   // Given the lagrangians, test search Lyapunov.
-  Vector2<symbolic::Monomial> V_monomial(symbolic::Monomial(x_(0)),
-                                         symbolic::Monomial(x_(1)));
+  const int V_degree = 2;
   const double positivity_eps = 1E-3;
   SearchLyapunovGivenLagrangianBoxInputBound dut_search_V(
-      f, G, V_monomial, positivity_eps, deriv_eps_sol, l_result, b_degrees, x_);
+      f, G, V_degree, positivity_eps, deriv_eps_sol, l_result, b_degrees, x_);
   const auto result_search_V =
       mosek_solver.Solve(dut_search_V.prog(), std::nullopt, solver_options);
   ASSERT_TRUE(result_search_V.is_success());
@@ -388,11 +387,10 @@ TEST_F(SimpleLinearSystemTest, MaximizeEllipsoid) {
                             &rho_sol, &s_sol);
 
   // Now fix the Lagrangian multiplier and search for V
-  Vector2<symbolic::Monomial> V_monomial(symbolic::Monomial(x_(0)),
-                                         symbolic::Monomial(x_(1)));
+  const int V_degree = 2;
   const double positivity_eps{1E-2};
   SearchLyapunovGivenLagrangianBoxInputBound dut_search_V(
-      f, G, V_monomial, positivity_eps, deriv_eps_sol, l_sol, b_degrees, x_);
+      f, G, V_degree, positivity_eps, deriv_eps_sol, l_sol, b_degrees, x_);
   const auto ellipsoid_ret_V =
       dut_search_V.AddEllipsoidInRoaConstraint(x_star, S, t, s_sol);
   dut_search_V.get_mutable_prog()->AddLinearCost(-ellipsoid_ret_V.rho);
@@ -474,8 +472,7 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound) {
   const int s_degree{2};
   const symbolic::Polynomial t_given(x_.cast<symbolic::Expression>().dot(x_),
                                      x_set_);
-  const Vector2<symbolic::Monomial> V_monomial(symbolic::Monomial(x_(0)),
-                                               symbolic::Monomial(x_(1)));
+  const int V_degree = 2;
   const double deriv_eps_lower{0.01};
   const double deriv_eps_upper{kInf};
   // Search without backoff.
@@ -487,10 +484,11 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound) {
       solvers::CommonSolverOption::kPrintToConsole, 0);
   search_options.lagrangian_step_solver = solvers::CsdpSolver::id();
   search_options.lagrangian_step_solver_options = solvers::SolverOptions();
-  search_options.lagrangian_step_solver_options->SetOption(solvers::CommonSolverOption::kPrintToConsole, 0);
+  search_options.lagrangian_step_solver_options->SetOption(
+      solvers::CommonSolverOption::kPrintToConsole, 0);
   const auto search_result = dut.Search(
       V, l_given, lagrangian_degrees, b_degrees, x_star, S, s_degree, t_given,
-      V_monomial, deriv_eps_lower, deriv_eps_upper, search_options);
+      V_degree, deriv_eps_lower, deriv_eps_upper, search_options);
   Eigen::Matrix<double, 2, 4> u_vertices;
   u_vertices << 1, 1, -1, -1, 1, -1, 1, -1;
   EXPECT_GE(search_result.deriv_eps, deriv_eps_lower);
@@ -504,7 +502,7 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound) {
   search_options.bilinear_iterations = 5;
   const auto search_result_backoff = dut.Search(
       V, l_given, lagrangian_degrees, b_degrees, x_star, S, s_degree, t_given,
-      V_monomial, deriv_eps_lower, deriv_eps_upper, search_options);
+      V_degree, deriv_eps_lower, deriv_eps_upper, search_options);
   ValidateRegionOfAttractionBySample(
       f, G, search_result_backoff.V, x_, u_vertices,
       search_result_backoff.deriv_eps, 1000, 1E-5, 1E-3);

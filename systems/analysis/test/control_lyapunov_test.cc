@@ -263,7 +263,7 @@ TEST_F(SimpleLinearSystemTest, SearchLagrangianAndBGivenVBoxInputBound) {
 
   solvers::MosekSolver mosek_solver;
   solvers::SolverOptions solver_options;
-  solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
+  solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 0);
   const auto result =
       mosek_solver.Solve(dut_search_l_b.prog(), std::nullopt, solver_options);
   EXPECT_TRUE(result.is_success());
@@ -290,8 +290,14 @@ TEST_F(SimpleLinearSystemTest, SearchLagrangianAndBGivenVBoxInputBound) {
           result.GetSolution(dut_search_l_b.lagrangian_grams()[i][j]);
       es_solver.compute(lagrangian_gram_sol);
       EXPECT_TRUE((es_solver.eigenvalues().array() >= -psd_tol).all());
-      const VectorX<symbolic::Monomial> lagrangian_monomial_basis =
-          symbolic::MonomialBasis(x_set_, lagrangian_degrees[i][j] / 2);
+      VectorX<symbolic::Monomial> lagrangian_monomial_basis;
+      if (j == 4 || j == 5) {
+        lagrangian_monomial_basis = internal::ComputeMonomialBasisNoConstant(
+            x_set_, lagrangian_degrees[i][j] / 2);
+      } else {
+        lagrangian_monomial_basis =
+            symbolic::MonomialBasis(x_set_, lagrangian_degrees[i][j] / 2);
+      }
       EXPECT_PRED3(symbolic::test::PolynomialEqual, l_result[i][j],
                    lagrangian_monomial_basis.dot(lagrangian_gram_sol *
                                                  lagrangian_monomial_basis),
@@ -301,11 +307,9 @@ TEST_F(SimpleLinearSystemTest, SearchLagrangianAndBGivenVBoxInputBound) {
   // Given the lagrangians, test search Lyapunov.
   Vector2<symbolic::Monomial> V_monomial(symbolic::Monomial(x_(0)),
                                          symbolic::Monomial(x_(1)));
-  const Eigen::Vector2d x_equilibrium(0, 0);
   const double positivity_eps = 1E-3;
   SearchLyapunovGivenLagrangianBoxInputBound dut_search_V(
-      f, G, V_monomial, positivity_eps, deriv_eps_sol, x_equilibrium, l_result,
-      b_degrees, x_);
+      f, G, V_monomial, positivity_eps, deriv_eps_sol, l_result, b_degrees, x_);
   const auto result_search_V =
       mosek_solver.Solve(dut_search_V.prog(), std::nullopt, solver_options);
   ASSERT_TRUE(result_search_V.is_success());
@@ -313,23 +317,22 @@ TEST_F(SimpleLinearSystemTest, SearchLagrangianAndBGivenVBoxInputBound) {
       result_search_V.GetSolution(dut_search_V.V());
   ValidateRegionOfAttractionBySample(f, G, V_sol, x_, u_vertices, deriv_eps_sol,
                                      100, 1E-5, 1E-3);
-  // Check if the V(x_equilibrium) = 0.
+  // Check if the V(0) = 0.
   symbolic::Environment env_x_equilibrium;
-  env_x_equilibrium.insert(x_(0), x_equilibrium(0));
-  env_x_equilibrium.insert(x_(1), x_equilibrium(1));
+  env_x_equilibrium.insert(x_(0), 0);
+  env_x_equilibrium.insert(x_(1), 0);
   EXPECT_NEAR(V_sol.Evaluate(env_x_equilibrium), 0., 1E-5);
-  // Make sure V(x) - ε₁(x-x_des)ᵀ(x-x_des) is SOS.
+  // Make sure V(x) - ε₁xᵀx is SOS.
   const Eigen::MatrixXd positivity_constraint_gram_sol =
       result_search_V.GetSolution(dut_search_V.positivity_constraint_gram());
-  EXPECT_PRED3(
-      symbolic::test::PolynomialEqual,
-      V_sol - positivity_eps *
-                  symbolic::Polynomial(
-                      (x_ - x_equilibrium).dot(x_ - x_equilibrium), x_set_),
-      dut_search_V.positivity_constraint_monomial().dot(
-          positivity_constraint_gram_sol *
-          dut_search_V.positivity_constraint_monomial()),
-      1E-6);
+  EXPECT_PRED3(symbolic::test::PolynomialEqual,
+               V_sol - positivity_eps *
+                           symbolic::Polynomial(
+                               x_.cast<symbolic::Expression>().dot(x_), x_set_),
+               dut_search_V.positivity_constraint_monomial().dot(
+                   positivity_constraint_gram_sol *
+                   dut_search_V.positivity_constraint_monomial()),
+               1E-6);
   es_solver.compute(positivity_constraint_gram_sol);
   EXPECT_TRUE((es_solver.eigenvalues().array() >= -psd_tol).all());
 }
@@ -362,7 +365,7 @@ TEST_F(SimpleLinearSystemTest, MaximizeEllipsoid) {
   dut.get_mutable_prog()->AddBoundingBoxConstraint(0.1, kInf, dut.deriv_eps());
   solvers::MosekSolver mosek_solver;
   solvers::SolverOptions solver_options;
-  solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
+  solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 0);
   const auto result =
       mosek_solver.Solve(dut.prog(), std::nullopt, solver_options);
   EXPECT_TRUE(result.is_success());
@@ -385,13 +388,11 @@ TEST_F(SimpleLinearSystemTest, MaximizeEllipsoid) {
                             &rho_sol, &s_sol);
 
   // Now fix the Lagrangian multiplier and search for V
-  const Eigen::Vector2d x_des(0, 0);
   Vector2<symbolic::Monomial> V_monomial(symbolic::Monomial(x_(0)),
                                          symbolic::Monomial(x_(1)));
   const double positivity_eps{1E-2};
   SearchLyapunovGivenLagrangianBoxInputBound dut_search_V(
-      f, G, V_monomial, positivity_eps, deriv_eps_sol, x_des, l_sol, b_degrees,
-      x_);
+      f, G, V_monomial, positivity_eps, deriv_eps_sol, l_sol, b_degrees, x_);
   const auto ellipsoid_ret_V =
       dut_search_V.AddEllipsoidInRoaConstraint(x_star, S, t, s_sol);
   dut_search_V.get_mutable_prog()->AddLinearCost(-ellipsoid_ret_V.rho);
@@ -430,14 +431,13 @@ TEST_F(SimpleLinearSystemTest, SearchLagrangianGivenVBoxInputBound) {
   dut.get_mutable_prog()->AddBoundingBoxConstraint(0.1, kInf, dut.deriv_eps());
   solvers::MosekSolver mosek_solver;
   solvers::SolverOptions solver_options;
-  solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
+  solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 0);
   const auto result =
       mosek_solver.Solve(dut.prog(), std::nullopt, solver_options);
   ASSERT_TRUE(result.is_success());
   VectorX<symbolic::Polynomial> b_sol(nu);
   for (int i = 0; i < nu; ++i) {
     b_sol(i) = result.GetSolution(dut.b()(i));
-    b_sol(i) = b_sol(i).RemoveTermsWithSmallCoefficients(1e-7);
   }
   double rho_sol;
   symbolic::Polynomial s_sol;
@@ -464,9 +464,8 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound) {
   const int nu{2};
   std::vector<int> b_degrees(nu, 2);
 
-  const Eigen::Vector2d x_des(0., 0.);
   const double positivity_eps{0.};
-  ControlLyapunovBoxInputBound dut(f, G, x_des, x_, positivity_eps);
+  ControlLyapunovBoxInputBound dut(f, G, x_, positivity_eps);
 
   ControlLyapunovBoxInputBound::SearchOptions search_options;
 
@@ -482,8 +481,13 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound) {
   // Search without backoff.
   search_options.backoff_scale = 0.;
   search_options.bilinear_iterations = 5;
+  search_options.lyap_step_solver = solvers::CsdpSolver::id();
   search_options.lyap_step_solver_options = solvers::SolverOptions();
+  search_options.lyap_step_solver_options->SetOption(
+      solvers::CommonSolverOption::kPrintToConsole, 0);
+  search_options.lagrangian_step_solver = solvers::CsdpSolver::id();
   search_options.lagrangian_step_solver_options = solvers::SolverOptions();
+  search_options.lagrangian_step_solver_options->SetOption(solvers::CommonSolverOption::kPrintToConsole, 0);
   const auto search_result = dut.Search(
       V, l_given, lagrangian_degrees, b_degrees, x_star, S, s_degree, t_given,
       V_monomial, deriv_eps_lower, deriv_eps_upper, search_options);
@@ -585,7 +589,7 @@ GTEST_TEST(MaximizeInnerEllipsoidRho, Test2) {
   double rho_sol;
   symbolic::Polynomial s_sol;
   solvers::SolverOptions solver_options;
-  solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
+  solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 0);
   // I am really surprised that this SOS finds a solution with rho > 0. AFAIK,
   // t(x) is constant, hence (1+t(x))((x-x*)ᵀS(x-x*)-ρ) is a degree 2
   // polynomial, while -s(x)*(V(x)-1) has much higher degree (>6) with negative

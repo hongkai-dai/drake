@@ -5,11 +5,29 @@
 #include "drake/common/text_logging.h"
 #include "drake/solvers/choose_best_solver.h"
 #include "drake/solvers/mathematical_program_result.h"
+#include "drake/solvers/sos_basis_generator.h"
 
 namespace drake {
 namespace systems {
 namespace analysis {
 const double kInf = std::numeric_limits<double>::infinity();
+
+namespace {
+symbolic::Polynomial NewFreePolynomialNoConstant(
+    solvers::MathematicalProgram* prog,
+    const symbolic::Variables& indeterminates, int degree,
+    const std::string& coeff_name) {
+  const VectorX<symbolic::Monomial> m =
+      internal::ComputeMonomialBasisNoConstant(indeterminates, degree);
+  const VectorX<symbolic::Variable> coeffs =
+      prog->NewContinuousVariables(m.size(), coeff_name);
+  symbolic::Polynomial::MapType poly_map;
+  for (int i = 0; i < coeffs.rows(); ++i) {
+    poly_map.emplace(m(i), coeffs(i));
+  }
+  return symbolic::Polynomial(poly_map);
+}
+}  // namespace
 
 SearchControlLyapunov::SearchControlLyapunov(
     const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
@@ -86,7 +104,19 @@ void AddControlLyapunovBoxInputBoundConstraints(
                    l_i[4] * (1 - V)
              : (l_i[1] + 1) * (-dVdx_times_Gi - b_i) + l_i[3] * dVdx_times_Gi -
                    l_i[5] * (1 - V);
-  std::tie(*gram, *monomials) = prog->AddSosConstraint(p);
+  const VectorX<symbolic::Monomial> monomial_with_1 =
+      solvers::ConstructMonomialBasis(p);
+  // Remove 1 from monomial_with_1.
+  int monomial_size = 0;
+  monomials->resize(monomial_with_1.rows());
+  for (int i = 0; i < monomial_with_1.rows(); ++i) {
+    if (monomial_with_1(i).total_degree() > 0) {
+      (*monomials)(monomial_size) = monomial_with_1(i);
+      monomial_size++;
+    }
+  }
+  monomials->conservativeResize(monomial_size);
+  *gram = prog->AddSosConstraint(p, *monomials);
 }
 
 // Add the constraint
@@ -177,8 +207,17 @@ SearchLagrangianAndBGivenVBoxInputBound::
     l_[i][0] = l_given[i][0];
     l_[i][1] = l_given[i][1];
     for (int j = 2; j < 6; ++j) {
-      std::tie(l_[i][j], lagrangian_grams_[i][j]) =
-          prog_.NewSosPolynomial(x_set_, lagrangian_degrees_[i][j]);
+      if (j == 4 || j == 5) {
+        DRAKE_DEMAND(lagrangian_degrees_[i][j] % 2 == 0);
+        const VectorX<symbolic::Monomial> lagrangian_monomial_basis =
+            internal::ComputeMonomialBasisNoConstant(
+                x_set_, lagrangian_degrees_[i][j] / 2);
+        std::tie(l_[i][j], lagrangian_grams_[i][j]) =
+            prog_.NewSosPolynomial(lagrangian_monomial_basis);
+      } else {
+        std::tie(l_[i][j], lagrangian_grams_[i][j]) =
+            prog_.NewSosPolynomial(x_set_, lagrangian_degrees_[i][j]);
+      }
     }
   }
 
@@ -195,8 +234,8 @@ SearchLagrangianAndBGivenVBoxInputBound::
 
   // Add free polynomial b
   for (int i = 0; i < nu_; ++i) {
-    b_(i) =
-        prog_.NewFreePolynomial(x_set_, b_degrees_[i], "b" + std::to_string(i));
+    b_(i) = NewFreePolynomialNoConstant(&prog_, x_set_, b_degrees_[i],
+                                        "b" + std::to_string(i));
   }
 
   // Add the constraint ∂V/∂x*f(x) + εV = ∑ᵢ bᵢ(x)
@@ -234,7 +273,6 @@ SearchLyapunovGivenLagrangianBoxInputBound::
         VectorX<symbolic::Polynomial> f, MatrixX<symbolic::Polynomial> G,
         const Eigen::Ref<const VectorX<symbolic::Monomial>>& V_monomial,
         double positivity_eps, double deriv_eps,
-        const Eigen::Ref<const Eigen::VectorXd>& x_des,
         std::vector<std::array<symbolic::Polynomial, 6>> l_given,
         const std::vector<int>& b_degrees, VectorX<symbolic::Variable> x)
     : prog_{},
@@ -252,7 +290,7 @@ SearchLyapunovGivenLagrangianBoxInputBound::
   CheckDynamicsInput(V_, f_, G_, x_set_);
   DRAKE_DEMAND(static_cast<int>(b_degrees.size()) == nu_);
   DRAKE_DEMAND(positivity_eps >= 0);
-  // V(x) >= ε₁(x-x_des)ᵀ(x-x_des)
+  // V(x) >= ε₁xᵀx
   if (positivity_eps == 0) {
     std::tie(V_, positivity_constraint_gram_) =
         prog_.NewSosPolynomial(V_monomial);
@@ -262,29 +300,19 @@ SearchLyapunovGivenLagrangianBoxInputBound::
         prog_.NewSymmetricContinuousVariables(V_monomial.rows(), "V_gram");
     V_ = ComputePolynomialFromMonomialBasisAndGramMatrix(V_monomial, V_gram);
     // quadratic_poly_map stores the mapping for the polynomial
-    // ε₁(x-x_des)ᵀ(x-x_des)
+    // ε₁xᵀx
     symbolic::Polynomial::MapType quadratic_poly_map;
-    quadratic_poly_map.emplace(symbolic::Monomial(),
-                               positivity_eps * x_des.dot(x_des));
     for (int i = 0; i < nx_; ++i) {
       quadratic_poly_map.emplace(symbolic::Monomial(x_(i), 2), positivity_eps);
-      quadratic_poly_map.emplace(symbolic::Monomial(x_(i)),
-                                 -2 * x_des(i) * positivity_eps);
     }
     std::tie(positivity_constraint_gram_, positivity_constraint_monomial_) =
         prog_.AddSosConstraint(V_ - symbolic::Polynomial(quadratic_poly_map));
   }
-  // Add the constraint V(x_des) = 0
-  symbolic::Environment env_x_des;
-  for (int i = 0; i < nx_; ++i) {
-    env_x_des.insert(x_(i), x_des(i));
-  }
-  prog_.AddLinearEqualityConstraint(
-      V_.ToExpression().EvaluatePartial(env_x_des), 0.);
 
   // ∂V/∂x*f(x) + εV = ∑ᵢ bᵢ(x)
   for (int i = 0; i < nu_; ++i) {
-    b_(i) = prog_.NewFreePolynomial(x_set_, b_degrees[i]);
+    b_(i) =
+        NewFreePolynomialNoConstant(&prog_, x_set_, b_degrees[i], "b_coeff");
   }
   const RowVectorX<symbolic::Polynomial> dVdx = V_.Jacobian(x_);
   prog_.AddEqualityConstraintBetweenPolynomials(
@@ -339,9 +367,17 @@ SearchLagrangianGivenVBoxInputBound::SearchLagrangianGivenVBoxInputBound(
   for (int i = 0; i < nu_; ++i) {
     for (int j = 0; j < 2; ++j) {
       for (int k = 0; k < 3; ++k) {
-        std::tie(l_[i][j + 2 * k], lagrangian_grams_[i][j + 2 * k]) =
-            progs_[i][j]->NewSosPolynomial(x_set_,
-                                           lagrangian_degrees_[i][j + 2 * k]);
+        if (k == 2) {
+          const VectorX<symbolic::Monomial> lagrangian_monomial_basis =
+              internal::ComputeMonomialBasisNoConstant(
+                  x_set_, lagrangian_degrees_[i][j + 2 * k] / 2);
+          std::tie(l_[i][j + 2 * k], lagrangian_grams_[i][j + 2 * k]) =
+              progs_[i][j]->NewSosPolynomial(lagrangian_monomial_basis);
+        } else {
+          std::tie(l_[i][j + 2 * k], lagrangian_grams_[i][j + 2 * k]) =
+              progs_[i][j]->NewSosPolynomial(x_set_,
+                                             lagrangian_degrees_[i][j + 2 * k]);
+        }
       }
     }
   }
@@ -371,7 +407,9 @@ solvers::MathematicalProgramResult SearchWithBackoff(
   auto solver = solvers::MakeSolver(solver_id);
   solvers::MathematicalProgramResult result;
   solver->Solve(*prog, std::nullopt, solver_options, &result);
-  DRAKE_DEMAND(result.is_success());
+  if (!result.is_success()) {
+    drake::log()->error("Failed before backoff\n");
+  }
   DRAKE_DEMAND(backoff_scale >= 0 && backoff_scale <= 1);
   if (backoff_scale > 0) {
     drake::log()->info("backoff");
@@ -397,15 +435,9 @@ solvers::MathematicalProgramResult SearchWithBackoff(
 ControlLyapunovBoxInputBound::ControlLyapunovBoxInputBound(
     const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
     const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
-    const Eigen::Ref<const Eigen::VectorXd>& x_des,
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
     double positivity_eps)
-    : f_{f}, G_{G}, x_des_{x_des}, x_{x}, positivity_eps_{positivity_eps} {
-  if ((x_des.array() != 0).any()) {
-    drake::log()->warn(
-        "ControlLyapunovBoxInputBound: it is preferrable to set x_des = 0");
-  }
-}
+    : f_{f}, G_{G}, x_{x}, positivity_eps_{positivity_eps} {}
 
 void ControlLyapunovBoxInputBound::SearchLagrangianAndB(
     const symbolic::Polynomial& V,
@@ -420,12 +452,13 @@ void ControlLyapunovBoxInputBound::SearchLagrangianAndB(
     double backoff_scale, double* deriv_eps, VectorX<symbolic::Polynomial>* b,
     std::vector<std::array<symbolic::Polynomial, 6>>* l, double* rho,
     symbolic::Polynomial* s) const {
-  // Check if V(x_des) = 0
-  symbolic::Environment env_x_des;
-  for (int i = 0; i < G_.rows(); ++i) {
-    env_x_des.insert(x_(i), x_des_(i));
+  // Check if V(0) = 0
+  const auto it_V_constant =
+      V.monomial_to_coefficient_map().find(symbolic::Monomial());
+  if (it_V_constant != V.monomial_to_coefficient_map().end()) {
+    DRAKE_DEMAND(symbolic::is_constant(it_V_constant->second) &&
+                 symbolic::get_constant_value(it_V_constant->second) == 0.);
   }
-  DRAKE_DEMAND(std::abs(V.Evaluate(env_x_des)) < 1E-5);
   SearchLagrangianAndBGivenVBoxInputBound searcher(
       V, f_, G_, l_given, lagrangian_degrees, b_degrees, x_);
   searcher.get_mutable_prog()->AddBoundingBoxConstraint(
@@ -465,7 +498,7 @@ void ControlLyapunovBoxInputBound::SearchLyapunov(
     double backoff_scale, symbolic::Polynomial* V,
     VectorX<symbolic::Polynomial>* b, double* rho) const {
   SearchLyapunovGivenLagrangianBoxInputBound searcher(
-      f_, G_, V_monomial, positivity_eps, deriv_eps, x_des_, l, b_degrees, x_);
+      f_, G_, V_monomial, positivity_eps, deriv_eps, l, b_degrees, x_);
   const auto ellipsoid_ret =
       searcher.AddEllipsoidInRoaConstraint(x_star, S, t, s);
   searcher.get_mutable_prog()->AddLinearCost(-ellipsoid_ret.rho);
@@ -477,8 +510,6 @@ void ControlLyapunovBoxInputBound::SearchLyapunov(
   b->resize(nu);
   for (int i = 0; i < nu; ++i) {
     (*b)(i) = result.GetSolution(searcher.b()(i));
-    // Need to remove small terms so that the next Lagrangian step can succeed.
-    (*b)(i) = (*b)(i).RemoveTermsWithSmallCoefficients(1E-7);
   }
 }
 
@@ -614,6 +645,21 @@ symbolic::Polynomial EllipsoidPolynomial(
     }
   }
   return symbolic::Polynomial{ellipsoid_poly_map};
+}
+
+VectorX<symbolic::Monomial> ComputeMonomialBasisNoConstant(
+    const symbolic::Variables& vars, int degree) {
+  const auto m =
+      symbolic::internal::ComputeMonomialBasis<Eigen::Dynamic>(vars, degree);
+  VectorX<symbolic::Monomial> ret(m.rows() - 1);
+  int index = 0;
+  for (int i = 0; i < m.rows(); ++i) {
+    if (m(i).total_degree() > 0) {
+      ret(index) = m(i);
+      index++;
+    }
+  }
+  return ret;
 }
 
 // Explicit instantiation

@@ -63,10 +63,10 @@ class SimpleLinearSystemTest : public ::testing::Test {
   }
 
   void InitializeWithLQR(
-      symbolic::Polynomial* V, Vector2<symbolic::Polynomial>* f,
-      Matrix2<symbolic::Polynomial>* G,
-      std::vector<std::array<symbolic::Polynomial, 2>>* l_given,
-      std::vector<std::array<int, 6>>* lagrangian_degrees) {
+      bool symmetric_dynamics, symbolic::Polynomial* V,
+      Vector2<symbolic::Polynomial>* f, Matrix2<symbolic::Polynomial>* G,
+      std::vector<std::vector<symbolic::Polynomial>>* l_given,
+      std::vector<std::vector<std::array<int, 3>>>* lagrangian_degrees) {
     // We first compute LQR cost-to-go as the candidate Lyapunov function.
     const controllers::LinearQuadraticRegulatorResult lqr_result =
         controllers::LinearQuadraticRegulator(
@@ -88,18 +88,19 @@ class SimpleLinearSystemTest : public ::testing::Test {
     // Set l_[i][0] and l_[i][1] to 1 + x.dot(x)
     const int nu = 2;
     l_given->resize(nu);
+    const int num_vdot_sos = symmetric_dynamics ? 1 : 2;
     for (int i = 0; i < nu; ++i) {
-      (*l_given)[i][0] =
-          symbolic::Polynomial(1 + x_.cast<symbolic::Expression>().dot(x_));
-      (*l_given)[i][1] =
-          symbolic::Polynomial(1 + x_.cast<symbolic::Expression>().dot(x_));
+      (*l_given)[i].resize(num_vdot_sos);
+      for (int j = 0; j < num_vdot_sos; ++j) {
+        (*l_given)[i][j] =
+            symbolic::Polynomial(1 + x_.cast<symbolic::Expression>().dot(x_));
+      }
     }
     lagrangian_degrees->resize(nu);
     for (int i = 0; i < nu; ++i) {
-      (*lagrangian_degrees)[i][0] = 2;
-      (*lagrangian_degrees)[i][1] = 2;
-      for (int j = 2; j < 6; ++j) {
-        (*lagrangian_degrees)[i][j] = 2;
+      (*lagrangian_degrees)[i].resize(num_vdot_sos);
+      for (int j = 0; j < num_vdot_sos; ++j) {
+        (*lagrangian_degrees)[i][j] = {2, 2, 2};
       }
     }
   }
@@ -128,69 +129,74 @@ void CheckSearchLagrangianAndBResult(
 
   EXPECT_TRUE(symbolic::test::PolynomialEqual((dVdx * f)(0) + deriv_eps_val * V,
                                               b_result.sum(), tol));
-  std::vector<std::array<symbolic::Polynomial, 6>> lagrangians_result(nu);
+  std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>
+      lagrangians_result(nu);
+  const int num_vdot_sos = dut.vdot_sos_constraint().symmetric_dynamics ? 1 : 2;
   for (int i = 0; i < nu; ++i) {
-    for (int j = 0; j < 6; ++j) {
-      lagrangians_result[i][j] = result.GetSolution(dut.lagrangians()[i][j]);
+    lagrangians_result[i].resize(num_vdot_sos);
+    for (int j = 0; j < num_vdot_sos; ++j) {
+      for (int k = 0; k < 3; ++k) {
+        lagrangians_result[i][j][k] =
+            result.GetSolution(dut.lagrangians()[i][j][k]);
+      }
     }
     const symbolic::Polynomial dVdx_times_Gi = (dVdx * G.col(i))(0);
     const symbolic::Polynomial p1 =
-        (lagrangians_result[i][0] + 1) * (dVdx_times_Gi - b_result(i)) -
-        lagrangians_result[i][2] * dVdx_times_Gi -
-        lagrangians_result[i][4] * (1 - V);
-    const std::array<symbolic::Polynomial, 2> p_expected =
+        (lagrangians_result[i][0][0] + 1) * (dVdx_times_Gi - b_result(i)) -
+        lagrangians_result[i][0][1] * dVdx_times_Gi -
+        lagrangians_result[i][0][2] * (1 - V);
+    const std::vector<symbolic::Polynomial> p_expected =
         dut.vdot_sos_constraint().ComputeSosConstraint(i, result);
     EXPECT_TRUE(symbolic::test::PolynomialEqual(p1, p_expected[0], tol));
-    const symbolic::Polynomial p2 =
-        (lagrangians_result[i][1] + 1) * (-dVdx_times_Gi - b_result(i)) +
-        lagrangians_result[i][3] * dVdx_times_Gi -
-        lagrangians_result[i][5] * (1 - V);
-    EXPECT_TRUE(symbolic::test::PolynomialEqual(p2, p_expected[1], tol));
+    if (num_vdot_sos == 2) {
+      const symbolic::Polynomial p2 =
+          (lagrangians_result[i][1][0] + 1) * (-dVdx_times_Gi - b_result(i)) +
+          lagrangians_result[i][1][1] * dVdx_times_Gi -
+          lagrangians_result[i][1][2] * (1 - V);
+      EXPECT_TRUE(symbolic::test::PolynomialEqual(p2, p_expected[1], tol));
+    }
 
     // Now check if the gram matrices are psd.
-    const Eigen::MatrixXd grams1 =
-        result.GetSolution(dut.vdot_sos_constraint().grams[i][0]);
-    const Eigen::MatrixXd grams2 =
-        result.GetSolution(dut.vdot_sos_constraint().grams[i][1]);
-    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es;
-    es.compute(grams1);
-    EXPECT_TRUE((es.eigenvalues().array() >= -tol).all());
-    es.compute(grams2);
-    EXPECT_TRUE((es.eigenvalues().array() >= -tol).all());
+    for (int j = 0; j < num_vdot_sos; ++j) {
+      const Eigen::MatrixXd gram =
+          result.GetSolution(dut.vdot_sos_constraint().grams[i][j]);
+      Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es;
+      es.compute(gram);
+      EXPECT_TRUE((es.eigenvalues().array() >= -tol).all());
+    }
   }
 }
 
 void CheckSearchLagrangianResult(const SearchLagrangianGivenVBoxInputBound& dut,
                                  double tol, double psd_tol) {
   // Check if the constraint
-  // (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
-  // (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
+  // (lᵢ₀₀(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₀₁(x)*∂V/∂x*Gᵢ(x) - lᵢ₀₂(x)*(1 − V) >=0
+  // (lᵢ₁₀(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₁₁(x)*∂V/∂x*Gᵢ(x) - lᵢ₁₂(x)*(1 − V)>= 0
   // are satisfied.
   const RowVectorX<symbolic::Polynomial> dVdx = dut.V().Jacobian(dut.x());
   Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_solver;
   for (int i = 0; i < dut.nu(); ++i) {
-    std::array<symbolic::Polynomial, 6> l_sol;
+    const int num_vdot_sos =
+        dut.vdot_sos_constraint().symmetric_dynamics ? 1 : 2;
+    std::vector<std::array<symbolic::Polynomial, 3>> l_sol(num_vdot_sos);
     const symbolic::Polynomial dVdx_times_Gi = dVdx.dot(dut.G().col(i));
-    for (int j = 0; j < 2; ++j) {
-      // Surprisingly Mosek really doesn't like solving Lagrangian problem. I
-      // often observe numerical errors.
-      solvers::CsdpSolver csdp_solver;
+    for (int j = 0; j < num_vdot_sos; ++j) {
       solvers::MosekSolver mosek_solver;
       solvers::SolverOptions solver_options;
       const auto result_ij =
           mosek_solver.Solve(dut.prog(i, j), std::nullopt, solver_options);
       ASSERT_TRUE(result_ij.is_success());
-      for (int k = 0; k < 3; ++k) {
-        l_sol[j + 2 * k] =
-            result_ij.GetSolution(dut.lagrangians()[i][j + 2 * k]);
-      }
-      const symbolic::Polynomial p =
-          j == 0 ? (l_sol[0] + 1) * (dVdx_times_Gi - dut.b()(i)) -
-                       l_sol[2] * dVdx_times_Gi - l_sol[4] * (1 - dut.V())
-                 : (l_sol[1] + 1) * (-dVdx_times_Gi - dut.b()(i)) +
-                       l_sol[3] * dVdx_times_Gi - l_sol[5] * (1 - dut.V());
       const symbolic::Polynomial p_expected =
           dut.vdot_sos_constraint().ComputeSosConstraint(i, j, result_ij);
+      for (int k = 0; k < 3; ++k) {
+        l_sol[j][k] = result_ij.GetSolution(dut.lagrangians()[i][j][k]);
+      }
+      const symbolic::Polynomial p =
+          j == 0
+              ? (l_sol[0][0] + 1) * (dVdx_times_Gi - dut.b()(i)) -
+                    l_sol[0][1] * dVdx_times_Gi - l_sol[0][2] * (1 - dut.V())
+              : (l_sol[1][0] + 1) * (-dVdx_times_Gi - dut.b()(i)) +
+                    l_sol[1][1] * dVdx_times_Gi - l_sol[1][2] * (1 - dut.V());
       EXPECT_PRED3(symbolic::test::PolynomialEqual, p, p_expected, tol);
       // Check if the Gram matrices are PSD.
       const Eigen::MatrixXd gram_sol =
@@ -243,210 +249,257 @@ void ValidateRegionOfAttractionBySample(const VectorX<symbolic::Polynomial>& f,
 }
 
 TEST_F(SimpleLinearSystemTest, SearchLagrangianAndBGivenVBoxInputBound) {
-  // We first compute LQR cost-to-go as the candidate Lyapunov function, and
-  // show that we can search the Lagrangians. Then we fix the Lagrangian, and
-  // show that we can search the Lyapunov. We compute the LQR cost-to-go as the
-  // candidate Lyapunov function.
-  symbolic::Polynomial V;
-  Vector2<symbolic::Polynomial> f;
-  Matrix2<symbolic::Polynomial> G;
-  std::vector<std::array<symbolic::Polynomial, 2>> l_given;
-  std::vector<std::array<int, 6>> lagrangian_degrees;
-  InitializeWithLQR(&V, &f, &G, &l_given, &lagrangian_degrees);
-  const int nu{2};
-  std::vector<int> b_degrees(nu, 2);
+  for (bool symmetric_dynamics : {false, true}) {
+    // We first compute LQR cost-to-go as the candidate Lyapunov function, and
+    // show that we can search the Lagrangians. Then we fix the Lagrangian, and
+    // show that we can search the Lyapunov. We compute the LQR cost-to-go as
+    // the candidate Lyapunov function.
+    symbolic::Polynomial V;
+    Vector2<symbolic::Polynomial> f;
+    Matrix2<symbolic::Polynomial> G;
+    std::vector<std::vector<symbolic::Polynomial>> l_given;
+    std::vector<std::vector<std::array<int, 3>>> lagrangian_degrees;
+    InitializeWithLQR(symmetric_dynamics, &V, &f, &G, &l_given,
+                      &lagrangian_degrees);
+    const int nu{2};
+    std::vector<int> b_degrees(nu, 2);
 
-  SearchLagrangianAndBGivenVBoxInputBound dut_search_l_b(
-      V, f, G, l_given, lagrangian_degrees, b_degrees, x_);
-  dut_search_l_b.get_mutable_prog()->AddBoundingBoxConstraint(
-      3, kInf, dut_search_l_b.deriv_eps());
+    SearchLagrangianAndBGivenVBoxInputBound dut_search_l_b(
+        V, f, G, symmetric_dynamics, l_given, lagrangian_degrees, b_degrees,
+        x_);
+    dut_search_l_b.get_mutable_prog()->AddBoundingBoxConstraint(
+        3, kInf, dut_search_l_b.deriv_eps());
 
-  solvers::MosekSolver mosek_solver;
-  solvers::SolverOptions solver_options;
-  solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 0);
-  const auto result =
-      mosek_solver.Solve(dut_search_l_b.prog(), std::nullopt, solver_options);
-  EXPECT_TRUE(result.is_success());
-  CheckSearchLagrangianAndBResult(dut_search_l_b, result, V, f, G, x_, 5.3E-5);
+    solvers::MosekSolver mosek_solver;
+    solvers::SolverOptions solver_options;
+    solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 0);
+    const auto result =
+        mosek_solver.Solve(dut_search_l_b.prog(), std::nullopt, solver_options);
+    EXPECT_TRUE(result.is_success());
+    CheckSearchLagrangianAndBResult(dut_search_l_b, result, V, f, G, x_,
+                                    5.3E-5);
 
-  const double deriv_eps_sol = result.GetSolution(dut_search_l_b.deriv_eps());
-  Eigen::Matrix<double, 2, 4> u_vertices;
-  u_vertices << 1, 1, -1, -1, 1, -1, 1, -1;
-  ValidateRegionOfAttractionBySample(f, G, V, x_, u_vertices, deriv_eps_sol,
-                                     100, 1E-5, 1E-3);
+    const double deriv_eps_sol = result.GetSolution(dut_search_l_b.deriv_eps());
+    Eigen::Matrix<double, 2, 4> u_vertices;
+    u_vertices << 1, 1, -1, -1, 1, -1, 1, -1;
+    ValidateRegionOfAttractionBySample(f, G, V, x_, u_vertices, deriv_eps_sol,
+                                       100, 1E-5, 1E-3);
 
-  std::vector<std::array<symbolic::Polynomial, 6>> l_result(nu);
-  for (int i = 0; i < nu; ++i) {
-    for (int j = 0; j < 6; ++j) {
-      l_result[i][j] = result.GetSolution(dut_search_l_b.lagrangians()[i][j]);
-    }
-  }
-  // Now check if the Lagrangians are all sos.
-  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_solver;
-  const double psd_tol = 1E-6;
-  for (int i = 0; i < nu; ++i) {
-    for (int j = 2; j < 6; ++j) {
-      const auto lagrangian_gram_sol =
-          result.GetSolution(dut_search_l_b.lagrangian_grams()[i][j]);
-      es_solver.compute(lagrangian_gram_sol);
-      EXPECT_TRUE((es_solver.eigenvalues().array() >= -psd_tol).all());
-      VectorX<symbolic::Monomial> lagrangian_monomial_basis;
-      if (j == 4 || j == 5) {
-        lagrangian_monomial_basis = internal::ComputeMonomialBasisNoConstant(
-            x_set_, lagrangian_degrees[i][j] / 2);
-      } else {
-        lagrangian_monomial_basis =
-            symbolic::MonomialBasis(x_set_, lagrangian_degrees[i][j] / 2);
+    std::vector<std::vector<std::array<symbolic::Polynomial, 3>>> l_result(nu);
+    const int num_vdot_sos = symmetric_dynamics ? 1 : 2;
+    for (int i = 0; i < nu; ++i) {
+      l_result[i].resize(num_vdot_sos);
+      for (int j = 0; j < num_vdot_sos; ++j) {
+        for (int k = 0; k < 3; ++k) {
+          l_result[i][j][k] =
+              result.GetSolution(dut_search_l_b.lagrangians()[i][j][k]);
+        }
       }
-      EXPECT_PRED3(symbolic::test::PolynomialEqual, l_result[i][j],
-                   lagrangian_monomial_basis.dot(lagrangian_gram_sol *
-                                                 lagrangian_monomial_basis),
-                   1e-5);
     }
+    // Now check if the Lagrangians are all sos.
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_solver;
+    const double psd_tol = 1E-6;
+    for (int i = 0; i < nu; ++i) {
+      for (int j = 0; j < num_vdot_sos; ++j) {
+        for (int k = 1; k < 3; ++k) {
+          const auto lagrangian_gram_sol =
+              result.GetSolution(dut_search_l_b.lagrangian_grams()[i][j][k]);
+          es_solver.compute(lagrangian_gram_sol);
+          EXPECT_TRUE((es_solver.eigenvalues().array() >= -psd_tol).all());
+          VectorX<symbolic::Monomial> lagrangian_monomial_basis;
+          if (k == 2) {
+            lagrangian_monomial_basis =
+                internal::ComputeMonomialBasisNoConstant(
+                    x_set_, lagrangian_degrees[i][j][k] / 2,
+                    symbolic::internal::DegreeType::kAny);
+          } else {
+            lagrangian_monomial_basis = symbolic::MonomialBasis(
+                x_set_, lagrangian_degrees[i][j][k] / 2);
+          }
+          EXPECT_PRED3(symbolic::test::PolynomialEqual, l_result[i][j][k],
+                       lagrangian_monomial_basis.dot(lagrangian_gram_sol *
+                                                     lagrangian_monomial_basis),
+                       1e-5);
+        }
+      }
+    }
+    // Given the lagrangians, test search Lyapunov.
+    const int V_degree = 2;
+    const double positivity_eps = 1E-3;
+    SearchLyapunovGivenLagrangianBoxInputBound dut_search_V(
+        f, G, symmetric_dynamics, V_degree, positivity_eps, deriv_eps_sol,
+        l_result, b_degrees, x_);
+    const auto result_search_V =
+        mosek_solver.Solve(dut_search_V.prog(), std::nullopt, solver_options);
+    ASSERT_TRUE(result_search_V.is_success());
+    const symbolic::Polynomial V_sol =
+        result_search_V.GetSolution(dut_search_V.V());
+    ValidateRegionOfAttractionBySample(f, G, V_sol, x_, u_vertices,
+                                       deriv_eps_sol, 100, 1E-5, 1E-3);
+    // Check if the V(0) = 0 and V(x) doesn't have a constant term.
+    for (const auto& [V_sol_monomial, V_sol_coeff] :
+         V_sol.monomial_to_coefficient_map()) {
+      EXPECT_GT(V_sol_monomial.total_degree(), 1);
+    }
+    // Make sure V(x) - ε₁xᵀx is SOS.
+    Eigen::MatrixXd positivity_constraint_gram_sol(
+        dut_search_V.positivity_constraint_gram().rows(),
+        dut_search_V.positivity_constraint_gram().cols());
+    for (int i = 0; i < positivity_constraint_gram_sol.rows(); ++i) {
+      for (int j = 0; j < positivity_constraint_gram_sol.cols(); ++j) {
+        positivity_constraint_gram_sol(i, j) =
+            symbolic::get_constant_value(result_search_V.GetSolution(
+                dut_search_V.positivity_constraint_gram()(i, j)));
+      }
+    }
+    EXPECT_PRED3(
+        symbolic::test::PolynomialEqual,
+        V_sol - positivity_eps *
+                    symbolic::Polynomial(
+                        x_.cast<symbolic::Expression>().dot(x_), x_set_),
+        dut_search_V.positivity_constraint_monomial().dot(
+            positivity_constraint_gram_sol *
+            dut_search_V.positivity_constraint_monomial()),
+        1E-6);
+    es_solver.compute(positivity_constraint_gram_sol);
+    EXPECT_TRUE((es_solver.eigenvalues().array() >= -psd_tol).all());
   }
-  // Given the lagrangians, test search Lyapunov.
-  const int V_degree = 2;
-  const double positivity_eps = 1E-3;
-  SearchLyapunovGivenLagrangianBoxInputBound dut_search_V(
-      f, G, V_degree, positivity_eps, deriv_eps_sol, l_result, b_degrees, x_);
-  const auto result_search_V =
-      mosek_solver.Solve(dut_search_V.prog(), std::nullopt, solver_options);
-  ASSERT_TRUE(result_search_V.is_success());
-  const symbolic::Polynomial V_sol =
-      result_search_V.GetSolution(dut_search_V.V());
-  ValidateRegionOfAttractionBySample(f, G, V_sol, x_, u_vertices, deriv_eps_sol,
-                                     100, 1E-5, 1E-3);
-  // Check if the V(0) = 0.
-  symbolic::Environment env_x_equilibrium;
-  env_x_equilibrium.insert(x_(0), 0);
-  env_x_equilibrium.insert(x_(1), 0);
-  EXPECT_NEAR(V_sol.Evaluate(env_x_equilibrium), 0., 1E-5);
-  // Make sure V(x) - ε₁xᵀx is SOS.
-  const Eigen::MatrixXd positivity_constraint_gram_sol =
-      result_search_V.GetSolution(dut_search_V.positivity_constraint_gram());
-  EXPECT_PRED3(symbolic::test::PolynomialEqual,
-               V_sol - positivity_eps *
-                           symbolic::Polynomial(
-                               x_.cast<symbolic::Expression>().dot(x_), x_set_),
-               dut_search_V.positivity_constraint_monomial().dot(
-                   positivity_constraint_gram_sol *
-                   dut_search_V.positivity_constraint_monomial()),
-               1E-6);
-  es_solver.compute(positivity_constraint_gram_sol);
-  EXPECT_TRUE((es_solver.eigenvalues().array() >= -psd_tol).all());
 }
 
 TEST_F(SimpleLinearSystemTest, MaximizeEllipsoid) {
-  // We first compute LQR cost-to-go as the candidate Lyapunov function, and
-  // show that we can search the Lagrangians and maximize the ellipsoid
-  // contained in the ROA. We then fix the Lagrangians and search for V, and
-  // show that we can increase the ellipsoid size.
-  symbolic::Polynomial V;
-  Vector2<symbolic::Polynomial> f;
-  Matrix2<symbolic::Polynomial> G;
-  std::vector<std::array<symbolic::Polynomial, 2>> l_given;
-  std::vector<std::array<int, 6>> lagrangian_degrees;
-  InitializeWithLQR(&V, &f, &G, &l_given, &lagrangian_degrees);
-  const int nu{2};
-  std::vector<int> b_degrees(nu, 2);
-  SearchLagrangianAndBGivenVBoxInputBound dut(
-      V, f, G, l_given, lagrangian_degrees, b_degrees, x_);
-  const Eigen::Vector2d x_star(0.001, 0.0002);
-  // First make sure that x_star satisfies V(x*)<=1
-  const symbolic::Environment env_xstar(
-      {{x_(0), x_star(0)}, {x_(1), x_star(1)}});
-  ASSERT_LE(V.Evaluate(env_xstar), 1);
-  const Eigen::Matrix2d S = Eigen::Matrix2d::Identity();
-  const int s_degree = 2;
-  const symbolic::Variables x_set{x_};
-  const symbolic::Polynomial t(x_.cast<symbolic::Expression>().dot(x_), x_set);
-  // Set the rate-of-convergence epsilon to >= 0.1
-  dut.get_mutable_prog()->AddBoundingBoxConstraint(0.1, kInf, dut.deriv_eps());
-  solvers::MosekSolver mosek_solver;
-  solvers::SolverOptions solver_options;
-  solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 0);
-  const auto result =
-      mosek_solver.Solve(dut.prog(), std::nullopt, solver_options);
-  EXPECT_TRUE(result.is_success());
-  CheckSearchLagrangianAndBResult(dut, result, V, f, G, x_, 1.7E-5);
-  // Retrieve solution of Lagrangian multipliers.
-  std::vector<std::array<symbolic::Polynomial, 6>> l_sol(nu);
-  for (int i = 0; i < nu; ++i) {
-    l_sol[i][0] = l_given[i][0];
-    l_sol[i][1] = l_given[i][1];
-    for (int j = 2; j < 6; ++j) {
-      l_sol[i][j] = result.GetSolution(dut.lagrangians()[i][j]);
+  for (bool symmetric_dynamics : {false, true}) {
+    // We first compute LQR cost-to-go as the candidate Lyapunov function, and
+    // show that we can search the Lagrangians and maximize the ellipsoid
+    // contained in the ROA. We then fix the Lagrangians and search for V, and
+    // show that we can increase the ellipsoid size.
+    symbolic::Polynomial V;
+    Vector2<symbolic::Polynomial> f;
+    Matrix2<symbolic::Polynomial> G;
+    std::vector<std::vector<symbolic::Polynomial>> l_given;
+    std::vector<std::vector<std::array<int, 3>>> lagrangian_degrees;
+    InitializeWithLQR(symmetric_dynamics, &V, &f, &G, &l_given,
+                      &lagrangian_degrees);
+    const int nu{2};
+    std::vector<int> b_degrees(nu, 2);
+    SearchLagrangianAndBGivenVBoxInputBound dut(V, f, G, symmetric_dynamics,
+                                                l_given, lagrangian_degrees,
+                                                b_degrees, x_);
+    const Eigen::Vector2d x_star(0.001, 0.0002);
+    // First make sure that x_star satisfies V(x*)<=1
+    const symbolic::Environment env_xstar(
+        {{x_(0), x_star(0)}, {x_(1), x_star(1)}});
+    ASSERT_LE(V.Evaluate(env_xstar), 1);
+    const Eigen::Matrix2d S = Eigen::Matrix2d::Identity();
+    const int s_degree = 2;
+    const symbolic::Variables x_set{x_};
+    const symbolic::Polynomial t(x_.cast<symbolic::Expression>().dot(x_),
+                                 x_set);
+    // Set the rate-of-convergence epsilon to >= 0.1
+    dut.get_mutable_prog()->AddBoundingBoxConstraint(0.1, kInf,
+                                                     dut.deriv_eps());
+    solvers::MosekSolver mosek_solver;
+    solvers::SolverOptions solver_options;
+    solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 0);
+    const auto result =
+        mosek_solver.Solve(dut.prog(), std::nullopt, solver_options);
+    EXPECT_TRUE(result.is_success());
+    CheckSearchLagrangianAndBResult(dut, result, V, f, G, x_, 1.7E-5);
+    // Retrieve solution of Lagrangian multipliers.
+    std::vector<std::vector<std::array<symbolic::Polynomial, 3>>> l_sol(nu);
+    const int num_vdot_sos = symmetric_dynamics ? 1 : 2;
+    for (int i = 0; i < nu; ++i) {
+      l_sol[i].resize(num_vdot_sos);
+      for (int j = 0; j < num_vdot_sos; ++j) {
+        l_sol[i][j][0] = l_given[i][j];
+        for (int k = 1; k < 3; ++k) {
+          l_sol[i][j][k] = result.GetSolution(dut.lagrangians()[i][j][k]);
+        }
+      }
+    }
+    const double deriv_eps_sol = result.GetSolution(dut.deriv_eps());
+
+    double rho_sol;
+    symbolic::Polynomial s_sol;
+    MaximizeInnerEllipsoidRho(x_, x_star, S, V, t, s_degree,
+                              solvers::MosekSolver::id(), std::nullopt, 1.,
+                              &rho_sol, &s_sol);
+
+    // Now fix the Lagrangian multiplier and search for V
+    const int V_degree = 2;
+    const double positivity_eps{1E-2};
+    SearchLyapunovGivenLagrangianBoxInputBound dut_search_V(
+        f, G, symmetric_dynamics, V_degree, positivity_eps, deriv_eps_sol,
+        l_sol, b_degrees, x_);
+    const auto ellipsoid_ret_V =
+        dut_search_V.AddEllipsoidInRoaConstraint(x_star, S, t, s_sol);
+    dut_search_V.get_mutable_prog()->AddLinearCost(-ellipsoid_ret_V.rho);
+    const auto result_search_V = mosek_solver.Solve(dut_search_V.prog());
+    ASSERT_TRUE(result_search_V.is_success());
+    const double rho_search_V_sol =
+        result_search_V.GetSolution(ellipsoid_ret_V.rho);
+    EXPECT_GT(rho_search_V_sol, rho_sol);
+    // Check if V passes the origin.
+    const symbolic::Polynomial V_sol =
+        result_search_V.GetSolution(dut_search_V.V());
+    for (const auto& [V_sol_monomial, V_sol_ceoff] :
+         V_sol.monomial_to_coefficient_map()) {
+      EXPECT_GT(V_sol_monomial.total_degree(), 1);
     }
   }
-  const double deriv_eps_sol = result.GetSolution(dut.deriv_eps());
-
-  double rho_sol;
-  symbolic::Polynomial s_sol;
-  MaximizeInnerEllipsoidRho(x_, x_star, S, V, t, s_degree,
-                            solvers::MosekSolver::id(), std::nullopt, 1.,
-                            &rho_sol, &s_sol);
-
-  // Now fix the Lagrangian multiplier and search for V
-  const int V_degree = 2;
-  const double positivity_eps{1E-2};
-  SearchLyapunovGivenLagrangianBoxInputBound dut_search_V(
-      f, G, V_degree, positivity_eps, deriv_eps_sol, l_sol, b_degrees, x_);
-  const auto ellipsoid_ret_V =
-      dut_search_V.AddEllipsoidInRoaConstraint(x_star, S, t, s_sol);
-  dut_search_V.get_mutable_prog()->AddLinearCost(-ellipsoid_ret_V.rho);
-  const auto result_search_V = mosek_solver.Solve(dut_search_V.prog());
-  ASSERT_TRUE(result_search_V.is_success());
-  const double rho_search_V_sol =
-      result_search_V.GetSolution(ellipsoid_ret_V.rho);
-  EXPECT_GT(rho_search_V_sol, rho_sol);
 }
 
 TEST_F(SimpleLinearSystemTest, SearchLagrangianGivenVBoxInputBound) {
-  // We first compute LQR cost-to-go as the candidate Lyapunov function. We
-  // first fix V and search for Lagangians and b. And then fix V and b to search
-  // for Lagrangians only.
-  symbolic::Polynomial V;
-  Vector2<symbolic::Polynomial> f;
-  Matrix2<symbolic::Polynomial> G;
-  std::vector<std::array<symbolic::Polynomial, 2>> l_given;
-  std::vector<std::array<int, 6>> lagrangian_degrees;
-  InitializeWithLQR(&V, &f, &G, &l_given, &lagrangian_degrees);
-  const int nu{2};
-  std::vector<int> b_degrees(nu, 2);
-  SearchLagrangianAndBGivenVBoxInputBound dut(
-      V, f, G, l_given, lagrangian_degrees, b_degrees, x_);
-  const Eigen::Vector2d x_star(0.001, 0.0002);
-  // First make sure that x_star satisfies V(x*)<=1
-  const symbolic::Environment env_xstar(
-      {{x_(0), x_star(0)}, {x_(1), x_star(1)}});
-  ASSERT_LE(V.Evaluate(env_xstar), 1);
-  const Eigen::Matrix2d S = Eigen::Matrix2d::Identity();
-  const int s_degree = 2;
-  const symbolic::Variables x_set{x_};
-  const symbolic::Polynomial t(x_.cast<symbolic::Expression>().dot(x_), x_set);
+  for (bool symmetric_dynamics : {false, true}) {
+    // We first compute LQR cost-to-go as the candidate Lyapunov function. We
+    // first fix V and search for Lagangians and b. And then fix V and b to
+    // search for Lagrangians only.
+    symbolic::Polynomial V;
+    Vector2<symbolic::Polynomial> f;
+    Matrix2<symbolic::Polynomial> G;
+    std::vector<std::vector<symbolic::Polynomial>> l_given;
+    std::vector<std::vector<std::array<int, 3>>> lagrangian_degrees;
+    InitializeWithLQR(symmetric_dynamics, &V, &f, &G, &l_given,
+                      &lagrangian_degrees);
+    const int nu{2};
+    std::vector<int> b_degrees(nu, 2);
+    SearchLagrangianAndBGivenVBoxInputBound dut(V, f, G, symmetric_dynamics,
+                                                l_given, lagrangian_degrees,
+                                                b_degrees, x_);
+    const Eigen::Vector2d x_star(0.001, 0.0002);
+    // First make sure that x_star satisfies V(x*)<=1
+    const symbolic::Environment env_xstar(
+        {{x_(0), x_star(0)}, {x_(1), x_star(1)}});
+    ASSERT_LE(V.Evaluate(env_xstar), 1);
+    const Eigen::Matrix2d S = Eigen::Matrix2d::Identity();
+    const int s_degree = 2;
+    const symbolic::Variables x_set{x_};
+    const symbolic::Polynomial t(x_.cast<symbolic::Expression>().dot(x_),
+                                 x_set);
 
-  // Set the rate-of-convergence epsilon to >= 0.1
-  dut.get_mutable_prog()->AddBoundingBoxConstraint(0.1, kInf, dut.deriv_eps());
-  solvers::MosekSolver mosek_solver;
-  solvers::SolverOptions solver_options;
-  solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 0);
-  const auto result =
-      mosek_solver.Solve(dut.prog(), std::nullopt, solver_options);
-  ASSERT_TRUE(result.is_success());
-  VectorX<symbolic::Polynomial> b_sol(nu);
-  for (int i = 0; i < nu; ++i) {
-    b_sol(i) = result.GetSolution(dut.b()(i));
+    // Set the rate-of-convergence epsilon to >= 0.1
+    dut.get_mutable_prog()->AddBoundingBoxConstraint(0.1, kInf,
+                                                     dut.deriv_eps());
+    solvers::MosekSolver mosek_solver;
+    solvers::SolverOptions solver_options;
+    solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 0);
+    const auto result =
+        mosek_solver.Solve(dut.prog(), std::nullopt, solver_options);
+    ASSERT_TRUE(result.is_success());
+    VectorX<symbolic::Polynomial> b_sol(nu);
+    for (int i = 0; i < nu; ++i) {
+      b_sol(i) = result.GetSolution(dut.b()(i));
+    }
+    double rho_sol;
+    symbolic::Polynomial s_sol;
+    MaximizeInnerEllipsoidRho(x_, x_star, S, V, t, s_degree,
+                              solvers::MosekSolver::id(), std::nullopt, 1.,
+                              &rho_sol, &s_sol);
+
+    // Now fix V and b, search for Lagrangians.
+    SearchLagrangianGivenVBoxInputBound dut_search_l(
+        V, f, G, symmetric_dynamics, b_sol, x_, lagrangian_degrees);
+    CheckSearchLagrangianResult(dut_search_l, 5E-5, 1E-6);
   }
-  double rho_sol;
-  symbolic::Polynomial s_sol;
-  MaximizeInnerEllipsoidRho(x_, x_star, S, V, t, s_degree,
-                            solvers::MosekSolver::id(), std::nullopt, 1.,
-                            &rho_sol, &s_sol);
-
-  // Now fix V and b, search for Lagrangians.
-  SearchLagrangianGivenVBoxInputBound dut_search_l(V, f, G, b_sol, x_,
-                                                   lagrangian_degrees);
-  CheckSearchLagrangianResult(dut_search_l, 5E-5, 1E-6);
 }
 
 TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound) {
@@ -456,9 +509,11 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound) {
   symbolic::Polynomial V;
   Vector2<symbolic::Polynomial> f;
   Matrix2<symbolic::Polynomial> G;
-  std::vector<std::array<symbolic::Polynomial, 2>> l_given;
-  std::vector<std::array<int, 6>> lagrangian_degrees;
-  InitializeWithLQR(&V, &f, &G, &l_given, &lagrangian_degrees);
+  std::vector<std::vector<symbolic::Polynomial>> l_given;
+  std::vector<std::vector<std::array<int, 3>>> lagrangian_degrees;
+  const bool symmetric_dynamics = true;
+  InitializeWithLQR(symmetric_dynamics, &V, &f, &G, &l_given,
+                    &lagrangian_degrees);
   const int nu{2};
   std::vector<int> b_degrees(nu, 2);
 
@@ -610,6 +665,51 @@ GTEST_TEST(EllipsoidPolynomial, Test) {
   const symbolic::Polynomial poly_expected(
       (x - x_star).dot(S * (x - x_star)) - rho, symbolic::Variables(x));
   EXPECT_PRED2(symbolic::test::PolyEqualAfterExpansion, poly, poly_expected);
+}
+
+GTEST_TEST(NegateIndeterminates, Test) {
+  symbolic::Variable x("x");
+  symbolic::Variable y("y");
+  const symbolic::Polynomial p(x * x + 2 * x * y + 3 + 3 * x * y * y +
+                               y * y * y);
+  const symbolic::Polynomial q = internal::NegateIndeterminates(p);
+  const symbolic::Polynomial q_expected(-x * -x + 2 * (-x) * (-y) + 3 +
+                                        3 * (-x) * (-y) * (-y) +
+                                        (-y) * (-y) * (-y));
+  EXPECT_PRED2(symbolic::test::PolyEqualAfterExpansion, q, q_expected);
+}
+
+GTEST_TEST(NewFreePolynomialNoConstantOrLinear, Test) {
+  solvers::MathematicalProgram prog;
+  auto x = prog.NewIndeterminates<2>();
+  const symbolic::Variables x_set(x);
+
+  auto check = [&prog, &x_set](int degree,
+                               symbolic::internal::DegreeType degree_type,
+                               int num_monomials) {
+    const auto p = internal::NewFreePolynomialNoConstantOrLinear(
+        &prog, x_set, degree, "p", degree_type);
+    EXPECT_EQ(p.monomial_to_coefficient_map().size(), num_monomials);
+    for (const auto& [monomial, _] : p.monomial_to_coefficient_map()) {
+      EXPECT_GE(monomial.total_degree(), 2);
+      EXPECT_LE(monomial.total_degree(), degree);
+      if (degree_type == symbolic::internal::DegreeType::kOdd) {
+        EXPECT_EQ(monomial.total_degree() % 2, 1);
+      } else if (degree_type == symbolic::internal::DegreeType::kEven) {
+        EXPECT_EQ(monomial.total_degree() % 2, 0);
+      }
+    }
+  };
+
+  check(0, symbolic::internal::DegreeType::kAny, 0);
+  check(2, symbolic::internal::DegreeType::kAny, 3);
+  check(2, symbolic::internal::DegreeType::kOdd, 0);
+  check(3, symbolic::internal::DegreeType::kOdd, 4);
+  check(3, symbolic::internal::DegreeType::kEven, 3);
+  check(3, symbolic::internal::DegreeType::kAny, 7);
+  check(4, symbolic::internal::DegreeType::kAny, 12);
+  check(4, symbolic::internal::DegreeType::kEven, 8);
+  check(4, symbolic::internal::DegreeType::kOdd, 4);
 }
 }  // namespace analysis
 }  // namespace systems

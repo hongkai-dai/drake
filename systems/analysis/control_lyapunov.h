@@ -95,92 +95,81 @@ class VdotCalculator {
 
 /**
  * We need to impose the constraint
- * (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
- * (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
- * We store the monomial basis and the Gram matrix of these two SOS constraint.
+ * (lᵢ₀₀(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₀₁(x)*∂V/∂x*Gᵢ(x) - lᵢ₀₂(x)*(1 − V) >= 0
+ * (lᵢ₁₀(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₁₁(x)*∂V/∂x*Gᵢ(x) - lᵢ₁₂(x)*(1 − V) >= 0
+ * If this dynamics is symmetric (namely f(x) = -f(-x), G(x) = G(-x)), then we
+ * only impose the first constraint. We store the monomial basis and the Gram
+ * matrix of these two SOS constraint.
  */
 struct VdotSosConstraintReturn {
-  VdotSosConstraintReturn(int nu)
-      : monomials{static_cast<size_t>(nu)}, grams{static_cast<size_t>(nu)} {}
+  VdotSosConstraintReturn(int nu, bool m_symmetric_dynamics);
 
   /**
    * Compute the i'th pair of SOS constraint (the polynomial on the left
    * handside)
-   * (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
-   * (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
+   * (lᵢ₀₀(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₀₁(x)*∂V/∂x*Gᵢ(x) - lᵢ₀₂(x)*(1 −
+   * V)>=0 (lᵢ₁₀(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₁₁(x)*∂V/∂x*Gᵢ(x) -
+   * lᵢ₁₂(x)*(1 − V)>=0
    * @param i Compute the i'th pair.
    * @param result The result after solving the program.
    */
-  std::array<symbolic::Polynomial, 2> ComputeSosConstraint(
+  std::vector<symbolic::Polynomial> ComputeSosConstraint(
       int i, const solvers::MathematicalProgramResult& result) const;
 
-  /**
-   * If j == 0, compute the SOS constraint (the polynomial on the left handside)
-   * (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
-   * if j == 1, compute the polynomial on the left handside
-   * (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
-   * @param i Compute the i'th pair.
-   * @param j
-   * @param result The result after solving the program.
-   */
   symbolic::Polynomial ComputeSosConstraint(
       int i, int j, const solvers::MathematicalProgramResult& result) const;
 
-  // monomials[i][0] is the monomial basis for the constraint
-  // (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
-  // monomials[i][1] is the monomial basis for the constraint
-  // (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
-  std::vector<std::array<VectorX<symbolic::Monomial>, 2>> monomials;
-  // grams[i][0] is the Gram matrix for the constraint
-  // (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
-  // grams[i][1] is the Gram matrix for the constraint
-  // (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
-  std::vector<std::array<MatrixX<symbolic::Variable>, 2>> grams;
+  bool symmetric_dynamics;
+
+  // monomials[i][0] / grams[i][0] is the monomial basis / gram matrix for the
+  // constraint (lᵢ₀₀(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₀₁(x)*∂V/∂x*Gᵢ(x) -
+  // lᵢ₀₂(x)*(1 − V) >= 0 monomials[i][1] / grams[i][1] is the monomial basis /
+  // gram matrix for the constraint (lᵢ₁₀(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) +
+  // lᵢ₁₁(x)*∂V/∂x*Gᵢ(x) - lᵢ₁₂(x)*(1 − V) >= 0
+  std::vector<std::vector<VectorX<symbolic::Monomial>>> monomials;
+  std::vector<std::vector<MatrixX<symbolic::Variable>>> grams;
 };
 
 /**
  * For u bounded in a unit box -1 <= u <= 1.
  * Given the control Lyapunov function candidate V, together with the
- * Lagrangian multipliers lᵢ₁(x), lᵢ₂(x), search for b and Lagrangian
- * multipliers lᵢ₃(x), lᵢ₄(x), lᵢ₅(x), lᵢ₆(x), satisfying the following
+ * Lagrangian multipliers lᵢ₀₀(x), lᵢ₁₀(x), search for b and Lagrangian
+ * multipliers lᵢ₀₁(x), lᵢ₀₂(x), lᵢ₁₁(x), lᵢ₁₂(x) satisfying the following
  * constraint
  *
  *     ∂V/∂x*f(x) + ε₂V = ∑ᵢ bᵢ(x)
- *     (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >=
- * 0
- *     (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
- *     lᵢ₃(x) >= 0, lᵢ₄(x) >= 0, lᵢ₅(x) >= 0, lᵢ₆(x) >= 0
+ *     (lᵢ₀₀(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₀₁(x)*∂V/∂x*Gᵢ(x) - lᵢ₀₂(x)*(1 − V) >=
+ *     0
+ *     (lᵢ₁₀(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₁₁(x)*∂V/∂x*Gᵢ(x) - lᵢ₁₂(x)*(1 − V)
+ *     >= 0
+ *     lᵢ₀₁(x) >= 0, lᵢ₀₂(x) >= 0, lᵢ₁₁(x) >= 0, lᵢ₁₂(x) >= 0
  *
- * The variables are ε₂, b(x), lₖ₃(x), lₖ₄(x), lₖ₅(x), lₖ₆(x)
+ * The variables are ε₂, b(x), lᵢ₀₁(x), lᵢ₀₂(x), lᵢ₁₁(x), lᵢ₁₂(x)
  * This is the starting step of the search, where we can get a good guess
- * of V(x), lₖ₁(x), lₖ₂(x).
+ * of V(x), lᵢ₀₀(x), lᵢ₁₀(x).
  */
 class SearchLagrangianAndBGivenVBoxInputBound {
  public:
   DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(SearchLagrangianAndBGivenVBoxInputBound)
 
   /**
-   * @param l_given l_given[i][0] is lᵢ₁(x), l_given[i][1] is lᵢ₂(x).
-   * @param lagrangian_degrees lagrangian_degrees[i][j] is the degree of the
-   * Lagrangian multiplier lᵢⱼ₊₁(x).
+   * @param l_given l_given[i][0][0] is lᵢ₀₀(x), l_given[i][1][0] is lᵢ₁₀(x).
+   * @param lagrangian_degrees lagrangian_degrees[i][j][k] is the degree of the
+   * Lagrangian multiplier lᵢⱼₖ(x).
    * @param b_degrees b_degrees[i] is the degree of the polynomial b(i).
    */
   SearchLagrangianAndBGivenVBoxInputBound(
       symbolic::Polynomial V, VectorX<symbolic::Polynomial> f,
-      MatrixX<symbolic::Polynomial> G,
-      const std::vector<std::array<symbolic::Polynomial, 2>>& l_given,
-      std::vector<std::array<int, 6>> lagrangian_degrees,
+      MatrixX<symbolic::Polynomial> G, bool symmetric_dynamics,
+      const std::vector<std::vector<symbolic::Polynomial>>& l_given,
+      std::vector<std::vector<std::array<int, 3>>> lagrangian_degrees,
       std::vector<int> b_degrees, VectorX<symbolic::Variable> x);
 
-  const std::vector<std::array<symbolic::Polynomial, 6>>& lagrangians() const {
+  const std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>&
+  lagrangians() const {
     return l_;
   }
-
-  /**
-   * The gram matrix of each lagrangian. Note that lagrangian_grams()[i][0]
-   * and lagrangian_grams()[i][1] are empty.
-   */
-  const std::vector<std::array<MatrixX<symbolic::Variable>, 6>>&
+  const std::vector<std::vector<std::array<MatrixX<symbolic::Variable>, 3>>>&
   lagrangian_grams() const {
     return lagrangian_grams_;
   }
@@ -219,8 +208,8 @@ class SearchLagrangianAndBGivenVBoxInputBound {
   // Step 1 of Search() function. Search for Lagrangian multipliers and b.
   void SearchLagrangianAndB(
       const symbolic::Polynomial& V,
-      const std::vector<std::array<symbolic::Polynomial, 2>>& l_given,
-      const std::vector<std::array<int, 6>>& lagrangian_degrees,
+      const std::vector<std::vector<symbolic::Polynomial>>& l_given,
+      const std::vector<std::vector<std::array<int, 3>>>& lagrangian_degrees,
       const std::vector<int>& b_degrees,
       const Eigen::Ref<const Eigen::VectorXd>& x_star,
       const Eigen::Ref<const Eigen::MatrixXd>& S, int s_degree,
@@ -228,7 +217,8 @@ class SearchLagrangianAndBGivenVBoxInputBound {
       double deriv_eps_upper, const solvers::SolverId& solver_id,
       const solvers::SolverOptions& solver_options, double backoff_scale,
       double* deriv_eps, VectorX<symbolic::Polynomial>* b,
-      std::vector<std::array<symbolic::Polynomial, 6>>* l, double* rho) const;
+      std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>* l,
+      double* rho) const;
 
   solvers::MathematicalProgram prog_;
   symbolic::Polynomial V_;
@@ -236,9 +226,11 @@ class SearchLagrangianAndBGivenVBoxInputBound {
   MatrixX<symbolic::Polynomial> G_;
   int nx_{};
   int nu_{};
-  std::vector<std::array<symbolic::Polynomial, 6>> l_;
-  std::vector<std::array<int, 6>> lagrangian_degrees_;
-  std::vector<std::array<MatrixX<symbolic::Variable>, 6>> lagrangian_grams_;
+  bool symmetric_dynamics_;
+  std::vector<std::vector<std::array<symbolic::Polynomial, 3>>> l_;
+  std::vector<std::vector<std::array<int, 3>>> lagrangian_degrees_;
+  std::vector<std::vector<std::array<MatrixX<symbolic::Variable>, 3>>>
+      lagrangian_grams_;
   std::vector<int> b_degrees_;
   VectorX<symbolic::Variable> x_;
   symbolic::Variables x_set_;
@@ -256,9 +248,11 @@ class SearchLagrangianAndBGivenVBoxInputBound {
  *     V(x) >= ε₁xᵀx
  *     V(0) = 0
  *     ∂V/∂x*f(x) + ε₂V = ∑ᵢ bᵢ(x)
- *     (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >=
- * 0 (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
- * where lᵢⱼ(x) are all given.
+ *     (lᵢ₀₀(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₀₁(x)*∂V/∂x*Gᵢ(x) - lᵢ₀₂(x)*(1 − V) >=
+ *     0
+ *     (lᵢ₁₀(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₁₁(x)*∂V/∂x*Gᵢ(x) - lᵢ₁₂(x)*(1 − V)
+ *     >= 0
+ * where lᵢⱼₖ(x) are all given.
  */
 class SearchLyapunovGivenLagrangianBoxInputBound {
  public:
@@ -274,14 +268,15 @@ class SearchLyapunovGivenLagrangianBoxInputBound {
    * V(x) to be a positive definite function.
    * @param deriv_eps ε₂ in the documentation above. The rate of exponential
    * convergence.
-   * @param l_given l_given[i][j] is lᵢⱼ in the documentation above.
+   * @param l_given l_given[i][j][k] is lᵢⱼₖ in the documentation above.
    * @param b_degrees b_degrees[i] is the degree of the polynomial bᵢ(x).
    * @param x The indeterminates for the state.
    */
   SearchLyapunovGivenLagrangianBoxInputBound(
       VectorX<symbolic::Polynomial> f, MatrixX<symbolic::Polynomial> G,
-      int V_degree, double positivity_eps, double deriv_eps,
-      std::vector<std::array<symbolic::Polynomial, 6>> l_given,
+      bool symmetric_dynamics, int V_degree, double positivity_eps,
+      double deriv_eps,
+      std::vector<std::vector<std::array<symbolic::Polynomial, 3>>> l_given,
       const std::vector<int>& b_degrees, VectorX<symbolic::Variable> x);
 
   const solvers::MathematicalProgram& prog() const { return prog_; }
@@ -296,7 +291,7 @@ class SearchLyapunovGivenLagrangianBoxInputBound {
    * The Gram matrix of the positivity constraint
    * V(x) >= ε₁xᵀx
    */
-  const MatrixX<symbolic::Variable>& positivity_constraint_gram() const {
+  const MatrixX<symbolic::Expression>& positivity_constraint_gram() const {
     return positivity_constraint_gram_;
   }
 
@@ -341,13 +336,14 @@ class SearchLyapunovGivenLagrangianBoxInputBound {
   solvers::MathematicalProgram prog_;
   VectorX<symbolic::Polynomial> f_;
   MatrixX<symbolic::Polynomial> G_;
+  bool symmetric_dynamics_;
   double deriv_eps_;
-  std::vector<std::array<symbolic::Polynomial, 6>> l_;
+  std::vector<std::vector<std::array<symbolic::Polynomial, 3>>> l_;
   VectorX<symbolic::Variable> x_;
   symbolic::Variables x_set_;
   symbolic::Polynomial V_;
   VectorX<symbolic::Monomial> positivity_constraint_monomial_;
-  MatrixX<symbolic::Variable> positivity_constraint_gram_;
+  MatrixX<symbolic::Expression> positivity_constraint_gram_;
   int nx_;
   int nu_;
   VectorX<symbolic::Polynomial> b_;
@@ -358,12 +354,15 @@ class SearchLyapunovGivenLagrangianBoxInputBound {
  * This is the Lagrangian step in ControlLaypunovBoxInputBound. The control
  * Lyapunov function V, together with b are fixed, and we search for the
  * Lagrangian multipliers
- * lᵢ₁(x), lᵢ₂(x), lᵢ₃(x), lᵢ₄(x), lᵢ₅(x), lᵢ₆(x) satisfying the constraints
+ * lᵢ₀₀(x), lᵢ₀₁(x), lᵢ₀₂(x), lᵢ₁₀(x), lᵢ₁₁(x), lᵢ₁₂(x) satisfying the
+ * constraints
  *
- *     (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) ≥ 0
- *     (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) ≥ 0
- *     lᵢ₁(x) >= 0, lᵢ₃(x) >= 0, lᵢ₅(x) >= 0,
- *     lᵢ₂(x) >= 0, lᵢ₄(x) >= 0, lᵢ₆(x) >= 0
+ *     (lᵢ₀₀(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₀₁(x)*∂V/∂x*Gᵢ(x) - lᵢ₀₂(x)*(1 − V) >=
+ *     0
+ *     (lᵢ₁₀(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₁₁(x)*∂V/∂x*Gᵢ(x) - lᵢ₁₂(x)*(1 − V)
+ *     >= 0
+ *     lᵢ₀₀(x) >= 0, lᵢ₀₁(x) >= 0, lᵢ₀₂(x) >= 0,
+ *     lᵢ₁₀(x) >= 0, lᵢ₁₁(x) >= 0, lᵢ₁₂(x) >= 0
  *     for i = 0, ..., nᵤ-1
  *
  * We will create 2*nᵤ SOS problems for each i = 0, ..., nᵤ - 1. Note that for
@@ -375,25 +374,26 @@ class SearchLagrangianGivenVBoxInputBound {
 
   /**
    * @param x The state as the indeterminates.
-   * @param lagrangian_degrees lagrangian_degrees[i][j] is the degree of the
-   * Lagrangian multiplier lᵢⱼ₊₁(x).
+   * @param lagrangian_degrees lagrangian_degrees[i][j][k] is the degree of the
+   * Lagrangian multiplier lᵢⱼₖ(x).
    */
   SearchLagrangianGivenVBoxInputBound(
       symbolic::Polynomial V, VectorX<symbolic::Polynomial> f,
-      MatrixX<symbolic::Polynomial> G, VectorX<symbolic::Polynomial> b,
-      VectorX<symbolic::Variable> x,
-      std::vector<std::array<int, 6>> lagrangian_degrees);
+      MatrixX<symbolic::Polynomial> G, bool symmetric_dynamics,
+      VectorX<symbolic::Polynomial> b, VectorX<symbolic::Variable> x,
+      std::vector<std::vector<std::array<int, 3>>> lagrangian_degrees);
 
   /**
    * If j = 0, then this is the program
    *
-   *     (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) ≥ 0
-   *     lᵢ₁(x) >= 0, lᵢ₃(x) >= 0, lᵢ₅(x) >= 0,
-   *
-   * If j = 1, then this is the program
-   *
-   *     (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1−V) ≥ 0
-   *     lᵢ₂(x) >= 0, lᵢ₄(x) >= 0, lᵢ₆(x) >= 0
+   *     (lᵢ₀₀(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₀₁(x)*∂V/∂x*Gᵢ(x) - lᵢ₀₂(x)*(1 − V)
+   * >=
+   *     0
+   *     lᵢ₀₀(x) >= 0, lᵢ₀₁(x) >= 0, lᵢ₀₂(x) >= 0,
+   *  if j = 1, then this is the program
+   *     (lᵢ₁₀(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₁₁(x)*∂V/∂x*Gᵢ(x) - lᵢ₁₂(x)*(1 − V)
+   *     >= 0
+   *     lᵢ₁₀(x) >= 0, lᵢ₁₁(x) >= 0, lᵢ₁₂(x) >= 0
    */
   const solvers::MathematicalProgram& prog(int i, int j) const {
     return *(progs_[i][j]);
@@ -418,11 +418,12 @@ class SearchLagrangianGivenVBoxInputBound {
 
   const VectorX<symbolic::Polynomial>& b() const { return b_; }
 
-  const std::vector<std::array<symbolic::Polynomial, 6>>& lagrangians() const {
+  const std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>&
+  lagrangians() const {
     return l_;
   }
 
-  const std::vector<std::array<MatrixX<symbolic::Variable>, 6>>&
+  const std::vector<std::vector<std::array<MatrixX<symbolic::Variable>, 3>>>&
   lagrangian_grams() const {
     return lagrangian_grams_;
   }
@@ -435,16 +436,18 @@ class SearchLagrangianGivenVBoxInputBound {
   symbolic::Polynomial V_;
   VectorX<symbolic::Polynomial> f_;
   MatrixX<symbolic::Polynomial> G_;
+  bool symmetric_dynamics_;
   VectorX<symbolic::Polynomial> b_;
   VectorX<symbolic::Variable> x_;
   symbolic::Variables x_set_;
-  std::vector<std::array<std::unique_ptr<solvers::MathematicalProgram>, 2>>
+  std::vector<std::vector<std::unique_ptr<solvers::MathematicalProgram>>>
       progs_;
   int nu_;
   int nx_;
-  std::vector<std::array<symbolic::Polynomial, 6>> l_;
-  std::vector<std::array<int, 6>> lagrangian_degrees_;
-  std::vector<std::array<MatrixX<symbolic::Variable>, 6>> lagrangian_grams_;
+  std::vector<std::vector<std::array<symbolic::Polynomial, 3>>> l_;
+  std::vector<std::vector<std::array<int, 3>>> lagrangian_degrees_;
+  std::vector<std::vector<std::array<MatrixX<symbolic::Variable>, 3>>>
+      lagrangian_grams_;
   VdotSosConstraintReturn vdot_sos_constraint_;
 };
 
@@ -480,11 +483,11 @@ class SearchLagrangianGivenVBoxInputBound {
  *     when ∂V/∂x * Gᵢ(x) <= 0, then bᵢ(x) <= -∂V/∂x * Gᵢ(x)
  *
  * So to impose the constraint bᵢ(x) <= |∂V/∂x * Gᵢ(x)|, we introduce the
- * Lagrangian multiplier lᵢ₁(x), lᵢ₂(x),lᵢ₃(x), lᵢ₄(x)with the constraint
+ * Lagrangian multiplier lᵢ₀₀(x), lᵢ₀₁(x), lᵢ₁₀(x), lᵢ₁₁(x)with the constraint
  *
- *     (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x) − bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x)>=0
- *     (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x) − bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x)>=0
- *     lᵢ₁(x) >= 0, lᵢ₂(x) >= 0, lᵢ₃(x) >= 0, lᵢ₄(x) >= 0
+ *     (lᵢ₀₀(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x))−lᵢ₀₁(x)*∂V/∂x*Gᵢ(x)>=0
+ *     (lᵢ₁₀(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x))+lᵢ₁₁(x)*∂V/∂x*Gᵢ(x)>=0
+ *     lᵢ₀₀(x) >= 0, lᵢ₀₁(x) >= 0, lᵢ₁₀(x) >= 0, lᵢ₁₁(x) >= 0
  *
  * To summarize, in order to prove the control Lyapunov function with region
  * of attraction V(x) ≤ 1, we impose the following constraint
@@ -492,10 +495,10 @@ class SearchLagrangianGivenVBoxInputBound {
  *    V(x) ≥ ε₁xᵀx
  *    V(0) = 0
  *    ∂V/∂x*f(x) + ε₂V = ∑ᵢ bᵢ(x)
- *    (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) ≥ 0
- *    (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) ≥ 0
- *     lᵢ₁(x) ≥ 0, lᵢ₂(x) ≥ 0,
- *     lᵢ₃(x) ≥ 0, lᵢ₄(x) ≥ 0, lᵢ₅(x) ≥ 0, lᵢ₆(x) ≥ 0
+ *    (lᵢ₀₀(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₀₁(x)*∂V/∂x*Gᵢ(x) - lᵢ₀₂(x)*(1 − V) >=
+ * 0 (lᵢ₁₀(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₁₁(x)*∂V/∂x*Gᵢ(x) - lᵢ₁₂(x)*(1 − V)>= 0
+ *     lᵢ₀₀(x) >= 0, lᵢ₀₁(x) >= 0, lᵢ₀₂(x) >= 0,
+ *     lᵢ₁₀(x) >= 0, lᵢ₁₁(x) >= 0, lᵢ₁₂(x) >= 0
  *
  * We will use bilinear alternation to search for the control Lyapunov
  * function V, the Lagrangian multipliers and the slack polynomials b(x).
@@ -523,7 +526,7 @@ class ControlLyapunovBoxInputBound {
     symbolic::Polynomial V;
     VectorX<symbolic::Polynomial> b;
     double deriv_eps;
-    std::vector<std::array<symbolic::Polynomial, 6>> l;
+    std::vector<std::vector<std::array<symbolic::Polynomial, 3>>> l;
     symbolic::Polynomial s;
     double rho;
   };
@@ -545,18 +548,18 @@ class ControlLyapunovBoxInputBound {
   /**
    * Given V_init(x) and lᵢ₀(x), lᵢ₁(x), we search the control Lyapunov function
    * and maximize the ROA through the following process
-   * 1. Fix V_init(x), lᵢ₁(x), lᵢ₂(x), search for lᵢ₃(x),...,lᵢ₆(x), s(x),
-   *    bᵢ(x).
-   * 2. Fix Lagrangian multipliers lᵢ₁(x),..., lᵢ₆(x), s(x), search V(x) and
+   * 1. Fix V_init(x), lᵢ₀₀(x), lᵢ₁₀(x), search for lᵢ₀₁(x)lᵢ₀₂(x), lᵢ₁₁(x),
+   * lᵢ₁₂(x), s(x), bᵢ(x).
+   * 2. Fix Lagrangian multipliers lᵢ₀₀(x),...,lᵢ₁₂(x) s(x), search V(x) and
    *    bᵢ(x).
    * 3. Fix V(x), bᵢ(x), and search for Lagrangian multipliers
-   *    lᵢ₁(x),..., lᵢ₆(x), s(x). Go to step 2.
+   *    lᵢ₀₀(x),...,lᵢ₁₂(x), s(x). Go to step 2.
    *
    */
   SearchReturn Search(
       const symbolic::Polynomial& V_init,
-      const std::vector<std::array<symbolic::Polynomial, 2>>& l_given,
-      const std::vector<std::array<int, 6>>& lagrangian_degrees,
+      const std::vector<std::vector<symbolic::Polynomial>>& l_given,
+      const std::vector<std::vector<std::array<int, 3>>>& lagrangian_degrees,
       const std::vector<int>& b_degrees,
       const Eigen::Ref<const Eigen::VectorXd>& x_star,
       const Eigen::Ref<const Eigen::MatrixXd>& S, int s_degree,
@@ -567,8 +570,8 @@ class ControlLyapunovBoxInputBound {
   // Step 1 in Search() function.
   void SearchLagrangianAndB(
       const symbolic::Polynomial& V,
-      const std::vector<std::array<symbolic::Polynomial, 2>>& l_given,
-      const std::vector<std::array<int, 6>>& lagrangian_degrees,
+      const std::vector<std::vector<symbolic::Polynomial>>& l_given,
+      const std::vector<std::vector<std::array<int, 3>>>& lagrangian_degrees,
       const std::vector<int>& b_degrees,
       const Eigen::Ref<const Eigen::VectorXd>& x_star,
       const Eigen::Ref<const Eigen::MatrixXd>& S, int s_degree,
@@ -576,12 +579,12 @@ class ControlLyapunovBoxInputBound {
       double deriv_eps_upper, const solvers::SolverId& solver_id,
       const std::optional<solvers::SolverOptions>& solver_options,
       double backoff_scale, double* deriv_eps, VectorX<symbolic::Polynomial>* b,
-      std::vector<std::array<symbolic::Polynomial, 6>>* l, double* rho,
-      symbolic::Polynomial* s) const;
+      std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>* l,
+      double* rho, symbolic::Polynomial* s) const;
 
   // Step 2 in Search() function.
   void SearchLyapunov(
-      const std::vector<std::array<symbolic::Polynomial, 6>>& l,
+      const std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>& l,
       const std::vector<int>& b_degrees, int V_degree, double positivity_eps,
       double deriv_eps, const Eigen::Ref<const Eigen::VectorXd>& x_star,
       const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& s,
@@ -593,16 +596,18 @@ class ControlLyapunovBoxInputBound {
   // Step 3 in Search() function.
   void SearchLagrangian(
       const symbolic::Polynomial& V, const VectorX<symbolic::Polynomial>& b,
-      const std::vector<std::array<int, 6>>& lagrangian_degrees,
+      const std::vector<std::vector<std::array<int, 3>>>& lagrangian_degrees,
       const Eigen::Ref<const Eigen::VectorXd>& x_star,
       const Eigen::Ref<const Eigen::MatrixXd>& S, int s_degree,
       const symbolic::Polynomial& t, const solvers::SolverId& solver_id,
       const std::optional<solvers::SolverOptions>& solver_options,
-      double backoff_scale, std::vector<std::array<symbolic::Polynomial, 6>>* l,
+      double backoff_scale,
+      std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>* l,
       symbolic::Polynomial* s, double* rho) const;
 
   VectorX<symbolic::Polynomial> f_;
   MatrixX<symbolic::Polynomial> G_;
+  bool symmetric_dynamics_;
   // The indeterminates as the state.
   VectorX<symbolic::Variable> x_;
   double positivity_eps_;
@@ -639,7 +644,27 @@ symbolic::Polynomial EllipsoidPolynomial(
  * degree, but remove the constant term 1 from the basis.
  */
 VectorX<symbolic::Monomial> ComputeMonomialBasisNoConstant(
-    const symbolic::Variables& vars, int degree);
+    const symbolic::Variables& vars, int degree,
+    symbolic::internal::DegreeType degree_type);
+
+/**
+ * Returns if the dynamics is symmetric, namely f(x) = -f(-x) and G(x) = G(-x),
+ * which implies the time derivative at (-x, -u) is -ẋ.
+ */
+bool IsDynamicsSymmetric(
+    const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
+    const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G);
+
+/** Return q(x) = p(-x)
+ */
+symbolic::Polynomial NegateIndeterminates(const symbolic::Polynomial& p);
+
+/** Create a polynomial the coefficient for constant and linear terms to be 0.
+ */
+symbolic::Polynomial NewFreePolynomialNoConstantOrLinear(
+    solvers::MathematicalProgram* prog,
+    const symbolic::Variables& indeterminates, int degree,
+    const std::string& coeff_name, symbolic::internal::DegreeType degree_type);
 }  // namespace internal
 }  // namespace analysis
 }  // namespace systems

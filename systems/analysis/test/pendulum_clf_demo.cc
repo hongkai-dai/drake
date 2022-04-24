@@ -62,22 +62,28 @@ int DoMain() {
   const auto lqr_result = controllers::LinearQuadraticRegulator(
       A, B, Eigen::Matrix2d::Identity(), Vector1<double>::Identity());
   pendulum.control_affine_dynamics(x, M_PI, u_bound, &f, &G);
+  for (int i = 0; i < 2; ++i) {
+    f(i) = f(i).RemoveTermsWithSmallCoefficients(1E-6);
+    G(i, 0) = G(i, 0).RemoveTermsWithSmallCoefficients(1E-6);
+  }
   symbolic::Polynomial V(x.dot(lqr_result.S * x));
 
-  std::vector<std::array<symbolic::Polynomial, 2>> l_given(1);
-  l_given[0][0] = symbolic::Polynomial();
-  l_given[0][1] = symbolic::Polynomial();
-  std::vector<std::array<int, 6>> lagrangian_degrees(1);
-  lagrangian_degrees[0][0] = 0;
-  lagrangian_degrees[0][1] = 0;
-  lagrangian_degrees[0][2] = 6;
-  lagrangian_degrees[0][3] = 6;
-  lagrangian_degrees[0][4] = 6;
-  lagrangian_degrees[0][5] = 6;
+  const bool symmetric_dynamics = internal::IsDynamicsSymmetric(f, G);
+  const int num_vdot_sos = symmetric_dynamics ? 1 : 2;
+  std::vector<std::vector<symbolic::Polynomial>> l_given(1);
+  l_given[0].resize(num_vdot_sos);
+  for (int i = 0; i < num_vdot_sos; ++i) {
+    l_given[0][i] = symbolic::Polynomial();
+  }
+  std::vector<std::vector<std::array<int, 3>>> lagrangian_degrees(1);
+  lagrangian_degrees[0].resize(num_vdot_sos);
+  for (int i = 0; i < num_vdot_sos; ++i) {
+    lagrangian_degrees[0][i] = {0, 4, 4};
+  }
   std::vector<int> b_degrees(1);
   b_degrees[0] = 4;
-  SearchLagrangianAndBGivenVBoxInputBound dut(V, f, G, l_given,
-                                              lagrangian_degrees, b_degrees, x);
+  SearchLagrangianAndBGivenVBoxInputBound dut(
+      V, f, G, symmetric_dynamics, l_given, lagrangian_degrees, b_degrees, x);
   dut.get_mutable_prog()->AddBoundingBoxConstraint(0.01, kInf, dut.deriv_eps());
   solvers::MosekSolver mosek_solver;
   solvers::SolverOptions solver_options;

@@ -2,8 +2,13 @@
 
 #include <limits>
 
+#include "drake/common/drake_copyable.h"
+#include "drake/solvers/solve.h"
 #include "drake/systems/analysis/control_lyapunov.h"
+#include "drake/systems/analysis/simulator.h"
 #include "drake/systems/controllers/linear_quadratic_regulator.h"
+#include "drake/systems/framework/diagram_builder.h"
+#include "drake/systems/primitives/vector_log_sink.h"
 
 namespace drake {
 namespace systems {
@@ -48,6 +53,122 @@ struct Pendulum {
   double damping{0.1};
 };
 
+class ControlledPendulum final : public LeafSystem<double> {
+ public:
+  DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(ControlledPendulum)
+
+  ControlledPendulum(symbolic::Polynomial clf, Vector2<symbolic::Variable> x,
+                     Eigen::Vector2d x_des, double u_bound, double deriv_eps)
+      : LeafSystem<double>(),
+        clf_{std::move(clf)},
+        x_{std::move(x)},
+        x_des_{std::move(x_des)},
+        u_bound_{u_bound},
+        deriv_eps_{deriv_eps} {
+    auto state_index = this->DeclareContinuousState(2);
+    state_output_index_ =
+        this->DeclareStateOutputPort("state", state_index).get_index();
+    clf_output_index_ =
+        this->DeclareVectorOutputPort("clf", 1, &ControlledPendulum::CalcClf)
+            .get_index();
+    const RowVector2<symbolic::Polynomial> dVdx = clf_.Jacobian(x_);
+    pendulum_.control_affine_dynamics(x_, x_des_(0), u_bound_, &f_, &G_);
+    dVdx_times_f_ = dVdx.dot(f_);
+    dVdx_times_G_ = dVdx.dot(G_);
+  }
+
+  ~ControlledPendulum() final{};
+
+  const OutputPortIndex& state_output_index() { return state_output_index_; }
+
+  const OutputPortIndex& clf_output_index() { return clf_output_index_; }
+
+ private:
+  virtual void DoCalcTimeDerivatives(
+      const systems::Context<double>& context,
+      systems::ContinuousState<double>* derivatives) const final {
+    solvers::MathematicalProgram prog;
+    auto u = prog.NewContinuousVariables<1>();
+    prog.AddBoundingBoxConstraint(-u_bound_, u_bound_, u(0));
+    prog.AddQuadraticCost(Eigen::Matrix<double, 1, 1>::Constant(1),
+                          Eigen::Matrix<double, 1, 1>::Zero(), u);
+    const Vector2<double> x_val =
+        context.get_continuous_state_vector().CopyToVector();
+    const Vector2<double> x_bar_val = x_val - x_des_;
+
+    symbolic::Environment env;
+    env.insert(x_, x_bar_val);
+    const double dVdx_times_f_val = dVdx_times_f_.Evaluate(env);
+    const double dVdx_times_G_val = dVdx_times_G_.Evaluate(env);
+    const double V_val = clf_.Evaluate(env);
+    // dVdx * G * u + dVdx * f <= -eps * V
+    prog.AddLinearConstraint(
+        Eigen::Matrix<double, 1, 1>::Constant(dVdx_times_G_val), -kInf,
+        -deriv_eps_ * V_val - dVdx_times_f_val, u);
+    const auto result = solvers::Solve(prog);
+    DRAKE_DEMAND(result.is_success());
+    const double u_val = result.GetSolution(u(0)) * u_bound_;
+    auto& derivative_vector = derivatives->get_mutable_vector();
+    derivative_vector.SetAtIndex(0, x_val(1));
+    derivative_vector.SetAtIndex(
+        1, pendulum_.compute_thetaddot(x_val(0), x_val(1), u_val));
+  }
+
+  void CalcClf(const Context<double>& context,
+               BasicVector<double>* output) const {
+    const Vector2<double> x_val =
+        context.get_continuous_state_vector().CopyToVector();
+    const Vector2<double> x_bar_val = x_val - x_des_;
+
+    symbolic::Environment env;
+    env.insert(x_, x_bar_val);
+    Eigen::VectorBlock<VectorX<double>> clf_vec = output->get_mutable_value();
+    clf_vec(0) = clf_.Evaluate(env);
+  }
+
+  symbolic::Polynomial clf_;
+  Vector2<symbolic::Variable> x_;
+  Eigen::Vector2d x_des_;
+  double u_bound_;
+  double deriv_eps_;
+  Pendulum pendulum_;
+  Vector2<symbolic::Polynomial> f_;
+  Vector2<symbolic::Polynomial> G_;
+  symbolic::Polynomial dVdx_times_f_;
+  symbolic::Polynomial dVdx_times_G_;
+  OutputPortIndex state_output_index_;
+  OutputPortIndex clf_output_index_;
+};
+
+void Simulate(const Vector2<symbolic::Variable>& x,
+              const Eigen::Vector2d& x_des, const symbolic::Polynomial& clf,
+              double u_bound, double deriv_eps, const Eigen::Vector2d& x0,
+              double duration) {
+  systems::DiagramBuilder<double> builder;
+  auto system =
+      builder.AddSystem<ControlledPendulum>(clf, x, x_des, u_bound, deriv_eps);
+  auto state_logger = LogVectorOutput(
+      system->get_output_port(system->state_output_index()), &builder);
+  auto clf_logger = LogVectorOutput(
+      system->get_output_port(system->clf_output_index()), &builder);
+  auto diagram = builder.Build();
+  auto context = diagram->CreateDefaultContext();
+
+  Simulator<double> simulator(*diagram);
+  simulator.get_mutable_context().SetContinuousState(x0);
+
+  simulator.AdvanceTo(duration);
+  std::cout << "finish simulation\n";
+
+  std::cout << fmt::format(
+      "final state: {}, final V: {}\n",
+      state_logger->FindLog(simulator.get_context())
+          .data()
+          .rightCols<1>()
+          .transpose(),
+      clf_logger->FindLog(simulator.get_context()).data().rightCols<1>());
+}
+
 int DoMain() {
   const Vector2<symbolic::Variable> x(symbolic::Variable("x0"),
                                       symbolic::Variable("x1"));
@@ -58,7 +179,9 @@ int DoMain() {
   const double u_bound = 25;
   Eigen::Matrix2d A;
   Eigen::Vector2d B;
-  pendulum.dynamics_gradient(M_PI, u_bound, &A, &B);
+  const double theta_des = M_PI;
+  const Vector2<double> x_des(theta_des, 0);
+  pendulum.dynamics_gradient(theta_des, u_bound, &A, &B);
   const auto lqr_result = controllers::LinearQuadraticRegulator(
       A, B, Eigen::Matrix2d::Identity(), Vector1<double>::Identity());
   pendulum.control_affine_dynamics(x, M_PI, u_bound, &f, &G);
@@ -98,12 +221,17 @@ int DoMain() {
   int s_degree = 0;
   symbolic::Polynomial t_given{0};
   const int V_degree = 2;
-  const double deriv_eps_lower = 0.01;
+  const double deriv_eps_lower = 0.5;
   const double deriv_eps_upper = kInf;
   ControlLyapunovBoxInputBound::SearchOptions search_options;
-  searcher.Search(V, l_given, lagrangian_degrees, b_degrees, x_star, S,
-                  s_degree, t_given, V_degree, deriv_eps_lower, deriv_eps_upper,
-                  search_options);
+  search_options.bilinear_iterations = 15;
+  auto clf_result = searcher.Search(
+      V, l_given, lagrangian_degrees, b_degrees, x_star, S, s_degree, t_given,
+      V_degree, deriv_eps_lower, deriv_eps_upper, search_options);
+
+  std::cout << "clf: " << clf_result.V << "\n";
+  Simulate(x, x_des, clf_result.V, u_bound, clf_result.deriv_eps,
+           Eigen::Vector2d(M_PI + 1.3, 0), 10);
   return 0;
 }
 

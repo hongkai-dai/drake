@@ -559,6 +559,20 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound) {
   ValidateRegionOfAttractionBySample(
       f, G, search_result_backoff.V, x_, u_vertices,
       search_result_backoff.deriv_eps, 1000, 1E-5, 1E-3);
+
+  // Search with algorithm 1
+  const double rho_min = 0.001;
+  const double rho_max = 5;
+  const double rho_bisection_tol = 0.01;
+  const int r_degree = V_degree - 2;
+  const ControlLyapunovBoxInputBound::RhoBisectionOption rho_bisection_option(
+      rho_min, rho_max, rho_bisection_tol);
+  const auto search_result_algo1 = dut.Search(
+      V, l_given, lagrangian_degrees, b_degrees, x_star, S, r_degree, V_degree,
+      deriv_eps_lower, deriv_eps_upper, search_options, rho_bisection_option);
+  ValidateRegionOfAttractionBySample(
+      f, G, search_result_algo1.V, x_, u_vertices,
+      search_result_backoff.deriv_eps, 1000, 1E-5, 1E-3);
 }
 
 void CheckEllipsoidInRoa(const Eigen::Ref<const VectorX<symbolic::Variable>> x,
@@ -623,7 +637,7 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound_SearchLyapunov) {
   const Eigen::Vector2d x_star(0.001, 0.002);
   const Eigen::Matrix2d S = Eigen::Vector2d(1, 2).asDiagonal();
   int r_degree = 0;
-  double rho_max = 0.01;
+  double rho_max = 0.04;
   double rho_min = 0.001;
   double rho_tol = 0.001;
   double rho_sol;

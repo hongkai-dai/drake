@@ -218,20 +218,30 @@ int DoMain() {
   ControlLyapunovBoxInputBound searcher(f, G, x, positivity_eps);
   const Eigen::Vector2d x_star(0, 0);
   Eigen::Matrix2d S = Eigen::Matrix2d::Identity();
-  int s_degree = 0;
-  symbolic::Polynomial t_given{0};
+  // int s_degree = 0;
+  // symbolic::Polynomial t_given{0};
   const int V_degree = 2;
   const double deriv_eps_lower = 0.5;
   const double deriv_eps_upper = kInf;
   ControlLyapunovBoxInputBound::SearchOptions search_options;
-  search_options.bilinear_iterations = 15;
+  search_options.bilinear_iterations = 11;
+  search_options.backoff_scale = 0.02;
+  search_options.lyap_step_solver_options = solvers::SolverOptions();
+  // search_options.lyap_step_solver_options->SetOption(solvers::CommonSolverOption::kPrintToConsole,
+  // 1);
+  const double rho_min = 0.01;
+  const double rho_max = 15;
+  const double rho_bisection_tol = 0.01;
+  const int r_degree = V_degree - 2;
+  const ControlLyapunovBoxInputBound::RhoBisectionOption rho_bisection_option(
+      rho_min, rho_max, rho_bisection_tol);
   auto clf_result = searcher.Search(
-      V, l_given, lagrangian_degrees, b_degrees, x_star, S, s_degree, t_given,
-      V_degree, deriv_eps_lower, deriv_eps_upper, search_options);
+      V, l_given, lagrangian_degrees, b_degrees, x_star, S, r_degree, V_degree,
+      deriv_eps_lower, deriv_eps_upper, search_options, rho_bisection_option);
 
   std::cout << "clf: " << clf_result.V << "\n";
   Simulate(x, x_des, clf_result.V, u_bound, clf_result.deriv_eps,
-           Eigen::Vector2d(M_PI + 1.3, 0), 10);
+           Eigen::Vector2d(M_PI + M_PI * 0.6, 0), 10);
   return 0;
 }
 

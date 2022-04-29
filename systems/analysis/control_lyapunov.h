@@ -558,6 +558,18 @@ class ControlLyapunovBoxInputBound {
       double deriv_eps_upper, const SearchOptions& options) const;
 
   /**
+   * We can search for the largest inscribed ellipsoid {x|(x−x*)ᵀS(x−x*) <=ρ}
+   * through bisection.
+   */
+  struct RhoBisectionOption {
+    RhoBisectionOption(double m_rho_min, double m_rho_max, double m_rho_tol)
+        : rho_min{m_rho_min}, rho_max{m_rho_max}, rho_tol{m_rho_tol} {}
+    double rho_min;
+    double rho_max;
+    double rho_tol;
+  };
+
+  /**
    * Overloaded Search function.
    * The condition of the ellipsoid {x | (x−x*)ᵀS(x−x*)≤ρ} being inside the
    * sub-level set {x | V(x) <= 1} is the existence of the polynomial r(x)
@@ -573,7 +585,8 @@ class ControlLyapunovBoxInputBound {
       const Eigen::Ref<const Eigen::VectorXd>& x_star,
       const Eigen::Ref<const Eigen::MatrixXd>& S, int r_degree, int V_degree,
       double deriv_eps_lower, double deriv_eps_upper,
-      const SearchOptions& options) const;
+      const SearchOptions& options,
+      const RhoBisectionOption& rho_bisection_option) const;
 
   // Step 1 in Search() function.
   void SearchLagrangianAndB(
@@ -617,13 +630,9 @@ class ControlLyapunovBoxInputBound {
   void SearchLagrangian(
       const symbolic::Polynomial& V, const VectorX<symbolic::Polynomial>& b,
       const std::vector<std::vector<std::array<int, 3>>>& lagrangian_degrees,
-      const Eigen::Ref<const Eigen::VectorXd>& x_star,
-      const Eigen::Ref<const Eigen::MatrixXd>& S, int s_degree,
-      const symbolic::Polynomial& t, const solvers::SolverId& solver_id,
+      const solvers::SolverId& solver_id,
       const std::optional<solvers::SolverOptions>& solver_options,
-      double backoff_scale,
-      std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>* l,
-      symbolic::Polynomial* s, double* rho) const;
+      std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>* l) const;
 
  private:
   VectorX<symbolic::Polynomial> f_;

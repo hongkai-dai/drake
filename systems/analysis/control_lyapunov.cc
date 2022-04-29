@@ -560,15 +560,11 @@ void ControlLyapunovBoxInputBound::SearchLagrangianAndB(
     const symbolic::Polynomial& V,
     const std::vector<std::vector<symbolic::Polynomial>>& l_given,
     const std::vector<std::vector<std::array<int, 3>>>& lagrangian_degrees,
-    const std::vector<int>& b_degrees,
-    const Eigen::Ref<const Eigen::VectorXd>& x_star,
-    const Eigen::Ref<const Eigen::MatrixXd>& S, int s_degree,
-    const symbolic::Polynomial& t, double deriv_eps_lower,
+    const std::vector<int>& b_degrees, double deriv_eps_lower,
     double deriv_eps_upper, const solvers::SolverId& solver_id,
     const std::optional<solvers::SolverOptions>& solver_options,
-    double backoff_scale, double* deriv_eps, VectorX<symbolic::Polynomial>* b,
-    std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>* l,
-    double* rho, symbolic::Polynomial* s) const {
+    double* deriv_eps, VectorX<symbolic::Polynomial>* b,
+    std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>* l) const {
   // Check if V(0) = 0
   const auto it_V_constant =
       V.monomial_to_coefficient_map().find(symbolic::Monomial());
@@ -605,10 +601,6 @@ void ControlLyapunovBoxInputBound::SearchLagrangianAndB(
       }
     }
   }
-
-  // Solve a separate program to find the inscribed ellipsoid.
-  MaximizeInnerEllipsoidRho(x_, x_star, S, V, t, s_degree, solver_id,
-                            solver_options, backoff_scale, rho, s);
 }
 
 void ControlLyapunovBoxInputBound::SearchLyapunov(
@@ -635,6 +627,48 @@ void ControlLyapunovBoxInputBound::SearchLyapunov(
   for (int i = 0; i < nu; ++i) {
     (*b)(i) = result.GetSolution(searcher.b()(i));
   }
+}
+
+void ControlLyapunovBoxInputBound::SearchLyapunov(
+    const std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>& l,
+    const std::vector<int>& b_degrees, int V_degree, double positivity_eps,
+    double deriv_eps, const Eigen::Ref<const Eigen::VectorXd>& x_star,
+    const Eigen::Ref<const Eigen::MatrixXd>& S, double rho, int r_degree,
+    const solvers::SolverId& solver_id,
+    const std::optional<solvers::SolverOptions>& solver_options,
+    double backoff_scale, symbolic::Polynomial* V,
+    VectorX<symbolic::Polynomial>* b, symbolic::Polynomial* r_sol,
+    double* d_sol) const {
+  SearchLyapunovGivenLagrangianBoxInputBound searcher(
+      f_, G_, symmetric_dynamics_, V_degree, positivity_eps, deriv_eps, l,
+      b_degrees, x_);
+  // Now add the constraint that the ellipsoid is within the sub-level set {x |
+  // V(x)<=d} Namely d−V(x) − r(x)(ρ−(x−x*)ᵀS(x−x*)) is sos and r(x) is sos.
+  const symbolic::Variables x_set(x_);
+  symbolic::Polynomial r;
+  std::tie(r, std::ignore) =
+      searcher.get_mutable_prog()->NewSosPolynomial(x_set, r_degree);
+  const symbolic::Polynomial ellipsoid_poly =
+      internal::EllipsoidPolynomial(x_, x_star, S, rho);
+  const symbolic::Variable d_var =
+      searcher.get_mutable_prog()->NewContinuousVariables<1>("d")(0);
+  // 0 <= d <= 1
+  searcher.get_mutable_prog()->AddBoundingBoxConstraint(0, 1, d_var);
+  searcher.get_mutable_prog()->AddSosConstraint(
+      symbolic::Polynomial({{symbolic::Monomial(), d_var}}) - searcher.V() +
+      r * ellipsoid_poly);
+  // The objective is to minimize d.
+  searcher.get_mutable_prog()->AddLinearCost(
+      Vector1d::Ones(), 0, Vector1<symbolic::Variable>(d_var));
+  const auto result = SearchWithBackoff(searcher.get_mutable_prog(), solver_id,
+                                        solver_options, backoff_scale);
+  *V = result.GetSolution(searcher.V());
+  b->resize(searcher.b().rows());
+  for (int i = 0; i < searcher.b().rows(); ++i) {
+    (*b)(i) = result.GetSolution(searcher.b()(i));
+  }
+  *r_sol = result.GetSolution(r);
+  *d_sol = result.GetSolution(d_var);
 }
 
 void ControlLyapunovBoxInputBound::SearchLagrangian(
@@ -686,11 +720,17 @@ ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(
     double deriv_eps_upper, const SearchOptions& options) const {
   // First search for b and lagrangians.
   SearchReturn ret;
-  SearchLagrangianAndB(
-      V_init, l_given, lagrangian_degrees, b_degrees, x_star, S, s_degree,
-      t_given, deriv_eps_lower, deriv_eps_upper, options.lagrangian_step_solver,
-      options.lagrangian_step_solver_options, options.backoff_scale,
-      &(ret.deriv_eps), &(ret.b), &(ret.l), &(ret.rho), &(ret.s));
+  SearchLagrangianAndB(V_init, l_given, lagrangian_degrees, b_degrees,
+                       deriv_eps_lower, deriv_eps_upper,
+                       options.lagrangian_step_solver,
+                       options.lagrangian_step_solver_options, &(ret.deriv_eps),
+                       &(ret.b), &(ret.l));
+
+  // Solve a separate program to find the inscribed ellipsoid.
+  MaximizeInnerEllipsoidRho(
+      x_, x_star, S, V_init, t_given, s_degree, options.lagrangian_step_solver,
+      options.lagrangian_step_solver_options, options.backoff_scale, (&ret.rho),
+      &(ret.ellipsoid_lagrangian));
 
   int iter = 0;
   bool converged = false;
@@ -698,14 +738,14 @@ ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(
     double rho_new;
     drake::log()->info("search Lyapunov");
     SearchLyapunov(ret.l, b_degrees, V_degree, positivity_eps_, ret.deriv_eps,
-                   x_star, S, ret.s, t_given, options.lyap_step_solver,
-                   options.lyap_step_solver_options, options.backoff_scale,
-                   &(ret.V), &(ret.b), &rho_new);
+                   x_star, S, ret.ellipsoid_lagrangian, t_given,
+                   options.lyap_step_solver, options.lyap_step_solver_options,
+                   options.backoff_scale, &(ret.V), &(ret.b), &rho_new);
     drake::log()->info("search Lagrangian");
-    SearchLagrangian(ret.V, ret.b, lagrangian_degrees, x_star, S, s_degree,
-                     t_given, options.lagrangian_step_solver,
-                     options.lagrangian_step_solver_options,
-                     options.backoff_scale, &(ret.l), &(ret.s), &rho_new);
+    SearchLagrangian(
+        ret.V, ret.b, lagrangian_degrees, x_star, S, s_degree, t_given,
+        options.lagrangian_step_solver, options.lagrangian_step_solver_options,
+        options.backoff_scale, &(ret.l), &(ret.ellipsoid_lagrangian), &rho_new);
     drake::log()->info("iter: {}, rho: {}", iter, rho_new);
     if (rho_new - ret.rho < options.rho_converge_tol) {
       converged = true;
@@ -744,6 +784,56 @@ void MaximizeInnerEllipsoidRho(
   DRAKE_DEMAND(result.is_success());
   *rho_sol = result.GetSolution(rho);
   *s_sol = result.GetSolution(s);
+}
+
+void MaximizeInnerEllipsoidRho(
+    const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+    const Eigen::Ref<const Eigen::VectorXd>& x_star,
+    const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& V,
+    int r_degree, double rho_max, double rho_min,
+    const solvers::SolverId& solver_id,
+    const std::optional<solvers::SolverOptions>& solver_options, double rho_tol,
+    double* rho_sol, symbolic::Polynomial* r_sol) {
+  DRAKE_DEMAND(rho_max > rho_min);
+  DRAKE_DEMAND(rho_tol > 0);
+  const symbolic::Polynomial ellipsoid_quadratic =
+      internal::EllipsoidPolynomial(x, x_star, S, 0.);
+  auto is_feasible = [&x, &V, &r_degree, &solver_id, &solver_options,
+                      &ellipsoid_quadratic, r_sol](double rho) {
+    solvers::MathematicalProgram prog;
+    prog.AddIndeterminates(x);
+    symbolic::Polynomial r;
+    std::tie(r, std::ignore) =
+        prog.NewSosPolynomial(symbolic::Variables(x), r_degree);
+    prog.AddSosConstraint(1 - V - r * (rho - ellipsoid_quadratic));
+    auto solver = solvers::MakeSolver(solver_id);
+    solvers::MathematicalProgramResult result;
+    solver->Solve(prog, std::nullopt, solver_options, &result);
+    if (result.is_success()) {
+      *r_sol = result.GetSolution(r);
+      return true;
+    } else {
+      return false;
+    }
+  };
+
+  if (!is_feasible(rho_min)) {
+    drake::log()->error("MaximizeEllipsoidRho: rho_min={} is infeasible",
+                        rho_min);
+  }
+  if (is_feasible(rho_max)) {
+    *rho_sol = rho_max;
+    return;
+  }
+  while (rho_max - rho_min > rho_tol) {
+    const double rho_mid = (rho_max + rho_min) / 2;
+    if (is_feasible(rho_mid)) {
+      rho_min = rho_mid;
+    } else {
+      rho_max = rho_mid;
+    }
+  }
+  *rho_sol = rho_min;
 }
 
 namespace internal {

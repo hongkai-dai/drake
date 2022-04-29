@@ -205,21 +205,6 @@ class SearchLagrangianAndBGivenVBoxInputBound {
   };
 
  private:
-  // Step 1 of Search() function. Search for Lagrangian multipliers and b.
-  void SearchLagrangianAndB(
-      const symbolic::Polynomial& V,
-      const std::vector<std::vector<symbolic::Polynomial>>& l_given,
-      const std::vector<std::vector<std::array<int, 3>>>& lagrangian_degrees,
-      const std::vector<int>& b_degrees,
-      const Eigen::Ref<const Eigen::VectorXd>& x_star,
-      const Eigen::Ref<const Eigen::MatrixXd>& S, int s_degree,
-      const symbolic::Polynomial& t, double deriv_eps_lower,
-      double deriv_eps_upper, const solvers::SolverId& solver_id,
-      const solvers::SolverOptions& solver_options, double backoff_scale,
-      double* deriv_eps, VectorX<symbolic::Polynomial>* b,
-      std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>* l,
-      double* rho) const;
-
   solvers::MathematicalProgram prog_;
   symbolic::Polynomial V_;
   VectorX<symbolic::Polynomial> f_;
@@ -527,7 +512,7 @@ class ControlLyapunovBoxInputBound {
     VectorX<symbolic::Polynomial> b;
     double deriv_eps;
     std::vector<std::vector<std::array<symbolic::Polynomial, 3>>> l;
-    symbolic::Polynomial s;
+    symbolic::Polynomial ellipsoid_lagrangian;
     double rho;
   };
 
@@ -546,8 +531,8 @@ class ControlLyapunovBoxInputBound {
   };
 
   /**
-   * Given V_init(x) and lᵢ₀(x), lᵢ₁(x), we search the control Lyapunov function
-   * and maximize the ROA through the following process
+   * Given V_init(x), lᵢ₀₀(x) and lᵢ₁₀(x), we search the control Lyapunov
+   * function and maximize the ROA through the following process
    * 1. Fix V_init(x), lᵢ₀₀(x), lᵢ₁₀(x), search for lᵢ₀₁(x)lᵢ₀₂(x), lᵢ₁₁(x),
    * lᵢ₁₂(x), s(x), bᵢ(x).
    * 2. Fix Lagrangian multipliers lᵢ₀₀(x),...,lᵢ₁₂(x) s(x), search V(x) and
@@ -555,6 +540,12 @@ class ControlLyapunovBoxInputBound {
    * 3. Fix V(x), bᵢ(x), and search for Lagrangian multipliers
    *    lᵢ₀₀(x),...,lᵢ₁₂(x), s(x). Go to step 2.
    *
+   * This function maximizes volume of the inner ellipsoid
+   * {x | (x−x*)ᵀS(x−x*)≤ρ}, the condition of the ellipsoid being within the
+   * sub-level set {x | V(x) <= 1} is the existence of polynomials t(x) and s(x)
+   *
+   *     (1+t(x))((x−x*)ᵀS(x−x*)−ρ) − s(x)(V(x)−1) is sos.
+   *     t(x), s(x) is sos.
    */
   SearchReturn Search(
       const symbolic::Polynomial& V_init,
@@ -566,23 +557,37 @@ class ControlLyapunovBoxInputBound {
       const symbolic::Polynomial& t_given, int V_degree, double deriv_eps_lower,
       double deriv_eps_upper, const SearchOptions& options) const;
 
- private:
+  /**
+   * Overloaded Search function.
+   * The condition of the ellipsoid {x | (x−x*)ᵀS(x−x*)≤ρ} being inside the
+   * sub-level set {x | V(x) <= 1} is the existence of the polynomial r(x)
+   *
+   *     1−V(x) − r(x)(ρ−(x−x*)ᵀS(x−x*)) is sos.
+   *     r(x) is sos.
+   */
+  SearchReturn Search(
+      const symbolic::Polynomial& V_init,
+      const std::vector<std::vector<symbolic::Polynomial>>& l_given,
+      const std::vector<std::vector<std::array<int, 3>>>& lagrangian_degrees,
+      const std::vector<int>& b_degrees,
+      const Eigen::Ref<const Eigen::VectorXd>& x_star,
+      const Eigen::Ref<const Eigen::MatrixXd>& S, int r_degree, int V_degree,
+      double deriv_eps_lower, double deriv_eps_upper,
+      const SearchOptions& options) const;
+
   // Step 1 in Search() function.
   void SearchLagrangianAndB(
       const symbolic::Polynomial& V,
       const std::vector<std::vector<symbolic::Polynomial>>& l_given,
       const std::vector<std::vector<std::array<int, 3>>>& lagrangian_degrees,
-      const std::vector<int>& b_degrees,
-      const Eigen::Ref<const Eigen::VectorXd>& x_star,
-      const Eigen::Ref<const Eigen::MatrixXd>& S, int s_degree,
-      const symbolic::Polynomial& t, double deriv_eps_lower,
+      const std::vector<int>& b_degrees, double deriv_eps_lower,
       double deriv_eps_upper, const solvers::SolverId& solver_id,
       const std::optional<solvers::SolverOptions>& solver_options,
-      double backoff_scale, double* deriv_eps, VectorX<symbolic::Polynomial>* b,
-      std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>* l,
-      double* rho, symbolic::Polynomial* s) const;
+      double* deriv_eps, VectorX<symbolic::Polynomial>* b,
+      std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>* l) const;
 
   // Step 2 in Search() function.
+  // The objective is to maximize ρ in the ellipsoid.
   void SearchLyapunov(
       const std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>& l,
       const std::vector<int>& b_degrees, int V_degree, double positivity_eps,
@@ -592,6 +597,21 @@ class ControlLyapunovBoxInputBound {
       const std::optional<solvers::SolverOptions>& solver_options,
       double backoff_scale, symbolic::Polynomial* V,
       VectorX<symbolic::Polynomial>* b, double* rho) const;
+
+  // Overloaded step 2 of Search() function.
+  // Given the ellipsoid {x|(x−x*)ᵀS(x−x*) <=ρ}, the goal is to minimize the
+  // maximal value of V(x) within the ellipsoid. This maximal value is denoted
+  // by d.
+  void SearchLyapunov(
+      const std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>& l,
+      const std::vector<int>& b_degrees, int V_degree, double positivity_eps,
+      double deriv_eps, const Eigen::Ref<const Eigen::VectorXd>& x_star,
+      const Eigen::Ref<const Eigen::MatrixXd>& S, double rho, int r_degree,
+      const solvers::SolverId& solver_id,
+      const std::optional<solvers::SolverOptions>& solver_options,
+      double backoff_scale, symbolic::Polynomial* V,
+      VectorX<symbolic::Polynomial>* b, symbolic::Polynomial* r,
+      double* d) const;
 
   // Step 3 in Search() function.
   void SearchLagrangian(
@@ -605,6 +625,7 @@ class ControlLyapunovBoxInputBound {
       std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>* l,
       symbolic::Polynomial* s, double* rho) const;
 
+ private:
   VectorX<symbolic::Polynomial> f_;
   MatrixX<symbolic::Polynomial> G_;
   bool symmetric_dynamics_;
@@ -629,6 +650,24 @@ void MaximizeInnerEllipsoidRho(
     const solvers::SolverId& solver_id,
     const std::optional<solvers::SolverOptions>& solver_options,
     double backoff_scale, double* rho_sol, symbolic::Polynomial* s_sol);
+
+/**
+ * Find the largest inscribed ellipsoid {x | (x-x*)ᵀS(x-x*) <= ρ} in the
+ * sub-level set {x | V(x)<= 1}. Solve the following problem on the variable
+ * r(x) through bisecting ρ
+ *
+ *     max ρ
+ *     s.t 1 - V(x) - r(x)*(ρ-(x-x*)ᵀS(x-x*)) is sos
+ *         r(x) is sos.
+ */
+void MaximizeInnerEllipsoidRho(
+    const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+    const Eigen::Ref<const Eigen::VectorXd>& x_star,
+    const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& V,
+    int r_degree, double rho_max, double rho_min,
+    const solvers::SolverId& solver_id,
+    const std::optional<solvers::SolverOptions>& solver_options, double rho_tol,
+    double* rho_sol, symbolic::Polynomial* r_sol);
 
 namespace internal {
 /** The ellipsoid polynomial (x−x*)ᵀS(x−x*)−ρ

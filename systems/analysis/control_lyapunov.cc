@@ -674,13 +674,9 @@ void ControlLyapunovBoxInputBound::SearchLyapunov(
 void ControlLyapunovBoxInputBound::SearchLagrangian(
     const symbolic::Polynomial& V, const VectorX<symbolic::Polynomial>& b,
     const std::vector<std::vector<std::array<int, 3>>>& lagrangian_degrees,
-    const Eigen::Ref<const Eigen::VectorXd>& x_star,
-    const Eigen::Ref<const Eigen::MatrixXd>& S, int s_degree,
-    const symbolic::Polynomial& t, const solvers::SolverId& solver_id,
+    const solvers::SolverId& solver_id,
     const std::optional<solvers::SolverOptions>& solver_options,
-    double backoff_scale,
-    std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>* l,
-    symbolic::Polynomial* s, double* rho) const {
+    std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>* l) const {
   SearchLagrangianGivenVBoxInputBound searcher(V, f_, G_, symmetric_dynamics_,
                                                b, x_, lagrangian_degrees);
   auto solver = solvers::MakeSolver(solver_id);
@@ -703,10 +699,6 @@ void ControlLyapunovBoxInputBound::SearchLagrangian(
       }
     }
   }
-
-  // Solve a separate program to find the innner ellipsoid.
-  MaximizeInnerEllipsoidRho(x_, x_star, S, V, t, s_degree, solver_id,
-                            solver_options, backoff_scale, rho, s);
 }
 
 ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(
@@ -729,7 +721,7 @@ ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(
   // Solve a separate program to find the inscribed ellipsoid.
   MaximizeInnerEllipsoidRho(
       x_, x_star, S, V_init, t_given, s_degree, options.lagrangian_step_solver,
-      options.lagrangian_step_solver_options, options.backoff_scale, (&ret.rho),
+      options.lagrangian_step_solver_options, options.backoff_scale, &(ret.rho),
       &(ret.ellipsoid_lagrangian));
 
   int iter = 0;
@@ -742,10 +734,70 @@ ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(
                    options.lyap_step_solver, options.lyap_step_solver_options,
                    options.backoff_scale, &(ret.V), &(ret.b), &rho_new);
     drake::log()->info("search Lagrangian");
-    SearchLagrangian(
-        ret.V, ret.b, lagrangian_degrees, x_star, S, s_degree, t_given,
-        options.lagrangian_step_solver, options.lagrangian_step_solver_options,
-        options.backoff_scale, &(ret.l), &(ret.ellipsoid_lagrangian), &rho_new);
+    SearchLagrangian(ret.V, ret.b, lagrangian_degrees,
+                     options.lagrangian_step_solver,
+                     options.lagrangian_step_solver_options, &(ret.l));
+    // Solve a separate program to find the innner ellipsoid.
+    MaximizeInnerEllipsoidRho(
+        x_, x_star, S, ret.V, t_given, s_degree, options.lagrangian_step_solver,
+        options.lagrangian_step_solver_options, options.backoff_scale, &rho_new,
+        &(ret.ellipsoid_lagrangian));
+    drake::log()->info("iter: {}, rho: {}", iter, rho_new);
+    if (rho_new - ret.rho < options.rho_converge_tol) {
+      converged = true;
+    }
+    ret.rho = rho_new;
+    iter += 1;
+  }
+  return ret;
+}
+
+ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(
+    const symbolic::Polynomial& V_init,
+    const std::vector<std::vector<symbolic::Polynomial>>& l_given,
+    const std::vector<std::vector<std::array<int, 3>>>& lagrangian_degrees,
+    const std::vector<int>& b_degrees,
+    const Eigen::Ref<const Eigen::VectorXd>& x_star,
+    const Eigen::Ref<const Eigen::MatrixXd>& S, int r_degree, int V_degree,
+    double deriv_eps_lower, double deriv_eps_upper,
+    const SearchOptions& options,
+    const RhoBisectionOption& rho_bisection_option) const {
+  SearchReturn ret;
+  drake::log()->info("search Lagrangian and b.");
+  // First search for b and Lagrangians.
+  SearchLagrangianAndB(V_init, l_given, lagrangian_degrees, b_degrees,
+                       deriv_eps_lower, deriv_eps_upper,
+                       options.lagrangian_step_solver,
+                       options.lagrangian_step_solver_options, &(ret.deriv_eps),
+                       &(ret.b), &(ret.l));
+  // Solve a separate program to find the inscribed ellipsoid.
+  MaximizeInnerEllipsoidRho(
+      x_, x_star, S, V_init, r_degree, rho_bisection_option.rho_max,
+      rho_bisection_option.rho_min, options.lagrangian_step_solver,
+      options.lagrangian_step_solver_options, rho_bisection_option.rho_tol,
+      &(ret.rho), &(ret.ellipsoid_lagrangian));
+
+  int iter = 0;
+  bool converged = false;
+  while (iter < options.bilinear_iterations && !converged) {
+    double d;
+    drake::log()->info("search Lyapunov");
+    SearchLyapunov(ret.l, b_degrees, V_degree, positivity_eps_, ret.deriv_eps,
+                   x_star, S, ret.rho, r_degree, options.lyap_step_solver,
+                   options.lyap_step_solver_options, options.backoff_scale,
+                   &(ret.V), &(ret.b), &(ret.ellipsoid_lagrangian), &d);
+    drake::log()->info("d={}", d);
+    drake::log()->info("search Lagrangian");
+    SearchLagrangian(ret.V, ret.b, lagrangian_degrees,
+                     options.lagrangian_step_solver,
+                     options.lagrangian_step_solver_options, &(ret.l));
+    // Solve a separate program to find the inner ellipsoid.
+    double rho_new;
+    MaximizeInnerEllipsoidRho(
+        x_, x_star, S, ret.V, r_degree, rho_bisection_option.rho_max,
+        rho_bisection_option.rho_min, options.lagrangian_step_solver,
+        options.lagrangian_step_solver_options, rho_bisection_option.rho_tol,
+        &rho_new, &(ret.ellipsoid_lagrangian));
     drake::log()->info("iter: {}, rho: {}", iter, rho_new);
     if (rho_new - ret.rho < options.rho_converge_tol) {
       converged = true;

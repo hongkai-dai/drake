@@ -533,11 +533,9 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound) {
   // Search without backoff.
   search_options.backoff_scale = 0.;
   search_options.bilinear_iterations = 5;
-  search_options.lyap_step_solver = solvers::CsdpSolver::id();
   search_options.lyap_step_solver_options = solvers::SolverOptions();
   search_options.lyap_step_solver_options->SetOption(
       solvers::CommonSolverOption::kPrintToConsole, 0);
-  search_options.lagrangian_step_solver = solvers::CsdpSolver::id();
   search_options.lagrangian_step_solver_options = solvers::SolverOptions();
   search_options.lagrangian_step_solver_options->SetOption(
       solvers::CommonSolverOption::kPrintToConsole, 0);
@@ -594,6 +592,75 @@ void CheckEllipsoidInRoa(const Eigen::Ref<const VectorX<symbolic::Variable>> x,
   }
 }
 
+TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound_SearchLyapunov) {
+  // Test ControlLyapunovBoxInutBound::SearchLyapunov whose objective is to
+  // minimize the maximal value of V(x) on the inner ellipsoid.
+  symbolic::Polynomial V;
+  Vector2<symbolic::Polynomial> f;
+  Matrix2<symbolic::Polynomial> G;
+  std::vector<std::vector<symbolic::Polynomial>> l_given;
+  std::vector<std::vector<std::array<int, 3>>> lagrangian_degrees;
+  const bool symmetric_dynamics = true;
+  InitializeWithLQR(symmetric_dynamics, &V, &f, &G, &l_given,
+                    &lagrangian_degrees);
+  const int nu{2};
+  std::vector<int> b_degrees(nu, 2);
+
+  const double positivity_eps{0.};
+  ControlLyapunovBoxInputBound dut(f, G, x_, positivity_eps);
+
+  const double deriv_eps_lower = 0.01;
+  const double deriv_eps_upper = kInf;
+  // First find b and Lagrangian multiplier.
+  double deriv_eps;
+  VectorX<symbolic::Polynomial> b;
+  std::vector<std::vector<std::array<symbolic::Polynomial, 3>>> l;
+  dut.SearchLagrangianAndB(V, l_given, lagrangian_degrees, b_degrees,
+                           deriv_eps_lower, deriv_eps_upper,
+                           solvers::MosekSolver::id(), std::nullopt, &deriv_eps,
+                           &b, &l);
+  // Find the maximal inscribed ellipsoid.
+  const Eigen::Vector2d x_star(0.001, 0.002);
+  const Eigen::Matrix2d S = Eigen::Vector2d(1, 2).asDiagonal();
+  int r_degree = 0;
+  double rho_max = 0.01;
+  double rho_min = 0.001;
+  double rho_tol = 0.001;
+  double rho_sol;
+  symbolic::Polynomial r_sol;
+  MaximizeInnerEllipsoidRho(x_, x_star, S, V, r_degree, rho_max, rho_min,
+                            solvers::MosekSolver::id(), std::nullopt, rho_tol,
+                            &rho_sol, &r_sol);
+
+  // Now find the Lyapunov function.
+  const double backoff_scale = 0.01;
+  symbolic::Polynomial V_sol;
+  VectorX<symbolic::Polynomial> b_sol;
+  double d_sol;
+  dut.SearchLyapunov(l, b_degrees, V.TotalDegree(), positivity_eps, deriv_eps,
+                     x_star, S, rho_sol, r_degree, solvers::MosekSolver::id(),
+                     std::nullopt, backoff_scale, &V_sol, &b_sol, &r_sol,
+                     &d_sol);
+  // First validate that V is a valid CLF.
+  Eigen::Matrix<double, 2, 4> u_vertices;
+  u_vertices << 1, 1, -1, -1, 1, -1, 1, -1;
+  ValidateRegionOfAttractionBySample(f, G, V_sol, x_, u_vertices, deriv_eps,
+                                     100, 1E-5, 1E-3);
+  EXPECT_GT(d_sol, 0);
+  EXPECT_LE(d_sol, 1);
+  // Now check if the ellipsoid is in the sub-level set {x | V(x) <= d}.
+  CheckEllipsoidInRoa(x_, x_star, S, rho_sol, 1. / d_sol * V_sol);
+
+  // Now find the largest ellipsoid in {x | V(x)<=1} again. This ellipsoid
+  // should be larger than the one before searching for V.
+  double rho_sol_new;
+  symbolic::Polynomial r_sol_new;
+  MaximizeInnerEllipsoidRho(x_, x_star, S, V_sol, r_degree, rho_max, rho_min,
+                            solvers::MosekSolver::id(), std::nullopt, rho_tol,
+                            &rho_sol_new, &r_sol_new);
+  EXPECT_GT(rho_sol_new, rho_sol);
+}
+
 GTEST_TEST(MaximizeInnerEllipsoidRho, Test1) {
   // Test a 2D case with known solution.
   // Find the largest x²+4y² <= ρ within the circle 2x²+2y² <= 1
@@ -636,21 +703,51 @@ GTEST_TEST(MaximizeInnerEllipsoidRho, Test2) {
   ASSERT_LE(
       V.Evaluate(symbolic::Environment({{x(0), x_star(0)}, {x(1), x_star(1)}})),
       1);
-  const symbolic::Polynomial t(0);
-  const int s_degree = 2;
-  const double backoff_scale = 0.05;
-  double rho_sol;
-  symbolic::Polynomial s_sol;
-  solvers::SolverOptions solver_options;
-  solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 0);
-  // I am really surprised that this SOS finds a solution with rho > 0. AFAIK,
-  // t(x) is constant, hence (1+t(x))((x-x*)ᵀS(x-x*)-ρ) is a degree 2
-  // polynomial, while -s(x)*(V(x)-1) has much higher degree (>6) with negative
-  // leading terms. The resulting polynomial cannot be sos.
-  MaximizeInnerEllipsoidRho(x, x_star, S, V, t, s_degree,
-                            solvers::MosekSolver::id(), solver_options,
-                            backoff_scale, &rho_sol, &s_sol);
-  CheckEllipsoidInRoa(x, x_star, S, rho_sol, V);
+  {
+    // Test the program
+    // max ρ
+    // s.t (1+t(x))((x-x*)ᵀS(x-x*)-ρ) - s(x)(V(x)-1) is sos
+    //     s(x) is sos
+    const symbolic::Polynomial t(0);
+    const int s_degree = 2;
+    const double backoff_scale = 0.05;
+    double rho_sol;
+    symbolic::Polynomial s_sol;
+    solvers::SolverOptions solver_options;
+    solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 0);
+    // I am really surprised that this SOS finds a solution with rho > 0. AFAIK,
+    // t(x) is constant, hence (1+t(x))((x-x*)ᵀS(x-x*)-ρ) is a degree 2
+    // polynomial, while -s(x)*(V(x)-1) has much higher degree (>6) with
+    // negative leading terms. The resulting polynomial cannot be sos.
+    MaximizeInnerEllipsoidRho(x, x_star, S, V, t, s_degree,
+                              solvers::MosekSolver::id(), solver_options,
+                              backoff_scale, &rho_sol, &s_sol);
+    CheckEllipsoidInRoa(x, x_star, S, rho_sol, V);
+  }
+
+  {
+    // Test the bisection approach
+    const int r_degree = 2;
+    const double rho_max = 1;
+    const double rho_min = 0.2;
+    const double rho_tol = 0.1;
+    double rho_sol;
+    symbolic::Polynomial r_sol;
+    MaximizeInnerEllipsoidRho(x, x_star, S, V, r_degree, rho_max, rho_min,
+                              solvers::MosekSolver::id(), std::nullopt, rho_tol,
+                              &rho_sol, &r_sol);
+    CheckEllipsoidInRoa(x, x_star, S, rho_sol, V);
+    // Check if r_sol is sos.
+    Eigen::Matrix2Xd x_check = Eigen::Matrix2Xd::Random(2, 100);
+    const symbolic::Polynomial sos_cond =
+        1 - V + r_sol * internal::EllipsoidPolynomial(x, x_star, S, rho_sol);
+    for (int i = 0; i < x_check.cols(); ++i) {
+      symbolic::Environment env;
+      env.insert(x, x_check.col(i));
+      EXPECT_GE(r_sol.Evaluate(env), 0.);
+      EXPECT_GE(sos_cond.Evaluate(env), 0.);
+    }
+  }
 }
 
 GTEST_TEST(EllipsoidPolynomial, Test) {
@@ -714,3 +811,12 @@ GTEST_TEST(NewFreePolynomialNoConstantOrLinear, Test) {
 }  // namespace analysis
 }  // namespace systems
 }  // namespace drake
+
+int main(int argc, char** argv) {
+  // Ensure that we have the MOSEK license for the entire duration of this test,
+  // so that we do not have to release and re-acquire the license for every
+  // test.
+  auto mosek_license = drake::solvers::MosekSolver::AcquireLicense();
+  ::testing::InitGoogleTest(&argc, argv);
+  return RUN_ALL_TESTS();
+}

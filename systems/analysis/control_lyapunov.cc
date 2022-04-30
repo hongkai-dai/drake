@@ -523,6 +523,7 @@ solvers::MathematicalProgramResult SearchWithBackoff(
     drake::log()->error("Failed before backoff\n");
   }
   // PrintPsdConstraintStat(*prog, result);
+  DRAKE_DEMAND(result.is_success());
   DRAKE_DEMAND(backoff_scale >= 0 && backoff_scale <= 1);
   if (backoff_scale > 0) {
     drake::log()->info("backoff");
@@ -539,6 +540,7 @@ solvers::MathematicalProgramResult SearchWithBackoff(
       drake::log()->error("Backoff failed\n");
     }
     // PrintPsdConstraintStat(*prog, result);
+    DRAKE_DEMAND(result.is_success());
   }
   return result;
 }
@@ -585,6 +587,7 @@ void ControlLyapunovBoxInputBound::SearchLagrangianAndB(
     log()->error("Failed to find Lagrangian and b(x)");
   }
   // PrintPsdConstraintStat(searcher.prog(), result_searcher);
+  DRAKE_DEMAND(result_searcher.is_success());
   *deriv_eps = result_searcher.GetSolution(searcher.deriv_eps());
   const int nu = G_.cols();
   b->resize(nu);
@@ -693,6 +696,7 @@ void ControlLyapunovBoxInputBound::SearchLagrangian(
         drake::log()->error("Failed to find Lagrangian for i={}, j={}", i, j);
       }
       // PrintPsdConstraintStat(searcher.prog(i, j), result_searcher);
+      DRAKE_DEMAND(result_searcher.is_success());
       for (int k = 0; k < 3; ++k) {
         (*l)[i][j][k] =
             result_searcher.GetSolution(searcher.lagrangians()[i][j][k]);

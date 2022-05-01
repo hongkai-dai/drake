@@ -78,7 +78,8 @@ VdotCalculator::VdotCalculator(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
     const symbolic::Polynomial& V,
     const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
-    const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G) {
+    const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G)
+    : x_{x} {
   const RowVectorX<symbolic::Polynomial> dVdx = V.Jacobian(x);
   dVdx_times_f_ = (dVdx * f)(0);
   dVdx_times_G_ = dVdx * G;
@@ -87,6 +88,16 @@ VdotCalculator::VdotCalculator(
 symbolic::Polynomial VdotCalculator::Calc(
     const Eigen::Ref<const Eigen::VectorXd>& u) const {
   return dVdx_times_f_ + (dVdx_times_G_ * u)(0);
+}
+
+Eigen::VectorXd VdotCalculator::CalcMin(
+    const Eigen::Ref<const Eigen::MatrixXd>& x_vals) const {
+  DRAKE_DEMAND(x_vals.rows() == x_.rows());
+  Eigen::VectorXd ret = dVdx_times_f_.EvaluateIndeterminates(x_, x_vals);
+  for (int i = 0; i < dVdx_times_G_.cols(); ++i) {
+    ret -= dVdx_times_G_(i).EvaluateIndeterminates(x_, x_vals).array().abs().matrix();
+  }
+  return ret;
 }
 
 void CheckDynamicsInput(const symbolic::Polynomial& V,

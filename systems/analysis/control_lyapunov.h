@@ -88,7 +88,17 @@ class VdotCalculator {
 
   symbolic::Polynomial Calc(const Eigen::Ref<const Eigen::VectorXd>& u) const;
 
+  /**
+   * Compute min ∂V/∂x*f(x)+∂V/∂x * G(x)*u
+   *             -1 <= u <= 1
+   * for each x.
+   * @param x_vals A batch of x values. x_vals.col(i) is the i'th sample value
+   * of x.
+   */
+  Eigen::VectorXd CalcMin(const Eigen::Ref<const Eigen::MatrixXd>& x_vals) const;
+
  private:
+  VectorX<symbolic::Variable> x_;
   symbolic::Polynomial dVdx_times_f_;
   RowVectorX<symbolic::Polynomial> dVdx_times_G_;
 };

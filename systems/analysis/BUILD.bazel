@@ -846,6 +846,18 @@ drake_cc_binary(
     ],
 )
 
+drake_cc_binary(
+    name = "quadrotor2d_clf_demo",
+    srcs = ["test/quadrotor2d_clf_demo.cc"],
+    deps = [
+        ":control_lyapunov",
+        ":simulator",
+        "//solvers:solve",
+        "//systems/controllers:linear_quadratic_regulator",
+        "//systems/primitives:vector_log_sink",
+    ],
+)
+
 drake_cc_googletest(
     name = "control_lyapunov_test",
     timeout = "moderate",

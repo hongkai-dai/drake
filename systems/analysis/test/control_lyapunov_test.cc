@@ -6,6 +6,7 @@
 
 #include "drake/common/symbolic_monomial_util.h"
 #include "drake/common/test_utilities/symbolic_test_util.h"
+#include "drake/math/matrix_util.h"
 #include "drake/solvers/common_solver_option.h"
 #include "drake/solvers/csdp_solver.h"
 #include "drake/solvers/mosek_solver.h"
@@ -60,13 +61,16 @@ class SimpleLinearSystemTest : public ::testing::Test {
     B_ << 1, 0.5, 0.5, 1;
     x_ << symbolic::Variable("x0"), symbolic::Variable("x1");
     x_set_ = symbolic::Variables(x_);
+
+    // clang-format off
+    u_vertices_ << 1, 1, -1, -1,
+                   1, -1, 1, -1;
+    // clang-format on
   }
 
-  void InitializeWithLQR(
-      bool symmetric_dynamics, symbolic::Polynomial* V,
-      Vector2<symbolic::Polynomial>* f, Matrix2<symbolic::Polynomial>* G,
-      std::vector<std::vector<symbolic::Polynomial>>* l_given,
-      std::vector<std::vector<std::array<int, 3>>>* lagrangian_degrees) {
+  void InitializeWithLQR(bool symmetric_dynamics, symbolic::Polynomial* V,
+                         Vector2<symbolic::Polynomial>* f,
+                         Matrix2<symbolic::Polynomial>* G) {
     // We first compute LQR cost-to-go as the candidate Lyapunov function.
     const controllers::LinearQuadraticRegulatorResult lqr_result =
         controllers::LinearQuadraticRegulator(
@@ -85,6 +89,15 @@ class SimpleLinearSystemTest : public ::testing::Test {
         (*G)(i, j) = symbolic::Polynomial(B_(i, j));
       }
     }
+  }
+
+  // This is used for SearchControlLyapunovBoxInputBound
+  void InitializeWithLQR(
+      bool symmetric_dynamics, symbolic::Polynomial* V,
+      Vector2<symbolic::Polynomial>* f, Matrix2<symbolic::Polynomial>* G,
+      std::vector<std::vector<symbolic::Polynomial>>* l_given,
+      std::vector<std::vector<std::array<int, 3>>>* lagrangian_degrees) {
+    InitializeWithLQR(symmetric_dynamics, V, f, G);
     // Set l_[i][0] and l_[i][1] to 1 + x.dot(x)
     const int nu = 2;
     l_given->resize(nu);
@@ -110,6 +123,7 @@ class SimpleLinearSystemTest : public ::testing::Test {
   Eigen::Matrix2d B_;
   Vector2<symbolic::Variable> x_;
   symbolic::Variables x_set_;
+  Eigen::Matrix<double, 2, 4> u_vertices_;
 };
 
 void CheckSearchLagrangianAndBResult(
@@ -821,6 +835,59 @@ GTEST_TEST(NewFreePolynomialNoConstantOrLinear, Test) {
   check(4, symbolic::internal::DegreeType::kAny, 12);
   check(4, symbolic::internal::DegreeType::kEven, 8);
   check(4, symbolic::internal::DegreeType::kOdd, 4);
+}
+
+TEST_F(SimpleLinearSystemTest, ConstructLagrangianProgram) {
+  // Test SearchControlLyapunov::ConstructLagrangianProgram
+  Vector2<symbolic::Polynomial> f;
+  Matrix2<symbolic::Polynomial> G;
+  symbolic::Polynomial V;
+  bool symmetric_dynamics = true;
+  InitializeWithLQR(symmetric_dynamics, &V, &f, &G);
+  SearchControlLyapunov dut(x_, f, G, u_vertices_);
+  const int lambda0_degree = 0;
+  const std::vector<int> l_degrees = {2, 2, 2, 2};
+  const double deriv_eps = 0.01;
+  symbolic::Polynomial lambda0;
+  MatrixX<symbolic::Variable> lambda0_gram;
+  VectorX<symbolic::Polynomial> l;
+  std::vector<MatrixX<symbolic::Variable>> l_grams;
+  symbolic::Polynomial vdot_sos;
+  VectorX<symbolic::Monomial> vdot_monomials;
+  MatrixX<symbolic::Variable> vdot_gram;
+  auto prog = dut.ConstructLagrangianProgram(
+      V, deriv_eps, lambda0_degree, l_degrees, &lambda0, &lambda0_gram, &l,
+      &l_grams, &vdot_sos, &vdot_monomials, &vdot_gram);
+  const auto result = solvers::Solve(*prog);
+  ASSERT_TRUE(result.is_success());
+  // Check the positivity of Gram matrices.
+  const auto lambda0_gram_sol = result.GetSolution(lambda0_gram);
+  EXPECT_TRUE(math::IsPositiveDefinite(lambda0_gram_sol));
+  const int num_u_vertices = u_vertices_.cols();
+  std::vector<Eigen::MatrixXd> l_grams_sol(num_u_vertices);
+  for (int i = 0; i < num_u_vertices; ++i) {
+    l_grams_sol[i] = result.GetSolution(l_grams[i]);
+    EXPECT_TRUE(math::IsPositiveDefinite(l_grams_sol[i]));
+  }
+  const Eigen::MatrixXd vdot_gram_sol = result.GetSolution(vdot_gram);
+  EXPECT_TRUE(math::IsPositiveDefinite(vdot_gram_sol));
+
+  // Now check if the vdot sos is computed correctly.
+  symbolic::Polynomial vdot_sos_expected =
+      (1 + result.GetSolution(lambda0)) *
+      symbolic::Polynomial(x_.cast<symbolic::Expression>().dot(x_)) * (V - 1);
+  const auto dVdx = V.Jacobian(x_);
+  const symbolic::Polynomial dVdx_times_f = dVdx.dot(f);
+  for (int i = 0; i < num_u_vertices; ++i) {
+    vdot_sos_expected -=
+        result.GetSolution(l[i]) *
+        (dVdx_times_f + deriv_eps * V + dVdx.dot(G * u_vertices_.col(i)));
+  }
+  EXPECT_PRED3(symbolic::test::PolynomialEqual, result.GetSolution(vdot_sos),
+               vdot_sos_expected, 1E-5);
+  for (int i = 0; i < vdot_monomials.rows(); ++i) {
+    EXPECT_GT(vdot_monomials(i).total_degree(), 0);
+  }
 }
 }  // namespace analysis
 }  // namespace systems

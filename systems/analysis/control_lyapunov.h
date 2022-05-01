@@ -1,5 +1,6 @@
 #pragma once
 
+#include "drake/common/drake_copyable.h"
 #include "drake/solvers/csdp_solver.h"
 #include "drake/solvers/mathematical_program.h"
 #include "drake/solvers/mathematical_program_result.h"
@@ -15,35 +16,29 @@ namespace analysis {
  * (and region of attraction) for this system as V(x). The control Lyapunov
  * function should satisfy the condition
  *
- *     V(x) > 0 ∀ x ≠ x*                                     (1)
- *     V(x*) = 0                                             (2)
- *     ∀ x satisfying V(x) ≤ ρ, ∃ u ∈ P s.t V̇ < 0            (3)
+ *     V(x) > 0 ∀ x ≠ 0                                     (1)
+ *     V(0) = 0                                             (2)
+ *     ∀ x satisfying V(x) ≤ 1, ∃ u ∈ P s.t V̇ < 0            (3)
  *
- * These conditions prove that the sublevel set V(x) ≤ ρ is a region of
+ * These conditions prove that the sublevel set V(x) ≤ 1 is a region of
  * attraction, that starting from any state within this ROA, there exists
- * control actions that can stabilize the system to x*. Note that
- * V̇(x, u) = ∂V/∂x*f(x)+∂V/∂x*G(x)u. As we assumed that the bounds on the input
- * u is a polytope P. If we write the vertices of P as uᵢ, i = 1, ..., N, since
- * V̇ is a linear function of u, the minimal of min V̇, subject to u ∈ P is
- * obtained in one of the vertices of P. Hence the condition
- *
- *     ∃ u ∈ P s.t V̇(x, u) < 0
+ * control actions that can stabilize the system to x*. In other word, we want
+ * to prove the condition that minᵤ V̇ ≥ −εV ⇒ V≥1 or x = 0 Note that V̇(x, u) =
+ * ∂V/∂x*f(x)+∂V/∂x*G(x)u. As we assumed that the bounds on the input u is a
+ * polytope P. If we write the vertices of P as uᵢ, i = 1, ..., N, since V̇ is a
+ * linear function of u, the minimal of min V̇, subject to u ∈ P is obtained in
+ * one of the vertices of P. Hence the condition minᵤ V̇ ≥ −εV
  *
  * is equivalent to
  *
- *      min_i V̇(x, uᵢ) < 0
+ *      V̇(x, uᵢ) ≥ −εV ∀i
  *
- * We don't know which vertex gives us the minimal, but we can say if the
- * minimal is obtained at the i'th vertex (namely V̇(x, uᵢ)≤ V̇(x, uⱼ)∀ j≠ i),
- * then the minimal has to be negative. Mathematically this means
- * ∀ i, if V̇(x, uᵢ) ≤ V̇(x, uⱼ)∀ uⱼ∈ Neighbour(uᵢ), then V̇(x, uᵢ)< 0
- * where Neighbour(uᵢ) is the set of vertices on polytope P neighbouring uᵢ.
- * As a result, condition (3) is equivalent to the following condition
- * for each i = 1, ..., N
- *
- *     V(x) ≤ ρ, V̇(x, uᵢ) ≤ V̇(x, uⱼ) => V̇(x, uᵢ)<0            (4)
- *
- * We will impose condition (1) and (4) as sum-of-squares constraints.
+ * Using s-procedure, the condition we want to prove is that
+ * V(x) >= 0
+ * V(0) = 0
+ * (1+λ(x))xᵀx(V−1) − ∑ᵢ lᵢ(x)(∂V/∂x*f(x)+∂V/∂x*G(x)uᵢ+εV) >= 0
+ * λ(x), lᵢ(x) >= 0
+ * We will search for such V, λ(x), lᵢ(x) through bilinear alternation.
  */
 class SearchControlLyapunov {
  public:
@@ -52,28 +47,64 @@ class SearchControlLyapunov {
   /**
    * @param f The dynamics of the system is ẋ = f(x) + G(x)u
    * @param G The dynamics of the system is ẋ = f(x) + G(x)u
-   * @param x_equilibrium The equilibrium state.
    * @param u_vertices An nᵤ * K matrix. u_vertices.col(i) is the i'th vertex
    * of the polytope as the bounds on the control action.
-   * @param neighbouring_vertices neighbouring_vertices[i] are the indices of
-   * the vertices neighbouring u_vertices.col(i)
    */
   SearchControlLyapunov(
+      const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
       const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
       const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
-      const Eigen::Ref<const Eigen::VectorXd>& x_equilibrium,
-      const Eigen::Ref<const Eigen::MatrixXd>& u_vertices,
-      std::map<int, std::set<int>> neighbouring_vertices,
-      const Eigen::Ref<const VectorX<symbolic::Variable>>& x);
+      const Eigen::Ref<const Eigen::MatrixXd>& u_vertices);
+
+  /**
+   * A helper function to add the constraint
+   * (1+λ₀(x))xᵀx(V−1) − ∑ᵢ lᵢ(x)*(∂V/∂x*f(x)+ε*V + ∂V/∂x*G(x)*sᵢ) is sos.
+   * @param[out] monomials The monomial basis of this sos constraint.
+   * @param[out] gram The Gram matrix of this sos constraint.
+   */
+  void AddControlLyapunovConstraint(
+      solvers::MathematicalProgram* prog, const VectorX<symbolic::Variable>& x,
+      const symbolic::Polynomial& lambda0,
+      const VectorX<symbolic::Polynomial>& l, const symbolic::Polynomial& V,
+      const Eigen::MatrixXd& u_vertices, double deriv_eps,
+      symbolic::Polynomial* vdot_poly, VectorX<symbolic::Monomial>* monomials,
+      MatrixX<symbolic::Variable>* gram) const;
+
+  /**
+   * Given the control Lyapunov function V, constructs an optimization program
+   * to search for the Lagrangians.
+   *
+   *    find λ₀(x), l(x)
+   *    s.t (1+λ₀(x))xᵀx(V−1) − ∑ᵢlᵢ(x)*(∂V/∂x*f(x)+ε*V+∂V/∂x*G(x)*sᵢ) is sos
+   *        λ₀(x), l(x) is sos
+   */
+  std::unique_ptr<solvers::MathematicalProgram> ConstructLagrangianProgram(
+      const symbolic::Polynomial& V, double deriv_eps, int lambda0_degree,
+      const std::vector<int>& l_degrees, symbolic::Polynomial* lambda0,
+      MatrixX<symbolic::Variable>* lambda0_gram,
+      VectorX<symbolic::Polynomial>* l,
+      std::vector<MatrixX<symbolic::Variable>>* l_grams,
+      symbolic::Polynomial* vdot_sos,
+      VectorX<symbolic::Monomial>* vdot_monomials,
+      MatrixX<symbolic::Variable>* vdot_gram) const;
+
+  [[nodiscard]] const VectorX<symbolic::Variable>& x() const { return x_; }
+
+  [[nodiscard]] const VectorX<symbolic::Polynomial>& f() const { return f_; }
+
+  [[nodiscard]] const MatrixX<symbolic::Polynomial>& G() const { return G_; }
+
+  [[nodiscard]] const Eigen::MatrixXd& u_vertices() const {
+    return u_vertices_;
+  }
 
  private:
-  VectorX<symbolic::Polynomial> f_;
-  MatrixX<symbolic::Polynomial> G_;
-  Eigen::VectorXd x_equilibrium_;
-  Eigen::MatrixXd u_vertices_;
-  std::map<int, std::set<int>> neighbouring_vertices_;
   // The indeterminates as the state.
   VectorX<symbolic::Variable> x_;
+  symbolic::Variables x_set_;
+  VectorX<symbolic::Polynomial> f_;
+  MatrixX<symbolic::Polynomial> G_;
+  Eigen::MatrixXd u_vertices_;
 };
 
 /**
@@ -95,7 +126,8 @@ class VdotCalculator {
    * @param x_vals A batch of x values. x_vals.col(i) is the i'th sample value
    * of x.
    */
-  Eigen::VectorXd CalcMin(const Eigen::Ref<const Eigen::MatrixXd>& x_vals) const;
+  Eigen::VectorXd CalcMin(
+      const Eigen::Ref<const Eigen::MatrixXd>& x_vals) const;
 
  private:
   VectorX<symbolic::Variable> x_;

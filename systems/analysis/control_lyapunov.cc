@@ -45,21 +45,35 @@ symbolic::Polynomial NewFreePolynomialNoConstant(
                     es.eigenvalues().maxCoeff() / es.eigenvalues().minCoeff()));
   }
 }
+
+// Add the sos constraint that p is sos. We know that p(0) = 0 so we will remove
+// 1 from the monomials.
+void AddSosConstraintPassOrigin(solvers::MathematicalProgram* prog,
+                                const symbolic::Polynomial& p,
+                                VectorX<symbolic::Monomial>* monomials,
+                                MatrixX<symbolic::Variable>* gram) {
+  const VectorX<symbolic::Monomial> monomial_with_1 =
+      solvers::ConstructMonomialBasis(p);
+  // Remove 1 from monomial_with_1.
+  int monomial_size = 0;
+  monomials->resize(monomial_with_1.rows());
+  for (int i = 0; i < monomial_with_1.rows(); ++i) {
+    if (monomial_with_1(i).total_degree() > 0) {
+      (*monomials)(monomial_size) = monomial_with_1(i);
+      monomial_size++;
+    }
+  }
+  monomials->conservativeResize(monomial_size);
+  *gram = prog->AddSosConstraint(p, *monomials);
+}
 }  // namespace
 
 SearchControlLyapunov::SearchControlLyapunov(
+    const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
     const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
     const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
-    const Eigen::Ref<const Eigen::VectorXd>& x_equilibrium,
-    const Eigen::Ref<const Eigen::MatrixXd>& u_vertices,
-    std::map<int, std::set<int>> neighbouring_vertices,
-    const Eigen::Ref<const VectorX<symbolic::Variable>>& x)
-    : f_{f},
-      G_{G},
-      x_equilibrium_{x_equilibrium},
-      u_vertices_{u_vertices},
-      neighbouring_vertices_{std::move(neighbouring_vertices)},
-      x_{x} {
+    const Eigen::Ref<const Eigen::MatrixXd>& u_vertices)
+    : x_{x}, x_set_{x_}, f_{f}, G_{G}, u_vertices_{u_vertices} {
   DRAKE_ASSERT(f.rows() == G.rows());
   const symbolic::Variables x_set(x_);
   for (int i = 0; i < f.rows(); ++i) {
@@ -68,10 +82,66 @@ SearchControlLyapunov::SearchControlLyapunov(
       DRAKE_DEMAND(G(i, j).indeterminates().IsSubsetOf(x_set));
     }
   }
-  const int num_x = f.rows();
   const int num_u = G.cols();
   DRAKE_DEMAND(u_vertices.rows() == num_u);
-  DRAKE_DEMAND(x_equilibrium.rows() == num_x);
+}
+
+void SearchControlLyapunov::AddControlLyapunovConstraint(
+    solvers::MathematicalProgram* prog, const VectorX<symbolic::Variable>& x,
+    const symbolic::Polynomial& lambda0, const VectorX<symbolic::Polynomial>& l,
+    const symbolic::Polynomial& V, const Eigen::MatrixXd& u_vertices,
+    double deriv_eps, symbolic::Polynomial* vdot_poly,
+    VectorX<symbolic::Monomial>* monomials,
+    MatrixX<symbolic::Variable>* gram) const {
+  // First compute the polynomial xᵀx
+  symbolic::Polynomial::MapType x_square_map;
+  for (int i = 0; i < x.rows(); ++i) {
+    x_square_map.emplace(symbolic::Monomial(x(i), 2), 1);
+  }
+  const symbolic::Polynomial x_square{x_square_map};
+  *vdot_poly = (1 + lambda0) * x_square * (V - 1);
+  const RowVectorX<symbolic::Polynomial> dVdx = V.Jacobian(x);
+  const symbolic::Polynomial dVdx_times_f = dVdx.dot(f_);
+  *vdot_poly -= l.sum() * (dVdx_times_f + deriv_eps * V);
+  *vdot_poly -= (dVdx * G_ * u_vertices).dot(l);
+  // We know this sos polynomial should not contain 1 in its monomial basis.
+  AddSosConstraintPassOrigin(prog, *vdot_poly, monomials, gram);
+}
+
+std::unique_ptr<solvers::MathematicalProgram>
+SearchControlLyapunov::ConstructLagrangianProgram(
+    const symbolic::Polynomial& V, double deriv_eps, int lambda0_degree,
+    const std::vector<int>& l_degrees, symbolic::Polynomial* lambda0,
+    MatrixX<symbolic::Variable>* lambda0_gram, VectorX<symbolic::Polynomial>* l,
+    std::vector<MatrixX<symbolic::Variable>>* l_grams,
+    symbolic::Polynomial* vdot_sos, VectorX<symbolic::Monomial>* vdot_monomials,
+    MatrixX<symbolic::Variable>* vdot_gram) const {
+  // Make sure that V(0) = 0
+  auto it_V_constant =
+      V.monomial_to_coefficient_map().find(symbolic::Monomial());
+  if (it_V_constant != V.monomial_to_coefficient_map().end()) {
+    if (!symbolic::is_constant(it_V_constant->second) &&
+        symbolic::get_constant_value(it_V_constant->second)) {
+      throw std::runtime_error(
+          "ConstructLagrangianProgram: V should have no constant term.");
+    }
+  }
+  auto prog = std::make_unique<solvers::MathematicalProgram>();
+  prog->AddIndeterminates(x_);
+  // Now construct Lagrangian multipliers.
+  std::tie(*lambda0, *lambda0_gram) =
+      prog->NewSosPolynomial(x_set_, lambda0_degree);
+  const int num_u_vertices = u_vertices_.cols();
+  l->resize(num_u_vertices);
+  l_grams->resize(num_u_vertices);
+  for (int i = 0; i < num_u_vertices; ++i) {
+    std::tie((*l)(i), (*l_grams)[i]) =
+        prog->NewSosPolynomial(x_set_, l_degrees[i]);
+  }
+  this->AddControlLyapunovConstraint(prog.get(), x_, *lambda0, *l, V,
+                                     u_vertices_, deriv_eps, vdot_sos,
+                                     vdot_monomials, vdot_gram);
+  return prog;
 }
 
 VdotCalculator::VdotCalculator(
@@ -95,7 +165,11 @@ Eigen::VectorXd VdotCalculator::CalcMin(
   DRAKE_DEMAND(x_vals.rows() == x_.rows());
   Eigen::VectorXd ret = dVdx_times_f_.EvaluateIndeterminates(x_, x_vals);
   for (int i = 0; i < dVdx_times_G_.cols(); ++i) {
-    ret -= dVdx_times_G_(i).EvaluateIndeterminates(x_, x_vals).array().abs().matrix();
+    ret -= dVdx_times_G_(i)
+               .EvaluateIndeterminates(x_, x_vals)
+               .array()
+               .abs()
+               .matrix();
   }
   return ret;
 }
@@ -133,19 +207,7 @@ void AddControlLyapunovBoxInputBoundConstraints(
                    l_ij[2] * (1 - V)
              : (l_ij[0] + 1) * (-dVdx_times_Gi - b_i) +
                    l_ij[1] * dVdx_times_Gi - l_ij[2] * (1 - V);
-  const VectorX<symbolic::Monomial> monomial_with_1 =
-      solvers::ConstructMonomialBasis(p);
-  // Remove 1 from monomial_with_1.
-  int monomial_size = 0;
-  monomials->resize(monomial_with_1.rows());
-  for (int i = 0; i < monomial_with_1.rows(); ++i) {
-    if (monomial_with_1(i).total_degree() > 0) {
-      (*monomials)(monomial_size) = monomial_with_1(i);
-      monomial_size++;
-    }
-  }
-  monomials->conservativeResize(monomial_size);
-  *gram = prog->AddSosConstraint(p, *monomials);
+  AddSosConstraintPassOrigin(prog, p, monomials, gram);
 }
 
 // Add the constraint

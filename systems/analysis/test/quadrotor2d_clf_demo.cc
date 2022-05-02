@@ -93,13 +93,88 @@ struct Quadrotor {
   double u_max{mass * gravity * 2};
 };
 
+[[maybe_unused]] void search(
+    const Vector6<symbolic::Variable>& x, const symbolic::Polynomial& V_init,
+    const Vector6<symbolic::Polynomial>& f,
+    const Eigen::Matrix<symbolic::Polynomial, 6, 2>& G) {
+  Eigen::Matrix<double, 2, 4> u_vertices;
+  // clang-format on
+  u_vertices << 1, 1, -1, -1, 1, -1, 1, -1;
+  // clang-format off
+   SearchControlLyapunov dut(x, f, G, u_vertices);
+   const double deriv_eps = 0.1;
+   const int lambda0_degree = 2;
+   std::vector<int> l_degrees = {4, 4, 4, 4};
+   symbolic::Polynomial lambda0;
+   MatrixX<symbolic::Variable> lambda0_gram;
+   VectorX<symbolic::Polynomial> l;
+   std::vector<MatrixX<symbolic::Variable>> l_grams;
+   symbolic::Polynomial vdot_sos;
+   VectorX<symbolic::Monomial> vdot_monomials;
+   MatrixX<symbolic::Variable> vdot_gram;
+   auto prog_lagrangian = dut.ConstructLagrangianProgram(V_init, deriv_eps,
+   lambda0_degree, l_degrees, &lambda0, &lambda0_gram, &l, &l_grams, &vdot_sos,
+   &vdot_monomials, &vdot_gram); solvers::SolverOptions solver_options;
+   solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
+   const auto result_lagrangian = solvers::Solve(*prog_lagrangian,
+   std::nullopt, solver_options); DRAKE_DEMAND(result_lagrangian.is_success());
+}
+
+[[maybe_unused]] void search_w_box_bounds(
+    const Vector6<symbolic::Variable>& x, const symbolic::Polynomial& V_init,
+    const Vector6<symbolic::Polynomial>& f, const Eigen::Matrix<symbolic::Polynomial, 6, 2>& G) {
+  const int V_degree = 2;
+
+  const double positivity_eps{0};
+  const ControlLyapunovBoxInputBound dut(f, G, x, positivity_eps);
+  ControlLyapunovBoxInputBound::SearchOptions search_options;
+  search_options.backoff_scale = 0.02;
+  search_options.lagrangian_step_solver_options = solvers::SolverOptions();
+  //search_options.lagrangian_step_solver_options->SetOption(
+  //    solvers::CommonSolverOption::kPrintToConsole, 1);
+  ControlLyapunovBoxInputBound::RhoBisectionOption rho_bisection_option(0.01, 5,
+                                                                        0.01);
+
+  const int nu = 2;
+  const int num_vdot_sos = 2;
+  std::vector<std::vector<symbolic::Polynomial>> l_given(nu);
+  for (int i = 0; i < nu; ++i) {
+    l_given[i].resize(num_vdot_sos);
+    for (int j = 0; j < num_vdot_sos; ++j) {
+      l_given[i][j] = symbolic::Polynomial();
+    }
+  }
+  std::vector<std::vector<std::array<int, 3>>> lagrangian_degrees(nu);
+  for (int i = 0; i < nu; ++i) {
+    lagrangian_degrees[i].resize(num_vdot_sos);
+    for (int j = 0; j < num_vdot_sos; ++j) {
+      lagrangian_degrees[i][j] = {0, 2, 4};
+    }
+  }
+  std::vector<int> b_degrees(nu);
+  for (int i = 0; i < nu; ++i) {
+    b_degrees[i] = 4;
+  }
+  const Vector6d x_star = Vector6d::Zero();
+  const Eigen::Matrix<double, 6, 6> S = Eigen::Matrix<double, 6, 6>::Identity();
+  const int r_degree = V_degree - 2;
+  const double deriv_eps_lower = 0;
+  const double deriv_eps_upper = kInf;
+
+  const auto search_result =
+      dut.Search(V_init, l_given, lagrangian_degrees, b_degrees, x_star, S,
+                 r_degree, V_degree, deriv_eps_lower, deriv_eps_upper,
+                 search_options, rho_bisection_option);
+}
+
 int DoMain() {
   Quadrotor quadrotor;
 
   // Synthesize an LQR controller.
   const Vector6d x_des = Vector6d::Zero();
-  const Eigen::Vector2d u_des =
-      Eigen::Vector2d::Constant(quadrotor.mass * quadrotor.gravity / 2);
+  const double thrust_equilibrium = quadrotor.mass * quadrotor.gravity / 2;
+  const Eigen::Vector2d u_des = quadrotor.NormalizeU(
+      Eigen::Vector2d(thrust_equilibrium, thrust_equilibrium));
   const auto x_des_ad = math::InitializeAutoDiff(x_des);
   Vector6<AutoDiffXd> f_des;
   Eigen::Matrix<AutoDiffXd, 6, 2> G_des;
@@ -126,8 +201,6 @@ int DoMain() {
       G(i, j) = G(i, j).RemoveTermsWithSmallCoefficients(1E-6);
     }
   }
-  std::cout << "f: " << f.transpose() << "\n";
-  std::cout << "G: \n" << G << "\n";
 
   symbolic::Polynomial V_init(
       1 * x.cast<symbolic::Expression>().dot(lqr_result.S * x));
@@ -140,51 +213,12 @@ int DoMain() {
   const Eigen::VectorXd v_samples = V_init.EvaluateIndeterminates(x, x_samples);
   for (int i = 0; i < v_samples.rows(); ++i) {
     if (v_samples(i) < 1 && vdot_samples(i) > 0) {
-      std::cout << fmt::format("v = {}, vdot = {}\n", v_samples(i), vdot_samples(i));
+      std::cout << fmt::format("v = {}, vdot = {}\n", v_samples(i),
+                               vdot_samples(i));
     }
   }
-  const int V_degree = 2;
 
-  const double positivity_eps{0};
-  const ControlLyapunovBoxInputBound dut(f, G, x, positivity_eps);
-  ControlLyapunovBoxInputBound::SearchOptions search_options;
-  search_options.lagrangian_step_solver_options = solvers::SolverOptions();
-  search_options.lagrangian_step_solver_options->SetOption(
-      solvers::CommonSolverOption::kPrintToConsole, 1);
-  ControlLyapunovBoxInputBound::RhoBisectionOption rho_bisection_option(0.01, 5,
-                                                                        0.01);
-
-  const int nu = 2;
-  const int num_vdot_sos = 2;
-  std::vector<std::vector<symbolic::Polynomial>> l_given(nu);
-  for (int i = 0; i < nu; ++i) {
-    l_given[i].resize(num_vdot_sos);
-    for (int j = 0; j < num_vdot_sos; ++j) {
-      l_given[i][j] = symbolic::Polynomial();
-    }
-  }
-  std::vector<std::vector<std::array<int, 3>>> lagrangian_degrees(nu);
-  for (int i = 0; i < nu; ++i) {
-    lagrangian_degrees[i].resize(num_vdot_sos);
-    for (int j = 0; j < num_vdot_sos; ++j) {
-      lagrangian_degrees[i][j] = {0, 2, 4};
-    }
-  }
-  std::vector<int> b_degrees(nu);
-  for (int i = 0; i < nu; ++i) {
-    b_degrees[i] = 4;
-  }
-  const Vector6d x_star = x_des;
-  const Eigen::Matrix<double, 6, 6> S = Eigen::Matrix<double, 6, 6>::Identity();
-  const int r_degree = V_degree - 2;
-  const double deriv_eps_lower = 0;
-  const double deriv_eps_upper = kInf;
-
-  const auto search_result =
-      dut.Search(V_init, l_given, lagrangian_degrees, b_degrees, x_star, S,
-                 r_degree, V_degree, deriv_eps_lower, deriv_eps_upper,
-                 search_options, rho_bisection_option);
-
+  search_w_box_bounds(x, V_init, f, G);
   return 0;
 }
 }  // namespace analysis

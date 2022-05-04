@@ -88,6 +88,57 @@ class SearchControlLyapunov {
       VectorX<symbolic::Monomial>* vdot_monomials,
       MatrixX<symbolic::Variable>* vdot_gram) const;
 
+  /**
+   * Given λ₀(x) and l(x), construct a methematical program
+   *    find V(x)
+   *    s.t V(x) is sos
+   *        (1+λ₀(x))xᵀx(V−1) − ∑ᵢlᵢ(x)*(∂V/∂x*f(x)+ε*V+∂V/∂x*G(x)*sᵢ) is sos
+   */
+  std::unique_ptr<solvers::MathematicalProgram> ConstructLyapunovProgram(
+      const symbolic::Polynomial& lambda0,
+      const VectorX<symbolic::Polynomial>& l, int V_degree, double deriv_eps,
+      symbolic::Polynomial* V, MatrixX<symbolic::Expression>* V_gram) const;
+
+  struct SearchOptions {
+    solvers::SolverId lyap_step_solver{solvers::MosekSolver::id()};
+    solvers::SolverId lagrangian_step_solver{solvers::MosekSolver::id()};
+    int bilinear_iterations{10};
+    // Stop when the improvement on rho is below this tolerance.
+    double rho_converge_tol{1E-5};
+    // Back off in each steps.
+    double backoff_scale{0.};
+    std::optional<solvers::SolverOptions> lagrangian_step_solver_options{
+        std::nullopt};
+    std::optional<solvers::SolverOptions> lyap_step_solver_options{
+        std::nullopt};
+  };
+
+  /**
+   * We can search for the largest inscribed ellipsoid {x|(x−x*)ᵀS(x−x*) <=ρ}
+   * through bisection.
+   */
+  struct RhoBisectionOption {
+    RhoBisectionOption(double m_rho_min, double m_rho_max, double m_rho_tol)
+        : rho_min{m_rho_min}, rho_max{m_rho_max}, rho_tol{m_rho_tol} {}
+    double rho_min;
+    double rho_max;
+    double rho_tol;
+  };
+
+  /**
+   * Use bilinear alternation to grow the region-of-attraction of the control
+   * Lyapunov function (CLF).
+   */
+  void Search(const symbolic::Polynomial& V_init, int lambda0_degree,
+              const std::vector<int>& l_degrees, int V_degree, double deriv_eps,
+              const Eigen::Ref<const Eigen::VectorXd>& x_star,
+              const Eigen::Ref<const Eigen::MatrixXd>& S, int r_degree,
+              const SearchOptions& search_options,
+              const RhoBisectionOption& rho_bisection_option,
+              symbolic::Polynomial* V, symbolic::Polynomial* lambda0,
+              VectorX<symbolic::Polynomial>* l, symbolic::Polynomial* r,
+              double* rho) const;
+
   [[nodiscard]] const VectorX<symbolic::Variable>& x() const { return x_; }
 
   [[nodiscard]] const VectorX<symbolic::Polynomial>& f() const { return f_; }
@@ -227,24 +278,6 @@ class SearchLagrangianAndBGivenVBoxInputBound {
   const VdotSosConstraintReturn& vdot_sos_constraint() const {
     return vdot_sos_constraint_;
   }
-
-  /**
-   * The return struct in AddEllipsoidInRoaConstraint
-   */
-  struct EllipsoidInRoaReturn {
-    // The size of the ellipoid.
-    symbolic::Variable rho;
-    // The monomial of the lagrangian multiplier s(x).
-    symbolic::Polynomial s;
-    // The Gram matrix of the lagrangian multiplier s(x).
-    MatrixX<symbolic::Variable> s_gram;
-    // The monomials of the constraint (1+t(x))((x−x*)ᵀS(x−x*)−ρ) −
-    // s(x)(V(x)−1)
-    VectorX<symbolic::Monomial> constraint_monomials;
-    // The Gram matrix of the constraint
-    // (1+t(x))((x−x*)ᵀS(x−x*)−ρ) − s(x)(V(x)−1)
-    MatrixX<symbolic::Variable> constraint_gram;
-  };
 
  private:
   solvers::MathematicalProgram prog_;
@@ -755,6 +788,9 @@ symbolic::Polynomial NewFreePolynomialNoConstantOrLinear(
     solvers::MathematicalProgram* prog,
     const symbolic::Variables& indeterminates, int degree,
     const std::string& coeff_name, symbolic::internal::DegreeType degree_type);
+
+void PrintPsdConstraintStat(const solvers::MathematicalProgram& prog,
+                            const solvers::MathematicalProgramResult& result);
 }  // namespace internal
 }  // namespace analysis
 }  // namespace systems

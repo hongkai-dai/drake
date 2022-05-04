@@ -11,6 +11,7 @@
 #include "drake/solvers/csdp_solver.h"
 #include "drake/solvers/mosek_solver.h"
 #include "drake/solvers/scs_solver.h"
+#include "drake/solvers/sdpa_free_format.h"
 #include "drake/solvers/solve.h"
 #include "drake/systems/controllers/linear_quadratic_regulator.h"
 
@@ -674,7 +675,7 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound_SearchLyapunov) {
   u_vertices << 1, 1, -1, -1, 1, -1, 1, -1;
   ValidateRegionOfAttractionBySample(f, G, V_sol, x_, u_vertices, deriv_eps,
                                      100, 1E-5, 1E-3);
-  EXPECT_GT(d_sol, 0);
+  ASSERT_GT(d_sol, 0);
   EXPECT_LE(d_sol, 1);
   // Now check if the ellipsoid is in the sub-level set {x | V(x) <= d}.
   CheckEllipsoidInRoa(x_, x_star, S, rho_sol, 1. / d_sol * V_sol);
@@ -837,13 +838,15 @@ GTEST_TEST(NewFreePolynomialNoConstantOrLinear, Test) {
   check(4, symbolic::internal::DegreeType::kOdd, 4);
 }
 
-TEST_F(SimpleLinearSystemTest, ConstructLagrangianProgram) {
+TEST_F(SimpleLinearSystemTest, SearchControlLyapunov) {
   // Test SearchControlLyapunov::ConstructLagrangianProgram
+  // and SearchControlLyapunov::ConstructLyapunovProgram
   Vector2<symbolic::Polynomial> f;
   Matrix2<symbolic::Polynomial> G;
   symbolic::Polynomial V;
   bool symmetric_dynamics = true;
   InitializeWithLQR(symmetric_dynamics, &V, &f, &G);
+  V *= 0.1;
   SearchControlLyapunov dut(x_, f, G, u_vertices_);
   const int lambda0_degree = 0;
   const std::vector<int> l_degrees = {2, 2, 2, 2};
@@ -855,39 +858,92 @@ TEST_F(SimpleLinearSystemTest, ConstructLagrangianProgram) {
   symbolic::Polynomial vdot_sos;
   VectorX<symbolic::Monomial> vdot_monomials;
   MatrixX<symbolic::Variable> vdot_gram;
-  auto prog = dut.ConstructLagrangianProgram(
+  auto prog_lagrangian = dut.ConstructLagrangianProgram(
       V, deriv_eps, lambda0_degree, l_degrees, &lambda0, &lambda0_gram, &l,
       &l_grams, &vdot_sos, &vdot_monomials, &vdot_gram);
-  const auto result = solvers::Solve(*prog);
-  ASSERT_TRUE(result.is_success());
+  solvers::SolverOptions solver_options;
+  // solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
+  const auto result_lagrangian =
+      solvers::Solve(*prog_lagrangian, std::nullopt, solver_options);
+  ASSERT_TRUE(result_lagrangian.is_success());
   // Check the positivity of Gram matrices.
-  const auto lambda0_gram_sol = result.GetSolution(lambda0_gram);
+  const auto lambda0_gram_sol = result_lagrangian.GetSolution(lambda0_gram);
   EXPECT_TRUE(math::IsPositiveDefinite(lambda0_gram_sol));
   const int num_u_vertices = u_vertices_.cols();
   std::vector<Eigen::MatrixXd> l_grams_sol(num_u_vertices);
   for (int i = 0; i < num_u_vertices; ++i) {
-    l_grams_sol[i] = result.GetSolution(l_grams[i]);
+    l_grams_sol[i] = result_lagrangian.GetSolution(l_grams[i]);
     EXPECT_TRUE(math::IsPositiveDefinite(l_grams_sol[i]));
   }
-  const Eigen::MatrixXd vdot_gram_sol = result.GetSolution(vdot_gram);
+  const Eigen::MatrixXd vdot_gram_sol =
+      result_lagrangian.GetSolution(vdot_gram);
   EXPECT_TRUE(math::IsPositiveDefinite(vdot_gram_sol));
 
   // Now check if the vdot sos is computed correctly.
+  symbolic::Polynomial lambda0_sol = result_lagrangian.GetSolution(lambda0);
   symbolic::Polynomial vdot_sos_expected =
-      (1 + result.GetSolution(lambda0)) *
+      (1 + lambda0_sol) *
       symbolic::Polynomial(x_.cast<symbolic::Expression>().dot(x_)) * (V - 1);
   const auto dVdx = V.Jacobian(x_);
   const symbolic::Polynomial dVdx_times_f = dVdx.dot(f);
+  VectorX<symbolic::Polynomial> l_sol(num_u_vertices);
   for (int i = 0; i < num_u_vertices; ++i) {
-    vdot_sos_expected -=
-        result.GetSolution(l[i]) *
-        (dVdx_times_f + deriv_eps * V + dVdx.dot(G * u_vertices_.col(i)));
+    l_sol(i) = result_lagrangian.GetSolution(l(i));
+    vdot_sos_expected -= l_sol(i) * (dVdx_times_f + deriv_eps * V +
+                                     dVdx.dot(G * u_vertices_.col(i)));
   }
-  EXPECT_PRED3(symbolic::test::PolynomialEqual, result.GetSolution(vdot_sos),
-               vdot_sos_expected, 1E-5);
+  EXPECT_PRED3(symbolic::test::PolynomialEqual,
+               result_lagrangian.GetSolution(vdot_sos), vdot_sos_expected,
+               1E-5);
+  EXPECT_PRED3(symbolic::test::PolynomialEqual,
+               result_lagrangian.GetSolution(vdot_sos),
+               vdot_monomials.dot(vdot_gram_sol * vdot_monomials), 1E-5);
   for (int i = 0; i < vdot_monomials.rows(); ++i) {
     EXPECT_GT(vdot_monomials(i).total_degree(), 0);
   }
+
+  // Now search for the Lyapunov given Lagrangian.
+  symbolic::Polynomial V_new;
+  MatrixX<symbolic::Expression> V_gram;
+  const int V_degree = V.TotalDegree();
+  auto prog_lyapunov = dut.ConstructLyapunovProgram(
+      lambda0_sol, l_sol, V_degree, deriv_eps, &V_new, &V_gram);
+  solvers::MosekSolver mosek_solver;
+  const auto result_lyapunov =
+      mosek_solver.Solve(*prog_lyapunov, std::nullopt, solver_options);
+  ASSERT_TRUE(result_lyapunov.is_success());
+
+  // V(0) = 0
+  const symbolic::Polynomial V_new_sol = result_lyapunov.GetSolution(V_new);
+  EXPECT_EQ(V_new_sol.monomial_to_coefficient_map().count(symbolic::Monomial()),
+            0);
+  const auto V_gram_sol_expr = result_lyapunov.GetSolution(V_gram);
+  Eigen::MatrixXd V_gram_sol(V_gram.rows(), V_gram.rows());
+  for (int i = 0; i < V_gram.rows(); ++i) {
+    for (int j = 0; j < V_gram.cols(); ++j) {
+      V_gram_sol(i, j) = symbolic::get_constant_value(V_gram_sol_expr(i, j));
+    }
+  }
+  EXPECT_TRUE(math::IsPositiveDefinite(V_gram_sol));
+
+  symbolic::Polynomial V_init = V;
+  symbolic::Polynomial V_sol;
+  const Eigen::Vector2d x_star = Eigen::Vector2d::Zero();
+  const Eigen::Matrix2d S = Eigen::Matrix2d::Identity();
+  int r_degree = V_degree - 2;
+  SearchControlLyapunov::SearchOptions search_options;
+  search_options.backoff_scale = 0.01;
+  search_options.bilinear_iterations = 15;
+  const double rho_min = 0.01;
+  const double rho_max = 1;
+  const double rho_tol = 0.001;
+  double rho_sol;
+  SearchControlLyapunov::RhoBisectionOption rho_bisection_option(
+      rho_min, rho_max, rho_tol);
+  symbolic::Polynomial r_sol;
+  dut.Search(V_init, lambda0_degree, l_degrees, V_degree, deriv_eps, x_star, S,
+             r_degree, search_options, rho_bisection_option, &V_sol,
+             &lambda0_sol, &l_sol, &r_sol, &rho_sol);
 }
 }  // namespace analysis
 }  // namespace systems

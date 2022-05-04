@@ -14,6 +14,12 @@ namespace analysis {
 const double kInf = std::numeric_limits<double>::infinity();
 
 namespace {
+[[maybe_unused]] void PrintPolynomial(const symbolic::Polynomial& p) {
+  for (const auto& [monomial, coeff] : p.monomial_to_coefficient_map()) {
+    std::cout << monomial << " --> " << coeff.Expand() << "\n";
+  }
+}
+
 symbolic::Polynomial NewFreePolynomialNoConstant(
     solvers::MathematicalProgram* prog,
     const symbolic::Variables& indeterminates, int degree,
@@ -28,22 +34,6 @@ symbolic::Polynomial NewFreePolynomialNoConstant(
     poly_map.emplace(m(i), coeffs(i));
   }
   return symbolic::Polynomial(poly_map);
-}
-
-[[maybe_unused]] void PrintPsdConstraintStat(
-    const solvers::MathematicalProgram& prog,
-    const solvers::MathematicalProgramResult& result) {
-  for (const auto& psd_constraint : prog.positive_semidefinite_constraints()) {
-    const Eigen::MatrixXd psd_sol = Eigen::Map<Eigen::MatrixXd>(
-        result.GetSolution(psd_constraint.variables()).data(),
-        psd_constraint.evaluator()->matrix_rows(),
-        psd_constraint.evaluator()->matrix_rows());
-    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(psd_sol);
-    drake::log()->info(
-        fmt::format("rows: {}, min eigen: {}, cond number: {}\n",
-                    psd_sol.rows(), es.eigenvalues().minCoeff(),
-                    es.eigenvalues().maxCoeff() / es.eigenvalues().minCoeff()));
-  }
 }
 
 // Add the sos constraint that p is sos. We know that p(0) = 0 so we will remove
@@ -64,7 +54,121 @@ void AddSosConstraintPassOrigin(solvers::MathematicalProgram* prog,
     }
   }
   monomials->conservativeResize(monomial_size);
-  *gram = prog->AddSosConstraint(p, *monomials);
+  symbolic::Polynomial p_expected;
+  std::tie(p_expected, *gram) = prog->NewSosPolynomial(*monomials);
+  auto poly_eq_cnstr =
+      prog->AddEqualityConstraintBetweenPolynomials(p, p_expected);
+  for (const auto& cnstr : poly_eq_cnstr) {
+    // Remove tiny coefficients in linear constraint.
+    const auto& cnstr_A = cnstr.evaluator()->get_sparse_A();
+    const double zero_tol = 1E-14;
+    for (int i = 0; i < cnstr_A.cols(); ++i) {
+      for (Eigen::SparseMatrix<double>::InnerIterator it(cnstr_A, i); it;
+           ++it) {
+        if (std::abs(it.value()) <= zero_tol) {
+          it.valueRef() = 0;
+        }
+      }
+    }
+  }
+}
+
+// Create a new sos polynomial p(x) which satisfies p(0)=0
+void NewSosPolynomialPassOrigin(solvers::MathematicalProgram* prog,
+                                const symbolic::Variables& indeterminates,
+                                int degree,
+                                symbolic::internal::DegreeType degree_type,
+                                symbolic::Polynomial* p,
+                                VectorX<symbolic::Monomial>* monomial_basis,
+                                MatrixX<symbolic::Expression>* gram) {
+  switch (degree_type) {
+    case symbolic::internal::DegreeType::kAny: {
+      *monomial_basis = internal::ComputeMonomialBasisNoConstant(
+          indeterminates, degree / 2, symbolic::internal::DegreeType::kAny);
+      MatrixX<symbolic::Variable> gram_var;
+      std::tie(*p, gram_var) = prog->NewSosPolynomial(
+          *monomial_basis,
+          solvers::MathematicalProgram::NonnegativePolynomial::kSos);
+      *gram = gram_var.cast<symbolic::Expression>();
+      break;
+    }
+    case symbolic::internal::DegreeType::kEven: {
+      symbolic::Polynomial p_even, p_odd;
+      const VectorX<symbolic::Monomial> monomial_basis_even =
+          internal::ComputeMonomialBasisNoConstant(
+              indeterminates, degree / 2,
+              symbolic::internal::DegreeType::kEven);
+      const VectorX<symbolic::Monomial> monomial_basis_odd =
+          internal::ComputeMonomialBasisNoConstant(
+              indeterminates, degree / 2, symbolic::internal::DegreeType::kOdd);
+      MatrixX<symbolic::Expression> gram_even, gram_odd;
+      std::tie(p_even, gram_even) = prog->NewSosPolynomial(monomial_basis_even);
+      std::tie(p_odd, gram_odd) = prog->NewSosPolynomial(monomial_basis_odd);
+      monomial_basis->resize(monomial_basis_even.rows() +
+                             monomial_basis_odd.rows());
+      *monomial_basis << monomial_basis_even, monomial_basis_odd;
+      gram->resize(monomial_basis->rows(), monomial_basis->rows());
+      gram->topLeftCorner(gram_even.rows(), gram_even.cols()) = gram_even;
+      gram->bottomRightCorner(gram_odd.rows(), gram_odd.cols()) = gram_odd;
+      *p = p_even + p_odd;
+      break;
+    }
+    default: {
+      throw std::runtime_error("sos polynomial cannot be odd order.");
+    }
+  }
+}
+
+// add the constraint that the ellipsoid is within the sub-level set {x |
+// V(x)<=d} Namely d−V(x) − r(x)(ρ−(x−x*)ᵀS(x−x*)) is sos and r(x) is sos.
+template <typename T>
+void AddEllipsoidInRoaConstraint(
+    solvers::MathematicalProgram* prog, const VectorX<symbolic::Variable>& x,
+    const T& d, const symbolic::Polynomial& V,
+    const Eigen::Ref<const Eigen::VectorXd>& x_star,
+    const Eigen::Ref<const Eigen::MatrixXd>& S, double rho, int r_degree,
+    symbolic::Polynomial* r) {
+  const symbolic::Variables x_set(x);
+  std::tie(*r, std::ignore) = prog->NewSosPolynomial(x_set, r_degree);
+  const symbolic::Polynomial ellipsoid_poly =
+      internal::EllipsoidPolynomial(x, x_star, S, rho);
+  prog->AddSosConstraint(symbolic::Polynomial({{symbolic::Monomial(), d}}) - V +
+                         (*r) * ellipsoid_poly);
+}
+
+solvers::MathematicalProgramResult SearchWithBackoff(
+    solvers::MathematicalProgram* prog, const solvers::SolverId& solver_id,
+    const std::optional<solvers::SolverOptions>& solver_options,
+    double backoff_scale) {
+  DRAKE_DEMAND(prog->linear_costs().size() == 1u);
+  DRAKE_DEMAND(prog->quadratic_costs().size() == 0u);
+  auto solver = solvers::MakeSolver(solver_id);
+  solvers::MathematicalProgramResult result;
+  solver->Solve(*prog, std::nullopt, solver_options, &result);
+  if (!result.is_success()) {
+    drake::log()->error("Failed before backoff\n");
+    return result;
+  }
+  // PrintPsdConstraintStat(*prog, result);
+  DRAKE_DEMAND(backoff_scale >= 0 && backoff_scale <= 1);
+  if (backoff_scale > 0) {
+    drake::log()->info("backoff");
+    auto cost = prog->linear_costs()[0];
+    prog->RemoveCost(cost);
+    const double cost_val = result.get_optimal_cost();
+    const double cost_ub = cost_val >= 0 ? (1 + backoff_scale) * cost_val
+                                         : (1 - backoff_scale) * cost_val;
+    prog->AddLinearConstraint(cost.evaluator()->a(), -kInf,
+                              cost_ub - cost.evaluator()->b(),
+                              cost.variables());
+    solver->Solve(*prog, std::nullopt, solver_options, &result);
+    if (!result.is_success()) {
+      drake::log()->error("Backoff failed\n");
+      return result;
+    }
+    // PrintPsdConstraintStat(*prog, result);
+  }
+  return result;
 }
 }  // namespace
 
@@ -142,6 +246,114 @@ SearchControlLyapunov::ConstructLagrangianProgram(
                                      u_vertices_, deriv_eps, vdot_sos,
                                      vdot_monomials, vdot_gram);
   return prog;
+}
+
+std::unique_ptr<solvers::MathematicalProgram>
+SearchControlLyapunov::ConstructLyapunovProgram(
+    const symbolic::Polynomial& lambda0, const VectorX<symbolic::Polynomial>& l,
+    int V_degree, double deriv_eps, symbolic::Polynomial* V,
+    MatrixX<symbolic::Expression>* V_gram) const {
+  auto prog = std::make_unique<solvers::MathematicalProgram>();
+  prog->AddIndeterminates(x_);
+  VectorX<symbolic::Monomial> V_monomial;
+
+  // TODO(hongkai.dai): if the dynamics is symmetric, then use an even V.
+  const symbolic::internal::DegreeType V_degree_type{
+      symbolic::internal::DegreeType::kAny};
+  NewSosPolynomialPassOrigin(prog.get(), x_set_, V_degree, V_degree_type, V,
+                             &V_monomial, V_gram);
+  symbolic::Polynomial vdot_poly;
+  VectorX<symbolic::Monomial> vdot_monomials;
+  MatrixX<symbolic::Variable> vdot_gram;
+  this->AddControlLyapunovConstraint(prog.get(), x_, lambda0, l, *V,
+                                     u_vertices_, deriv_eps, &vdot_poly,
+                                     &vdot_monomials, &vdot_gram);
+  return prog;
+}
+
+void SearchControlLyapunov::Search(
+    const symbolic::Polynomial& V_init, int lambda0_degree,
+    const std::vector<int>& l_degrees, int V_degree, double deriv_eps,
+    const Eigen::Ref<const Eigen::VectorXd>& x_star,
+    const Eigen::Ref<const Eigen::MatrixXd>& S, int r_degree,
+    const SearchOptions& search_options,
+    const RhoBisectionOption& rho_bisection_option, symbolic::Polynomial* V_sol,
+    symbolic::Polynomial* lambda0_sol, VectorX<symbolic::Polynomial>* l_sol,
+    symbolic::Polynomial* r_sol, double* rho_sol) const {
+  int iter_count = 0;
+  double rho_prev = 0;
+  *V_sol = V_init;
+  while (iter_count < search_options.bilinear_iterations) {
+    {
+      MaximizeInnerEllipsoidRho(
+          x_, x_star, S, *V_sol, r_degree, rho_bisection_option.rho_max,
+          rho_bisection_option.rho_min, search_options.lyap_step_solver,
+          search_options.lyap_step_solver_options, rho_bisection_option.rho_tol,
+          rho_sol, r_sol);
+      drake::log()->info("iter {}, rho={}", iter_count, *rho_sol);
+      if (*rho_sol - rho_prev < search_options.rho_converge_tol) {
+        return;
+      } else {
+        rho_prev = *rho_sol;
+      }
+    }
+
+    {
+      symbolic::Polynomial lambda0;
+      MatrixX<symbolic::Variable> lambda0_gram;
+      VectorX<symbolic::Polynomial> l;
+      std::vector<MatrixX<symbolic::Variable>> l_grams;
+      symbolic::Polynomial vdot_sos;
+      VectorX<symbolic::Monomial> vdot_monomials;
+      MatrixX<symbolic::Variable> vdot_gram;
+      auto prog_lagrangian = this->ConstructLagrangianProgram(
+          *V_sol, deriv_eps, lambda0_degree, l_degrees, &lambda0, &lambda0_gram,
+          &l, &l_grams, &vdot_sos, &vdot_monomials, &vdot_gram);
+      solvers::MathematicalProgramResult result_lagrangian;
+      drake::log()->info("Search Lagrangian");
+      solvers::MakeSolver(search_options.lagrangian_step_solver)
+          ->Solve(*prog_lagrangian, std::nullopt,
+                  search_options.lagrangian_step_solver_options,
+                  &result_lagrangian);
+      if (result_lagrangian.is_success()) {
+        *lambda0_sol = result_lagrangian.GetSolution(lambda0);
+        l_sol->resize(l.rows());
+        for (int i = 0; i < l.rows(); ++i) {
+          (*l_sol)(i) = result_lagrangian.GetSolution(l(i));
+        }
+      } else {
+        drake::log()->error("Faild to find Lagrangian.");
+        return;
+      }
+    }
+
+    {
+      // Solve the program to find new V given Lagrangians.
+      MatrixX<symbolic::Expression> V_gram;
+      symbolic::Polynomial V_search;
+      auto prog_lyapunov = this->ConstructLyapunovProgram(
+          *lambda0_sol, *l_sol, V_degree, deriv_eps, &V_search, &V_gram);
+      const auto d = prog_lyapunov->NewContinuousVariables<1>("d");
+      symbolic::Polynomial r;
+      AddEllipsoidInRoaConstraint(prog_lyapunov.get(), x_, d(0), V_search,
+                                  x_star, S, *rho_sol, r_degree, &r);
+      prog_lyapunov->AddLinearCost(Vector1d(1), 0, d);
+      drake::log()->info("Search Lyapunov.");
+      const auto result_lyapunov = SearchWithBackoff(
+          prog_lyapunov.get(), search_options.lyap_step_solver,
+          search_options.lyap_step_solver_options,
+          search_options.backoff_scale);
+      if (result_lyapunov.is_success()) {
+        *V_sol = result_lyapunov.GetSolution(V_search);
+        *r_sol = result_lyapunov.GetSolution(r);
+        drake::log()->info("d = {}", result_lyapunov.GetSolution(d(0)));
+      } else {
+        drake::log()->error("Failed to find Lyapunov");
+        return;
+      }
+    }
+    iter_count++;
+  }
 }
 
 VdotCalculator::VdotCalculator(
@@ -386,49 +598,6 @@ ComputePolynomialFromMonomialBasisAndGramMatrix(
   return p;
 }
 
-// Create a new sos polynomial p(x) which satisfies p(0)=0
-void NewSosPolynomialPassOrigin(solvers::MathematicalProgram* prog,
-                                const symbolic::Variables& indeterminates,
-                                int degree,
-                                symbolic::internal::DegreeType degree_type,
-                                symbolic::Polynomial* p,
-                                VectorX<symbolic::Monomial>* monomial_basis,
-                                MatrixX<symbolic::Expression>* gram) {
-  switch (degree_type) {
-    case symbolic::internal::DegreeType::kAny: {
-      *monomial_basis = internal::ComputeMonomialBasisNoConstant(
-          indeterminates, degree / 2, symbolic::internal::DegreeType::kAny);
-      MatrixX<symbolic::Variable> gram_var;
-      std::tie(*p, gram_var) = prog->NewSosPolynomial(*monomial_basis);
-      *gram = gram_var.cast<symbolic::Expression>();
-      break;
-    }
-    case symbolic::internal::DegreeType::kEven: {
-      symbolic::Polynomial p_even, p_odd;
-      const VectorX<symbolic::Monomial> monomial_basis_even =
-          internal::ComputeMonomialBasisNoConstant(
-              indeterminates, degree / 2,
-              symbolic::internal::DegreeType::kEven);
-      const VectorX<symbolic::Monomial> monomial_basis_odd =
-          internal::ComputeMonomialBasisNoConstant(
-              indeterminates, degree / 2, symbolic::internal::DegreeType::kOdd);
-      MatrixX<symbolic::Expression> gram_even, gram_odd;
-      std::tie(p_even, gram_even) = prog->NewSosPolynomial(monomial_basis_even);
-      std::tie(p_odd, gram_odd) = prog->NewSosPolynomial(monomial_basis_odd);
-      monomial_basis->resize(monomial_basis_even.rows() +
-                             monomial_basis_odd.rows());
-      *monomial_basis << monomial_basis_even, monomial_basis_odd;
-      gram->resize(monomial_basis->rows(), monomial_basis->rows());
-      gram->topLeftCorner(gram_even.rows(), gram_even.cols()) = gram_even;
-      gram->bottomRightCorner(gram_odd.rows(), gram_odd.cols()) = gram_odd;
-      *p = p_even + p_odd;
-      break;
-    }
-    default: {
-      throw std::runtime_error("sos polynomial cannot be odd order.");
-    }
-  }
-}
 }  // namespace
 
 SearchLyapunovGivenLagrangianBoxInputBound::
@@ -582,44 +751,6 @@ SearchLagrangianGivenVBoxInputBound::SearchLagrangianGivenVBoxInputBound(
   }
 }
 
-namespace {
-solvers::MathematicalProgramResult SearchWithBackoff(
-    solvers::MathematicalProgram* prog, const solvers::SolverId& solver_id,
-    const std::optional<solvers::SolverOptions>& solver_options,
-    double backoff_scale) {
-  DRAKE_DEMAND(prog->linear_costs().size() == 1u);
-  DRAKE_DEMAND(prog->quadratic_costs().size() == 0u);
-  auto solver = solvers::MakeSolver(solver_id);
-  solvers::MathematicalProgramResult result;
-  solver->Solve(*prog, std::nullopt, solver_options, &result);
-  if (!result.is_success()) {
-    drake::log()->error("Failed before backoff\n");
-  }
-  // PrintPsdConstraintStat(*prog, result);
-  DRAKE_DEMAND(result.is_success());
-  DRAKE_DEMAND(backoff_scale >= 0 && backoff_scale <= 1);
-  if (backoff_scale > 0) {
-    drake::log()->info("backoff");
-    auto cost = prog->linear_costs()[0];
-    prog->RemoveCost(cost);
-    const double cost_val = result.get_optimal_cost();
-    const double cost_ub = cost_val >= 0 ? (1 + backoff_scale) * cost_val
-                                         : (1 - backoff_scale) * cost_val;
-    prog->AddLinearConstraint(cost.evaluator()->a(), -kInf,
-                              cost_ub - cost.evaluator()->b(),
-                              cost.variables());
-    solver->Solve(*prog, std::nullopt, solver_options, &result);
-    if (!result.is_success()) {
-      drake::log()->error("Backoff failed\n");
-    }
-    // PrintPsdConstraintStat(*prog, result);
-    DRAKE_DEMAND(result.is_success());
-  }
-  return result;
-}
-
-}  // namespace
-
 ControlLyapunovBoxInputBound::ControlLyapunovBoxInputBound(
     const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
     const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
@@ -720,24 +851,19 @@ void ControlLyapunovBoxInputBound::SearchLyapunov(
       b_degrees, x_);
   // Now add the constraint that the ellipsoid is within the sub-level set {x |
   // V(x)<=d} Namely d−V(x) − r(x)(ρ−(x−x*)ᵀS(x−x*)) is sos and r(x) is sos.
-  const symbolic::Variables x_set(x_);
-  symbolic::Polynomial r;
-  std::tie(r, std::ignore) =
-      searcher.get_mutable_prog()->NewSosPolynomial(x_set, r_degree);
-  const symbolic::Polynomial ellipsoid_poly =
-      internal::EllipsoidPolynomial(x_, x_star, S, rho);
   const symbolic::Variable d_var =
       searcher.get_mutable_prog()->NewContinuousVariables<1>("d")(0);
   // 0 <= d <= 1
   searcher.get_mutable_prog()->AddBoundingBoxConstraint(0, 1, d_var);
-  searcher.get_mutable_prog()->AddSosConstraint(
-      symbolic::Polynomial({{symbolic::Monomial(), d_var}}) - searcher.V() +
-      r * ellipsoid_poly);
+  symbolic::Polynomial r;
+  AddEllipsoidInRoaConstraint(searcher.get_mutable_prog(), x_, d_var,
+                              searcher.V(), x_star, S, rho, r_degree, &r);
   // The objective is to minimize d.
   searcher.get_mutable_prog()->AddLinearCost(
       Vector1d::Ones(), 0, Vector1<symbolic::Variable>(d_var));
   const auto result = SearchWithBackoff(searcher.get_mutable_prog(), solver_id,
                                         solver_options, backoff_scale);
+  DRAKE_DEMAND(result.is_success());
   *V = result.GetSolution(searcher.V());
   b->resize(searcher.b().rows());
   for (int i = 0; i < searcher.b().rows(); ++i) {
@@ -1064,6 +1190,22 @@ symbolic::Polynomial NewFreePolynomialNoConstantOrLinear(
     poly_map.emplace(m_degree_gt_1(i), coeffs(i));
   }
   return symbolic::Polynomial(poly_map);
+}
+
+[[maybe_unused]] void PrintPsdConstraintStat(
+    const solvers::MathematicalProgram& prog,
+    const solvers::MathematicalProgramResult& result) {
+  for (const auto& psd_constraint : prog.positive_semidefinite_constraints()) {
+    const Eigen::MatrixXd psd_sol = Eigen::Map<Eigen::MatrixXd>(
+        result.GetSolution(psd_constraint.variables()).data(),
+        psd_constraint.evaluator()->matrix_rows(),
+        psd_constraint.evaluator()->matrix_rows());
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(psd_sol);
+    drake::log()->info(
+        fmt::format("rows: {}, min eigen: {}, cond number: {}\n",
+                    psd_sol.rows(), es.eigenvalues().minCoeff(),
+                    es.eigenvalues().maxCoeff() / es.eigenvalues().minCoeff()));
+  }
 }
 
 // Explicit instantiation

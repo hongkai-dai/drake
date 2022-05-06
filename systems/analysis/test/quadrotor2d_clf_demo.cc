@@ -98,31 +98,34 @@ struct Quadrotor {
     const Vector6<symbolic::Polynomial>& f,
     const Eigen::Matrix<symbolic::Polynomial, 6, 2>& G) {
   Eigen::Matrix<double, 2, 4> u_vertices;
-  // clang-format on
-  u_vertices << 1, 1, -1, -1, 1, -1, 1, -1;
   // clang-format off
-   SearchControlLyapunov dut(x, f, G, u_vertices);
-   const double deriv_eps = 0.1;
-   const int lambda0_degree = 2;
-   std::vector<int> l_degrees = {4, 4, 4, 4};
-   symbolic::Polynomial lambda0;
-   MatrixX<symbolic::Variable> lambda0_gram;
-   VectorX<symbolic::Polynomial> l;
-   std::vector<MatrixX<symbolic::Variable>> l_grams;
-   symbolic::Polynomial vdot_sos;
-   VectorX<symbolic::Monomial> vdot_monomials;
-   MatrixX<symbolic::Variable> vdot_gram;
-   auto prog_lagrangian = dut.ConstructLagrangianProgram(V_init, deriv_eps,
-   lambda0_degree, l_degrees, &lambda0, &lambda0_gram, &l, &l_grams, &vdot_sos,
-   &vdot_monomials, &vdot_gram); solvers::SolverOptions solver_options;
-   solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
-   const auto result_lagrangian = solvers::Solve(*prog_lagrangian,
-   std::nullopt, solver_options); DRAKE_DEMAND(result_lagrangian.is_success());
+  u_vertices << 1, 1, -1, -1,
+                1, -1, 1, -1;
+  // clang-format on
+  SearchControlLyapunov dut(x, f, G, u_vertices);
+  const double deriv_eps = 0.1;
+  const int lambda0_degree = 2;
+  std::vector<int> l_degrees = {4, 4, 4, 4};
+  const int V_degree = 2;
+  const Vector6d x_star = Vector6d::Zero();
+  const Matrix6<double> S = Matrix6<double>::Identity();
+  SearchControlLyapunov::SearchOptions search_options;
+  SearchControlLyapunov::RhoBisectionOption rho_bisection_option(0.01, 2, 0.01);
+  symbolic::Polynomial V;
+  symbolic::Polynomial lambda0;
+  VectorX<symbolic::Polynomial> l;
+  symbolic::Polynomial r;
+  double rho_sol;
+
+  dut.Search(V_init, lambda0_degree, l_degrees, V_degree, deriv_eps, x_star, S,
+             V_degree - 2, search_options, rho_bisection_option, &V, &lambda0,
+             &l, &r, &rho_sol);
 }
 
 [[maybe_unused]] void search_w_box_bounds(
     const Vector6<symbolic::Variable>& x, const symbolic::Polynomial& V_init,
-    const Vector6<symbolic::Polynomial>& f, const Eigen::Matrix<symbolic::Polynomial, 6, 2>& G) {
+    const Vector6<symbolic::Polynomial>& f,
+    const Eigen::Matrix<symbolic::Polynomial, 6, 2>& G) {
   const int V_degree = 2;
 
   const double positivity_eps{0};
@@ -130,7 +133,7 @@ struct Quadrotor {
   ControlLyapunovBoxInputBound::SearchOptions search_options;
   search_options.backoff_scale = 0.02;
   search_options.lagrangian_step_solver_options = solvers::SolverOptions();
-  //search_options.lagrangian_step_solver_options->SetOption(
+  // search_options.lagrangian_step_solver_options->SetOption(
   //    solvers::CommonSolverOption::kPrintToConsole, 1);
   ControlLyapunovBoxInputBound::RhoBisectionOption rho_bisection_option(0.01, 5,
                                                                         0.01);
@@ -218,7 +221,8 @@ int DoMain() {
     }
   }
 
-  search_w_box_bounds(x, V_init, f, G);
+  search(x, V_init, f, G);
+  // search_w_box_bounds(x, V_init, f, G);
   return 0;
 }
 }  // namespace analysis

@@ -3,6 +3,7 @@
 #include <limits.h>
 
 #include "drake/common/text_logging.h"
+#include "drake/math/matrix_util.h"
 #include "drake/solvers/choose_best_solver.h"
 #include "drake/solvers/mathematical_program.h"
 #include "drake/solvers/mathematical_program_result.h"
@@ -36,10 +37,23 @@ symbolic::Polynomial NewFreePolynomialNoConstant(
   return symbolic::Polynomial(poly_map);
 }
 
+template <typename C>
+void RemoveTinyCoeff(const solvers::Binding<C>& binding, double zero_tol) {
+  const Eigen::SparseMatrix<double>& A = binding.evaluator()->get_sparse_A();
+  for (int i = 0; i < A.cols(); ++i) {
+    for (Eigen::SparseMatrix<double>::InnerIterator it(A, i); it; ++it) {
+      if (std::abs(it.value()) < zero_tol) {
+        it.valueRef() = 0;
+      }
+    }
+  }
+}
+
 // Add the sos constraint that p is sos. We know that p(0) = 0 so we will remove
 // 1 from the monomials.
 void AddSosConstraintPassOrigin(solvers::MathematicalProgram* prog,
                                 const symbolic::Polynomial& p,
+                                const std::string& gram_name,
                                 VectorX<symbolic::Monomial>* monomials,
                                 MatrixX<symbolic::Variable>* gram) {
   const VectorX<symbolic::Monomial> monomial_with_1 =
@@ -55,22 +69,11 @@ void AddSosConstraintPassOrigin(solvers::MathematicalProgram* prog,
   }
   monomials->conservativeResize(monomial_size);
   symbolic::Polynomial p_expected;
-  std::tie(p_expected, *gram) = prog->NewSosPolynomial(*monomials);
+  std::tie(p_expected, *gram) = prog->NewSosPolynomial(
+      *monomials, solvers::MathematicalProgram::NonnegativePolynomial::kSos,
+      gram_name);
   auto poly_eq_cnstr =
       prog->AddEqualityConstraintBetweenPolynomials(p, p_expected);
-  for (const auto& cnstr : poly_eq_cnstr) {
-    // Remove tiny coefficients in linear constraint.
-    const auto& cnstr_A = cnstr.evaluator()->get_sparse_A();
-    const double zero_tol = 1E-14;
-    for (int i = 0; i < cnstr_A.cols(); ++i) {
-      for (Eigen::SparseMatrix<double>::InnerIterator it(cnstr_A, i); it;
-           ++it) {
-        if (std::abs(it.value()) <= zero_tol) {
-          it.valueRef() = 0;
-        }
-      }
-    }
-  }
 }
 
 // Create a new sos polynomial p(x) which satisfies p(0)=0
@@ -209,7 +212,7 @@ void SearchControlLyapunov::AddControlLyapunovConstraint(
   *vdot_poly -= l.sum() * (dVdx_times_f + deriv_eps * V);
   *vdot_poly -= (dVdx * G_ * u_vertices).dot(l);
   // We know this sos polynomial should not contain 1 in its monomial basis.
-  AddSosConstraintPassOrigin(prog, *vdot_poly, monomials, gram);
+  AddSosConstraintPassOrigin(prog, *vdot_poly, "vdot_gram", monomials, gram);
 }
 
 std::unique_ptr<solvers::MathematicalProgram>
@@ -268,6 +271,9 @@ SearchControlLyapunov::ConstructLyapunovProgram(
   this->AddControlLyapunovConstraint(prog.get(), x_, lambda0, l, *V,
                                      u_vertices_, deriv_eps, &vdot_poly,
                                      &vdot_monomials, &vdot_gram);
+  for (const auto& binding : prog->linear_equality_constraints()) {
+    RemoveTinyCoeff(binding, 1E-10);
+  }
   return prog;
 }
 
@@ -419,7 +425,7 @@ void AddControlLyapunovBoxInputBoundConstraints(
                    l_ij[2] * (1 - V)
              : (l_ij[0] + 1) * (-dVdx_times_Gi - b_i) +
                    l_ij[1] * dVdx_times_Gi - l_ij[2] * (1 - V);
-  AddSosConstraintPassOrigin(prog, p, monomials, gram);
+  AddSosConstraintPassOrigin(prog, p, "vdot_gram", monomials, gram);
 }
 
 // Add the constraint
@@ -863,6 +869,7 @@ void ControlLyapunovBoxInputBound::SearchLyapunov(
       Vector1d::Ones(), 0, Vector1<symbolic::Variable>(d_var));
   const auto result = SearchWithBackoff(searcher.get_mutable_prog(), solver_id,
                                         solver_options, backoff_scale);
+  // internal::PrintPsdConstraintStat(searcher.prog(), result);
   DRAKE_DEMAND(result.is_success());
   *V = result.GetSolution(searcher.V());
   b->resize(searcher.b().rows());
@@ -1200,11 +1207,18 @@ symbolic::Polynomial NewFreePolynomialNoConstantOrLinear(
         result.GetSolution(psd_constraint.variables()).data(),
         psd_constraint.evaluator()->matrix_rows(),
         psd_constraint.evaluator()->matrix_rows());
+    const Eigen::MatrixXd psd_dual =
+        math::ToSymmetricMatrixFromLowerTriangularColumns(
+            result.GetDualSolution(psd_constraint));
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(psd_sol);
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_dual(psd_dual);
     drake::log()->info(
-        fmt::format("rows: {}, min eigen: {}, cond number: {}\n",
-                    psd_sol.rows(), es.eigenvalues().minCoeff(),
-                    es.eigenvalues().maxCoeff() / es.eigenvalues().minCoeff()));
+        "rows: {}, min eigen: {}, cond number: {}\n, dual min "
+        "eigen: {}, cond number {}\n",
+        psd_sol.rows(), es.eigenvalues().minCoeff(),
+        es.eigenvalues().maxCoeff() / es.eigenvalues().minCoeff(),
+        es_dual.eigenvalues().minCoeff(),
+        es_dual.eigenvalues().maxCoeff() / es_dual.eigenvalues().minCoeff());
   }
 }
 

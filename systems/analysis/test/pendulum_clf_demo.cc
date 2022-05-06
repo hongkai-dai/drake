@@ -169,6 +169,90 @@ void Simulate(const Vector2<symbolic::Variable>& x,
       clf_logger->FindLog(simulator.get_context()).data().rightCols<1>());
 }
 
+[[maybe_unused]] void Search(const symbolic::Polynomial& V_init,
+                             const Vector2<symbolic::Variable>& x,
+                             const Vector2<symbolic::Polynomial>& f,
+                             const Vector2<symbolic::Polynomial>& G,
+                             symbolic::Polynomial* V_sol,
+                             double* deriv_eps_sol) {
+  const Eigen::RowVector2d u_vertices(1, -1);
+  const SearchControlLyapunov dut(x, f, G, u_vertices);
+  const int lambda0_degree = 2;
+  const std::vector<int> l_degrees{2, 2};
+  const int V_degree = 2;
+  const Eigen::Vector2d x_star(0, 0);
+  const Eigen::Matrix2d S = Eigen::Matrix2d::Identity();
+
+  SearchControlLyapunov::SearchOptions search_options;
+  search_options.backoff_scale = 0.02;
+  const double rho_min = 0.01;
+  const double rho_max = 15;
+  const double rho_bisection_tol = 0.01;
+  const SearchControlLyapunov::RhoBisectionOption rho_bisection_option(
+      rho_min, rho_max, rho_bisection_tol);
+  symbolic::Polynomial lambda0;
+  VectorX<symbolic::Polynomial> l;
+  symbolic::Polynomial r;
+  double rho;
+  *deriv_eps_sol = 0.5;
+  dut.Search(V_init, lambda0_degree, l_degrees, V_degree, *deriv_eps_sol,
+             x_star, S, V_degree - 2, search_options, rho_bisection_option,
+             V_sol, &lambda0, &l, &r, &rho);
+}
+
+[[maybe_unused]] void SearchWBoxBounds(const symbolic::Polynomial& V_init,
+                                       const Vector2<symbolic::Variable>& x,
+                                       const Vector2<symbolic::Polynomial>& f,
+                                       const Vector2<symbolic::Polynomial>& G,
+                                       symbolic::Polynomial* V_sol,
+                                       double* deriv_eps_sol) {
+  const bool symmetric_dynamics = internal::IsDynamicsSymmetric(f, G);
+  const int num_vdot_sos = symmetric_dynamics ? 1 : 2;
+  std::vector<std::vector<symbolic::Polynomial>> l_given(1);
+  l_given[0].resize(num_vdot_sos);
+  for (int i = 0; i < num_vdot_sos; ++i) {
+    l_given[0][i] = symbolic::Polynomial();
+  }
+  std::vector<std::vector<std::array<int, 3>>> lagrangian_degrees(1);
+  lagrangian_degrees[0].resize(num_vdot_sos);
+  for (int i = 0; i < num_vdot_sos; ++i) {
+    lagrangian_degrees[0][i] = {0, 4, 4};
+  }
+  std::vector<int> b_degrees(1);
+  b_degrees[0] = 4;
+
+  const double positivity_eps = 0.;
+  ControlLyapunovBoxInputBound searcher(f, G, x, positivity_eps);
+  const Eigen::Vector2d x_star(0, 0);
+  Eigen::Matrix2d S = Eigen::Matrix2d::Identity();
+  // int s_degree = 0;
+  // symbolic::Polynomial t_given{0};
+  const int V_degree = 2;
+  const double deriv_eps_lower = 0.5;
+  const double deriv_eps_upper = deriv_eps_lower;
+  ControlLyapunovBoxInputBound::SearchOptions search_options;
+  search_options.bilinear_iterations = 11;
+  search_options.backoff_scale = 0.02;
+  search_options.lyap_step_solver_options = solvers::SolverOptions();
+  // search_options.lyap_step_solver_options->SetOption(solvers::CommonSolverOption::kPrintToConsole,
+  // 1);
+  search_options.lagrangian_step_solver_options = solvers::SolverOptions();
+  // search_options.lagrangian_step_solver_options->SetOption(solvers::CommonSolverOption::kPrintToConsole,
+  // 1);
+  const double rho_min = 0.01;
+  const double rho_max = 15;
+  const double rho_bisection_tol = 0.01;
+  const int r_degree = V_degree - 2;
+  const ControlLyapunovBoxInputBound::RhoBisectionOption rho_bisection_option(
+      rho_min, rho_max, rho_bisection_tol);
+  auto clf_result =
+      searcher.Search(V_init, l_given, lagrangian_degrees, b_degrees, x_star, S,
+                      r_degree, V_degree, deriv_eps_lower, deriv_eps_upper,
+                      search_options, rho_bisection_option);
+  *V_sol = clf_result.V;
+  *deriv_eps_sol = clf_result.deriv_eps;
+}
+
 int DoMain() {
   const Vector2<symbolic::Variable> x(symbolic::Variable("x0"),
                                       symbolic::Variable("x1"));
@@ -189,58 +273,15 @@ int DoMain() {
     f(i) = f(i).RemoveTermsWithSmallCoefficients(1E-6);
     G(i, 0) = G(i, 0).RemoveTermsWithSmallCoefficients(1E-6);
   }
-  symbolic::Polynomial V(x.dot(lqr_result.S * x));
+  symbolic::Polynomial V_init(x.dot(lqr_result.S * x));
 
-  const bool symmetric_dynamics = internal::IsDynamicsSymmetric(f, G);
-  const int num_vdot_sos = symmetric_dynamics ? 1 : 2;
-  std::vector<std::vector<symbolic::Polynomial>> l_given(1);
-  l_given[0].resize(num_vdot_sos);
-  for (int i = 0; i < num_vdot_sos; ++i) {
-    l_given[0][i] = symbolic::Polynomial();
-  }
-  std::vector<std::vector<std::array<int, 3>>> lagrangian_degrees(1);
-  lagrangian_degrees[0].resize(num_vdot_sos);
-  for (int i = 0; i < num_vdot_sos; ++i) {
-    lagrangian_degrees[0][i] = {0, 4, 4};
-  }
-  std::vector<int> b_degrees(1);
-  b_degrees[0] = 4;
-  SearchLagrangianAndBGivenVBoxInputBound dut(
-      V, f, G, symmetric_dynamics, l_given, lagrangian_degrees, b_degrees, x);
-  dut.get_mutable_prog()->AddBoundingBoxConstraint(0.01, kInf, dut.deriv_eps());
-  solvers::MosekSolver mosek_solver;
-  solvers::SolverOptions solver_options;
-  solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
-  const auto result =
-      mosek_solver.Solve(dut.prog(), std::nullopt, solver_options);
+  symbolic::Polynomial V_sol;
+  double deriv_eps_sol;
+  Search(V_init, x, f, G, &V_sol, &deriv_eps_sol);
+  // SearchWBoxBounds(V_init, x, f, G, &V_sol, &deriv_eps_sol);
 
-  const double positivity_eps = 0.;
-  ControlLyapunovBoxInputBound searcher(f, G, x, positivity_eps);
-  const Eigen::Vector2d x_star(0, 0);
-  Eigen::Matrix2d S = Eigen::Matrix2d::Identity();
-  // int s_degree = 0;
-  // symbolic::Polynomial t_given{0};
-  const int V_degree = 2;
-  const double deriv_eps_lower = 0.5;
-  const double deriv_eps_upper = kInf;
-  ControlLyapunovBoxInputBound::SearchOptions search_options;
-  search_options.bilinear_iterations = 11;
-  search_options.backoff_scale = 0.02;
-  search_options.lyap_step_solver_options = solvers::SolverOptions();
-  // search_options.lyap_step_solver_options->SetOption(solvers::CommonSolverOption::kPrintToConsole,
-  // 1);
-  const double rho_min = 0.01;
-  const double rho_max = 15;
-  const double rho_bisection_tol = 0.01;
-  const int r_degree = V_degree - 2;
-  const ControlLyapunovBoxInputBound::RhoBisectionOption rho_bisection_option(
-      rho_min, rho_max, rho_bisection_tol);
-  auto clf_result = searcher.Search(
-      V, l_given, lagrangian_degrees, b_degrees, x_star, S, r_degree, V_degree,
-      deriv_eps_lower, deriv_eps_upper, search_options, rho_bisection_option);
-
-  std::cout << "clf: " << clf_result.V << "\n";
-  Simulate(x, x_des, clf_result.V, u_bound, clf_result.deriv_eps,
+  std::cout << "clf: " << V_sol << "\n";
+  Simulate(x, x_des, V_sol, u_bound, deriv_eps_sol,
            Eigen::Vector2d(M_PI + M_PI * 0.6, 0), 10);
   return 0;
 }
@@ -249,4 +290,7 @@ int DoMain() {
 }  // namespace systems
 }  // namespace drake
 
-int main() { return drake::systems::analysis::DoMain(); }
+int main() {
+  auto mosek_license = drake::solvers::MosekSolver::AcquireLicense();
+  return drake::systems::analysis::DoMain();
+}

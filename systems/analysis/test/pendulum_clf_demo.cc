@@ -185,6 +185,8 @@ void Simulate(const Vector2<symbolic::Variable>& x,
 
   SearchControlLyapunov::SearchOptions search_options;
   search_options.backoff_scale = 0.02;
+  // There are tiny coefficients coming from numerical roundoff error.
+  search_options.lyap_tiny_coeff_tol = 1E-10;
   const double rho_min = 0.01;
   const double rho_max = 15;
   const double rho_bisection_tol = 0.01;
@@ -231,8 +233,9 @@ void Simulate(const Vector2<symbolic::Variable>& x,
   const double deriv_eps_lower = 0.5;
   const double deriv_eps_upper = deriv_eps_lower;
   ControlLyapunovBoxInputBound::SearchOptions search_options;
-  search_options.bilinear_iterations = 11;
+  search_options.bilinear_iterations = 15;
   search_options.backoff_scale = 0.02;
+  search_options.lyap_tiny_coeff_tol = 1E-10;
   search_options.lyap_step_solver_options = solvers::SolverOptions();
   // search_options.lyap_step_solver_options->SetOption(solvers::CommonSolverOption::kPrintToConsole,
   // 1);
@@ -277,8 +280,8 @@ int DoMain() {
 
   symbolic::Polynomial V_sol;
   double deriv_eps_sol;
-  // Search(V_init, x, f, G, &V_sol, &deriv_eps_sol);
-  SearchWBoxBounds(V_init, x, f, G, &V_sol, &deriv_eps_sol);
+  Search(V_init, x, f, G, &V_sol, &deriv_eps_sol);
+  // SearchWBoxBounds(V_init, x, f, G, &V_sol, &deriv_eps_sol);
 
   std::cout << "clf: " << V_sol << "\n";
   Simulate(x, x_des, V_sol, u_bound, deriv_eps_sol,

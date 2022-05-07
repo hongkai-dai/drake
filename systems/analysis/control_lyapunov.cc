@@ -63,7 +63,7 @@ double SmallestCoeff(const solvers::Binding<C>& binding) {
   const Eigen::SparseMatrix<double>& A = binding.evaluator()->get_sparse_A();
   for (int i = 0; i < A.cols(); ++i) {
     for (Eigen::SparseMatrix<double>::InnerIterator it(A, i); it; ++it) {
-      if (std::abs(it.value()) < ret && it.value() != 0) {
+      if (std::abs(it.value()) < std::abs(ret) && it.value() != 0) {
         ret = it.value();
       }
     }
@@ -76,6 +76,18 @@ double SmallestCoeff(const solvers::Binding<C>& binding) {
   double ret = kInf;
   for (const auto& binding : prog.linear_equality_constraints()) {
     ret = std::min(ret, std::abs(SmallestCoeff(binding)));
+  }
+  return ret;
+}
+
+[[maybe_unused]] double SmallestCoeff(const symbolic::Polynomial& p) {
+  double ret = kInf;
+  for (const auto& [_, coeff] : p.monomial_to_coefficient_map()) {
+    DRAKE_DEMAND(symbolic::is_constant(coeff));
+    const double coeff_val = symbolic::get_constant_value(coeff);
+    if (std::abs(coeff_val) < std::abs(ret)) {
+      ret = coeff_val;
+    }
   }
   return ret;
 }
@@ -746,7 +758,7 @@ void ControlLyapunovBoxInputBound::SearchLyapunov(
                      SmallestCoeff(*prog));
   const auto result =
       SearchWithBackoff(prog.get(), solver_id, solver_options, backoff_scale);
-  // internal::PrintPsdConstraintStat(searcher.prog(), result);
+  // internal::PrintPsdConstraintStat(*prog, result);
   DRAKE_DEMAND(result.is_success());
   *V_sol = result.GetSolution(V);
   b_sol->resize(b.rows());
@@ -822,6 +834,14 @@ ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(
                    ret.ellipsoid_lagrangian, t_given, options.lyap_step_solver,
                    options.lyap_step_solver_options, options.backoff_scale,
                    options.lyap_tiny_coeff_tol, &(ret.V), &(ret.b), &rho_new);
+    if (options.search_l_and_b) {
+      drake::log()->info("search Lagrangian");
+      SearchLagrangianAndB(ret.V, l_given, lagrangian_degrees, b_degrees,
+                           deriv_eps_lower, deriv_eps_upper,
+                           options.lagrangian_step_solver,
+                           options.lagrangian_step_solver_options,
+                           &(ret.deriv_eps), &(ret.b), &(ret.l));
+    }
     drake::log()->info("search Lagrangian");
     SearchLagrangian(ret.V, ret.b, lagrangian_degrees,
                      options.lagrangian_step_solver,
@@ -889,10 +909,20 @@ ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(
     }
     ret.rho = rho_new;
     drake::log()->info("d={}", d);
-    drake::log()->info("search Lagrangian");
-    SearchLagrangian(ret.V, ret.b, lagrangian_degrees,
-                     options.lagrangian_step_solver,
-                     options.lagrangian_step_solver_options, &(ret.l));
+
+    if (options.search_l_and_b) {
+      drake::log()->info("search Lagrangian and b");
+      SearchLagrangianAndB(ret.V, l_given, lagrangian_degrees, b_degrees,
+                           deriv_eps_lower, deriv_eps_upper,
+                           options.lagrangian_step_solver,
+                           options.lagrangian_step_solver_options,
+                           &(ret.deriv_eps), &(ret.b), &(ret.l));
+    } else {
+      drake::log()->info("search Lagrangian");
+      SearchLagrangian(ret.V, ret.b, lagrangian_degrees,
+                       options.lagrangian_step_solver,
+                       options.lagrangian_step_solver_options, &(ret.l));
+    }
     iter += 1;
   }
   return ret;
@@ -1232,11 +1262,12 @@ symbolic::Polynomial NewFreePolynomialNoConstantOrLinear(
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_dual(psd_dual);
     drake::log()->info(
         "rows: {}, min eigen: {}, cond number: {}\n, dual min "
-        "eigen: {}, cond number {}\n",
+        "eigen: {}, cond number {}, maxCoeff {}\n",
         psd_sol.rows(), es.eigenvalues().minCoeff(),
         es.eigenvalues().maxCoeff() / es.eigenvalues().minCoeff(),
         es_dual.eigenvalues().minCoeff(),
-        es_dual.eigenvalues().maxCoeff() / es_dual.eigenvalues().minCoeff());
+        es_dual.eigenvalues().maxCoeff() / es_dual.eigenvalues().minCoeff(),
+        psd_dual.array().abs().maxCoeff());
   }
 }
 

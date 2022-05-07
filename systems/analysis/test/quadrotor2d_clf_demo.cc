@@ -141,6 +141,8 @@ struct Quadrotor {
   const ControlLyapunovBoxInputBound dut(f, G, x, positivity_eps);
   ControlLyapunovBoxInputBound::SearchOptions search_options;
   search_options.backoff_scale = 0.02;
+  // I run into numerical problem if I only search for l.
+  search_options.search_l_and_b = true;
   search_options.lagrangian_step_solver_options = solvers::SolverOptions();
   // search_options.lagrangian_step_solver_options->SetOption(
   //    solvers::CommonSolverOption::kPrintToConsole, 1);

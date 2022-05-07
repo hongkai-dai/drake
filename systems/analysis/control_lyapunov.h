@@ -431,6 +431,11 @@ class ControlLyapunovBoxInputBound {
     // set the coefficient smaller than these tolerance to 0.
     double lyap_tiny_coeff_tol = 0;
     double lagrangian_tiny_coeff_tol = 0;
+
+    // If set to true, then in step 3 we search for Lagrangian and b (namely
+    // step 1) while fixing lᵢⱼ₀ to l_given; otherwise in step 3 we search for
+    // Lagrangian (including lᵢⱼ₀) but not b.
+    bool search_l_and_b = false;
   };
 
   /**

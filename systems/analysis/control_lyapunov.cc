@@ -520,91 +520,6 @@ ComputePolynomialFromMonomialBasisAndGramMatrix(
 
 }  // namespace
 
-SearchLyapunovGivenLagrangianBoxInputBound::
-    SearchLyapunovGivenLagrangianBoxInputBound(
-        VectorX<symbolic::Polynomial> f, MatrixX<symbolic::Polynomial> G,
-        bool symmetric_dynamics, int V_degree, double positivity_eps,
-        double deriv_eps,
-        std::vector<std::vector<std::array<symbolic::Polynomial, 3>>> l_given,
-        const std::vector<int>& b_degrees, VectorX<symbolic::Variable> x)
-    : prog_{},
-      f_{std::move(f)},
-      G_{std::move(G)},
-      symmetric_dynamics_{symmetric_dynamics},
-      deriv_eps_{deriv_eps},
-      l_{std::move(l_given)},
-      x_{std::move(x)},
-      x_set_{x_},
-      nx_{static_cast<int>(f_.rows())},
-      nu_{static_cast<int>(G_.cols())},
-      b_{nu_},
-      vdot_sos_constraint_{nu_, symmetric_dynamics_} {
-  prog_.AddIndeterminates(x_);
-  CheckDynamicsInput(V_, f_, G_, x_set_);
-  DRAKE_DEMAND(static_cast<int>(b_degrees.size()) == nu_);
-  DRAKE_DEMAND(positivity_eps >= 0);
-  DRAKE_DEMAND(V_degree >= 0 && V_degree % 2 == 0);
-  // V(x) >= ε₁xᵀx
-  if (positivity_eps == 0 && !symmetric_dynamics) {
-    const VectorX<symbolic::Monomial> V_monomial =
-        internal::ComputeMonomialBasisNoConstant(
-            x_set_, V_degree / 2, symbolic::internal::DegreeType::kAny);
-    std::tie(V_, positivity_constraint_gram_) =
-        prog_.NewSosPolynomial(V_monomial);
-    positivity_constraint_monomial_ = V_monomial;
-  } else {
-    const symbolic::internal::DegreeType V_degree_type =
-        symmetric_dynamics_ ? symbolic::internal::DegreeType::kEven
-                            : symbolic::internal::DegreeType::kAny;
-    // We know that V(0) = 0 and V(x) >= ε₁xᵀx, hence V(x) has no constant or
-    // linear terms.
-    V_ = internal::NewFreePolynomialNoConstantOrLinear(
-        &prog_, x_set_, V_degree, "V_coeff", V_degree_type);
-    // quadratic_poly_map stores the mapping for the polynomial
-    // ε₁xᵀx
-    symbolic::Polynomial::MapType quadratic_poly_map;
-    for (int i = 0; i < nx_; ++i) {
-      quadratic_poly_map.emplace(symbolic::Monomial(x_(i), 2), positivity_eps);
-    }
-    symbolic::Polynomial V_minus_eps;
-    NewSosPolynomialPassOrigin(&prog_, x_set_, V_degree, V_degree_type,
-                               &V_minus_eps, &positivity_constraint_monomial_,
-                               &positivity_constraint_gram_);
-    prog_.AddEqualityConstraintBetweenPolynomials(
-        V_ - symbolic::Polynomial(quadratic_poly_map), V_minus_eps);
-  }
-
-  // ∂V/∂x*f(x) + εV = ∑ᵢ bᵢ(x)
-  const symbolic::internal::DegreeType b_degree_type =
-      symmetric_dynamics_ ? symbolic::internal::DegreeType::kEven
-                          : symbolic::internal::DegreeType::kAny;
-  for (int i = 0; i < nu_; ++i) {
-    b_(i) = NewFreePolynomialNoConstant(&prog_, x_set_, b_degrees[i], "b_coeff",
-                                        b_degree_type);
-  }
-  const RowVectorX<symbolic::Polynomial> dVdx = V_.Jacobian(x_);
-  prog_.AddEqualityConstraintBetweenPolynomials(
-      (dVdx * f_)(0) + deriv_eps_ * V_, b_.sum());
-  // Add the constraint
-  // (lᵢ₀₀(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₀₁(x)*∂V/∂x*Gᵢ(x) - lᵢ₀₂(x)*(1 − V)>=0
-  //(lᵢ₁₀(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₁₁(x)*∂V/∂x*Gᵢ(x) - lᵢ₁₂(x)*(1 − V)>=0
-  AddControlLyapunovBoxInputBoundConstraints(&prog_, l_, V_, dVdx, b_, G_,
-                                             &vdot_sos_constraint_);
-}
-
-SearchLyapunovGivenLagrangianBoxInputBound::EllipsoidInRoaReturn
-SearchLyapunovGivenLagrangianBoxInputBound::AddEllipsoidInRoaConstraint(
-    const Eigen::Ref<const Eigen::VectorXd>& x_star,
-    const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& t,
-    const symbolic::Polynomial& s) {
-  EllipsoidInRoaReturn ret;
-  ret.rho = prog_.NewContinuousVariables<1>("rho")(0);
-  std::tie(ret.constraint_gram, ret.constraint_monomials) =
-      AddEllipsoidInRoaConstraintHelper<symbolic::Variable>(
-          &prog_, t, x_, x_star, S, ret.rho, s, V_);
-  return ret;
-}
-
 SearchLagrangianGivenVBoxInputBound::SearchLagrangianGivenVBoxInputBound(
     symbolic::Polynomial V, VectorX<symbolic::Polynomial> f,
     MatrixX<symbolic::Polynomial> G, bool symmetric_dynamics,
@@ -742,63 +657,75 @@ void ControlLyapunovBoxInputBound::SearchLagrangianAndB(
 
 void ControlLyapunovBoxInputBound::SearchLyapunov(
     const std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>& l,
-    const std::vector<int>& b_degrees, int V_degree, double positivity_eps,
-    double deriv_eps, const Eigen::Ref<const Eigen::VectorXd>& x_star,
+    const std::vector<int>& b_degrees, int V_degree, double deriv_eps,
+    const Eigen::Ref<const Eigen::VectorXd>& x_star,
     const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& s,
     const symbolic::Polynomial& t, const solvers::SolverId& solver_id,
     const std::optional<solvers::SolverOptions>& solver_options,
-    double backoff_scale, symbolic::Polynomial* V,
-    VectorX<symbolic::Polynomial>* b, double* rho) const {
-  SearchLyapunovGivenLagrangianBoxInputBound searcher(
-      f_, G_, symmetric_dynamics_, V_degree, positivity_eps, deriv_eps, l,
-      b_degrees, x_);
-  const auto ellipsoid_ret =
-      searcher.AddEllipsoidInRoaConstraint(x_star, S, t, s);
-  searcher.get_mutable_prog()->AddLinearCost(-ellipsoid_ret.rho);
-  const auto result = SearchWithBackoff(searcher.get_mutable_prog(), solver_id,
-                                        solver_options, backoff_scale);
-  *rho = result.GetSolution(ellipsoid_ret.rho);
-  *V = result.GetSolution(searcher.V());
+    double backoff_scale, symbolic::Polynomial* V_sol,
+    VectorX<symbolic::Polynomial>* b_sol, double* rho_sol) const {
+  symbolic::Polynomial V;
+  MatrixX<symbolic::Expression> positivity_constraint_gram;
+  VectorX<symbolic::Monomial> positivity_constraint_monomial;
+  VectorX<symbolic::Polynomial> b;
+  VdotSosConstraintReturn vdot_sos_constraint(nu_, symmetric_dynamics_);
+  auto prog = this->ConstructLyapunovProgram(
+      l, symmetric_dynamics_, deriv_eps, V_degree, b_degrees, &V,
+      &positivity_constraint_gram, &positivity_constraint_monomial, &b,
+      &vdot_sos_constraint);
+  const auto rho = prog->NewContinuousVariables<1>("rho")(0);
+  auto [ellipsoid_constraint_gram, ellipsoid_constraint_monomials] =
+      AddEllipsoidInRoaConstraintHelper<symbolic::Variable>(
+          prog.get(), t, x_, x_star, S, rho, s, V);
+  prog->AddLinearCost(-rho);
+  const auto result =
+      SearchWithBackoff(prog.get(), solver_id, solver_options, backoff_scale);
+  *rho_sol = result.GetSolution(rho);
+  *V_sol = result.GetSolution(V);
   const int nu = G_.cols();
-  b->resize(nu);
+  b_sol->resize(nu);
   for (int i = 0; i < nu; ++i) {
-    (*b)(i) = result.GetSolution(searcher.b()(i));
+    (*b_sol)(i) = result.GetSolution(b(i));
   }
 }
 
 void ControlLyapunovBoxInputBound::SearchLyapunov(
     const std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>& l,
-    const std::vector<int>& b_degrees, int V_degree, double positivity_eps,
-    double deriv_eps, const Eigen::Ref<const Eigen::VectorXd>& x_star,
+    const std::vector<int>& b_degrees, int V_degree, double deriv_eps,
+    const Eigen::Ref<const Eigen::VectorXd>& x_star,
     const Eigen::Ref<const Eigen::MatrixXd>& S, double rho, int r_degree,
     const solvers::SolverId& solver_id,
     const std::optional<solvers::SolverOptions>& solver_options,
-    double backoff_scale, symbolic::Polynomial* V,
-    VectorX<symbolic::Polynomial>* b, symbolic::Polynomial* r_sol,
+    double backoff_scale, symbolic::Polynomial* V_sol,
+    VectorX<symbolic::Polynomial>* b_sol, symbolic::Polynomial* r_sol,
     double* d_sol) const {
-  SearchLyapunovGivenLagrangianBoxInputBound searcher(
-      f_, G_, symmetric_dynamics_, V_degree, positivity_eps, deriv_eps, l,
-      b_degrees, x_);
+  symbolic::Polynomial V;
+  MatrixX<symbolic::Expression> positivity_constraint_gram;
+  VectorX<symbolic::Monomial> positivity_constraint_monomial;
+  VectorX<symbolic::Polynomial> b;
+  VdotSosConstraintReturn vdot_sos_constraint(nu_, symmetric_dynamics_);
+  auto prog = this->ConstructLyapunovProgram(
+      l, symmetric_dynamics_, deriv_eps, V_degree, b_degrees, &V,
+      &positivity_constraint_gram, &positivity_constraint_monomial, &b,
+      &vdot_sos_constraint);
   // Now add the constraint that the ellipsoid is within the sub-level set {x |
   // V(x)<=d} Namely d−V(x) − r(x)(ρ−(x−x*)ᵀS(x−x*)) is sos and r(x) is sos.
-  const symbolic::Variable d_var =
-      searcher.get_mutable_prog()->NewContinuousVariables<1>("d")(0);
+  const symbolic::Variable d_var = prog->NewContinuousVariables<1>("d")(0);
   // 0 <= d <= 1
-  searcher.get_mutable_prog()->AddBoundingBoxConstraint(0, 1, d_var);
+  prog->AddBoundingBoxConstraint(0, 1, d_var);
   symbolic::Polynomial r;
-  AddEllipsoidInRoaConstraint(searcher.get_mutable_prog(), x_, d_var,
-                              searcher.V(), x_star, S, rho, r_degree, &r);
+  AddEllipsoidInRoaConstraint(prog.get(), x_, d_var, V, x_star, S, rho,
+                              r_degree, &r);
   // The objective is to minimize d.
-  searcher.get_mutable_prog()->AddLinearCost(
-      Vector1d::Ones(), 0, Vector1<symbolic::Variable>(d_var));
-  const auto result = SearchWithBackoff(searcher.get_mutable_prog(), solver_id,
-                                        solver_options, backoff_scale);
+  prog->AddLinearCost(Vector1d::Ones(), 0, Vector1<symbolic::Variable>(d_var));
+  const auto result =
+      SearchWithBackoff(prog.get(), solver_id, solver_options, backoff_scale);
   // internal::PrintPsdConstraintStat(searcher.prog(), result);
   DRAKE_DEMAND(result.is_success());
-  *V = result.GetSolution(searcher.V());
-  b->resize(searcher.b().rows());
-  for (int i = 0; i < searcher.b().rows(); ++i) {
-    (*b)(i) = result.GetSolution(searcher.b()(i));
+  *V_sol = result.GetSolution(V);
+  b_sol->resize(b.rows());
+  for (int i = 0; i < b.rows(); ++i) {
+    (*b_sol)(i) = result.GetSolution(b(i));
   }
   *r_sol = result.GetSolution(r);
   *d_sol = result.GetSolution(d_var);
@@ -863,10 +790,10 @@ ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(
   while (iter < options.bilinear_iterations && !converged) {
     double rho_new;
     drake::log()->info("search Lyapunov");
-    SearchLyapunov(ret.l, b_degrees, V_degree, positivity_eps_, ret.deriv_eps,
-                   x_star, S, ret.ellipsoid_lagrangian, t_given,
-                   options.lyap_step_solver, options.lyap_step_solver_options,
-                   options.backoff_scale, &(ret.V), &(ret.b), &rho_new);
+    SearchLyapunov(ret.l, b_degrees, V_degree, ret.deriv_eps, x_star, S,
+                   ret.ellipsoid_lagrangian, t_given, options.lyap_step_solver,
+                   options.lyap_step_solver_options, options.backoff_scale,
+                   &(ret.V), &(ret.b), &rho_new);
     drake::log()->info("search Lagrangian");
     SearchLagrangian(ret.V, ret.b, lagrangian_degrees,
                      options.lagrangian_step_solver,
@@ -916,8 +843,8 @@ ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(
   while (iter < options.bilinear_iterations && !converged) {
     double d;
     drake::log()->info("search Lyapunov");
-    SearchLyapunov(ret.l, b_degrees, V_degree, positivity_eps_, ret.deriv_eps,
-                   x_star, S, ret.rho, r_degree, options.lyap_step_solver,
+    SearchLyapunov(ret.l, b_degrees, V_degree, ret.deriv_eps, x_star, S,
+                   ret.rho, r_degree, options.lyap_step_solver,
                    options.lyap_step_solver_options, options.backoff_scale,
                    &(ret.V), &(ret.b), &(ret.ellipsoid_lagrangian), &d);
     drake::log()->info("d={}", d);
@@ -1017,6 +944,66 @@ ControlLyapunovBoxInputBound::ConstructLagrangianAndBProgram(
   // (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
   AddControlLyapunovBoxInputBoundConstraints(prog.get(), *lagrangians, V, dVdx,
                                              *b, G_, vdot_sos_constraint);
+  return prog;
+}
+
+std::unique_ptr<solvers::MathematicalProgram>
+ControlLyapunovBoxInputBound::ConstructLyapunovProgram(
+    const std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>& l,
+    bool symmetric_dynamics, double deriv_eps, int V_degree,
+    const std::vector<int>& b_degrees, symbolic::Polynomial* V,
+    MatrixX<symbolic::Expression>* positivity_constraint_gram,
+    VectorX<symbolic::Monomial>* positivity_constraint_monomial,
+    VectorX<symbolic::Polynomial>* b,
+    VdotSosConstraintReturn* vdot_sos_constraint) const {
+  auto prog = std::make_unique<solvers::MathematicalProgram>();
+  prog->AddIndeterminates(x_);
+  DRAKE_DEMAND(V_degree >= 0 && V_degree % 2 == 0);
+  if (positivity_eps_ == 0 && !symmetric_dynamics) {
+    const VectorX<symbolic::Monomial> V_monomial =
+        internal::ComputeMonomialBasisNoConstant(
+            x_set_, V_degree / 2, symbolic::internal::DegreeType::kAny);
+    std::tie(*V, *positivity_constraint_gram) =
+        prog->NewSosPolynomial(V_monomial);
+    *positivity_constraint_monomial = V_monomial;
+  } else {
+    const symbolic::internal::DegreeType V_degree_type =
+        symmetric_dynamics ? symbolic::internal::DegreeType::kEven
+                           : symbolic::internal::DegreeType::kAny;
+    // We know that V(0) = 0 and V(x) >= ε₁xᵀx, hence V(x) has no constant or
+    // linear terms.
+    *V = internal::NewFreePolynomialNoConstantOrLinear(
+        prog.get(), x_set_, V_degree, "V_coeff", V_degree_type);
+    // quadratic_poly_map stores the mapping for the polynomial
+    // ε₁xᵀx
+    symbolic::Polynomial::MapType quadratic_poly_map;
+    for (int i = 0; i < nx_; ++i) {
+      quadratic_poly_map.emplace(symbolic::Monomial(x_(i), 2), positivity_eps_);
+    }
+    symbolic::Polynomial V_minus_eps;
+    NewSosPolynomialPassOrigin(prog.get(), x_set_, V_degree, V_degree_type,
+                               &V_minus_eps, positivity_constraint_monomial,
+                               positivity_constraint_gram);
+    prog->AddEqualityConstraintBetweenPolynomials(
+        *V - symbolic::Polynomial(quadratic_poly_map), V_minus_eps);
+  }
+  // ∂V/∂x*f(x) + εV = ∑ᵢ bᵢ(x)
+  const symbolic::internal::DegreeType b_degree_type =
+      symmetric_dynamics ? symbolic::internal::DegreeType::kEven
+                         : symbolic::internal::DegreeType::kAny;
+  b->resize(nu_);
+  for (int i = 0; i < nu_; ++i) {
+    (*b)(i) = NewFreePolynomialNoConstant(prog.get(), x_set_, b_degrees[i],
+                                          "b_coeff", b_degree_type);
+  }
+  const RowVectorX<symbolic::Polynomial> dVdx = V->Jacobian(x_);
+  prog->AddEqualityConstraintBetweenPolynomials(
+      (dVdx * f_)(0) + deriv_eps * (*V), b->sum());
+  // Add the constraint
+  // (lᵢ₀₀(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₀₁(x)*∂V/∂x*Gᵢ(x) - lᵢ₀₂(x)*(1 − V)>=0
+  //(lᵢ₁₀(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₁₁(x)*∂V/∂x*Gᵢ(x) - lᵢ₁₂(x)*(1 − V)>=0
+  AddControlLyapunovBoxInputBoundConstraints(prog.get(), l, *V, dVdx, *b, G_,
+                                             vdot_sos_constraint);
   return prog;
 }
 

@@ -277,8 +277,8 @@ int DoMain() {
 
   symbolic::Polynomial V_sol;
   double deriv_eps_sol;
-  Search(V_init, x, f, G, &V_sol, &deriv_eps_sol);
-  // SearchWBoxBounds(V_init, x, f, G, &V_sol, &deriv_eps_sol);
+  // Search(V_init, x, f, G, &V_sol, &deriv_eps_sol);
+  SearchWBoxBounds(V_init, x, f, G, &V_sol, &deriv_eps_sol);
 
   std::cout << "clf: " << V_sol << "\n";
   Simulate(x, x_des, V_sol, u_bound, deriv_eps_sol,

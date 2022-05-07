@@ -350,14 +350,20 @@ TEST_F(SimpleLinearSystemTest, SearchLagrangianAndBGivenVBoxInputBound) {
     }
     // Given the lagrangians, test search Lyapunov.
     const int V_degree = 2;
-    SearchLyapunovGivenLagrangianBoxInputBound dut_search_V(
-        f, G, symmetric_dynamics, V_degree, positivity_eps, deriv_eps_sol,
-        l_result, b_degrees, x_);
+
+    symbolic::Polynomial V_new;
+    MatrixX<symbolic::Expression> positivity_constraint_gram;
+    VectorX<symbolic::Monomial> positivity_constraint_monomial;
+    VectorX<symbolic::Polynomial> b_new;
+    auto prog_V = dut.ConstructLyapunovProgram(
+        l_result, symmetric_dynamics, deriv_eps_sol, V_degree, b_degrees,
+        &V_new, &positivity_constraint_gram, &positivity_constraint_monomial,
+        &b_new, &vdot_sos_constraint);
+
     const auto result_search_V =
-        mosek_solver.Solve(dut_search_V.prog(), std::nullopt, solver_options);
+        mosek_solver.Solve(*prog_V, std::nullopt, solver_options);
     ASSERT_TRUE(result_search_V.is_success());
-    const symbolic::Polynomial V_sol =
-        result_search_V.GetSolution(dut_search_V.V());
+    const symbolic::Polynomial V_sol = result_search_V.GetSolution(V_new);
     ValidateRegionOfAttractionBySample(f, G, V_sol, x_, u_vertices,
                                        deriv_eps_sol, 100, 1E-5, 1E-3);
     // Check if the V(0) = 0 and V(x) doesn't have a constant term.
@@ -367,13 +373,11 @@ TEST_F(SimpleLinearSystemTest, SearchLagrangianAndBGivenVBoxInputBound) {
     }
     // Make sure V(x) - ε₁xᵀx is SOS.
     Eigen::MatrixXd positivity_constraint_gram_sol(
-        dut_search_V.positivity_constraint_gram().rows(),
-        dut_search_V.positivity_constraint_gram().cols());
+        positivity_constraint_gram.rows(), positivity_constraint_gram.cols());
     for (int i = 0; i < positivity_constraint_gram_sol.rows(); ++i) {
       for (int j = 0; j < positivity_constraint_gram_sol.cols(); ++j) {
-        positivity_constraint_gram_sol(i, j) =
-            symbolic::get_constant_value(result_search_V.GetSolution(
-                dut_search_V.positivity_constraint_gram()(i, j)));
+        positivity_constraint_gram_sol(i, j) = symbolic::get_constant_value(
+            result_search_V.GetSolution(positivity_constraint_gram(i, j)));
       }
     }
     EXPECT_PRED3(
@@ -381,9 +385,8 @@ TEST_F(SimpleLinearSystemTest, SearchLagrangianAndBGivenVBoxInputBound) {
         V_sol - positivity_eps *
                     symbolic::Polynomial(
                         x_.cast<symbolic::Expression>().dot(x_), x_set_),
-        dut_search_V.positivity_constraint_monomial().dot(
-            positivity_constraint_gram_sol *
-            dut_search_V.positivity_constraint_monomial()),
+        positivity_constraint_monomial.dot(positivity_constraint_gram_sol *
+                                           positivity_constraint_monomial),
         1E-6);
     es_solver.compute(positivity_constraint_gram_sol);
     EXPECT_TRUE((es_solver.eigenvalues().array() >= -psd_tol).all());
@@ -459,20 +462,19 @@ TEST_F(SimpleLinearSystemTest, MaximizeEllipsoid) {
 
     // Now fix the Lagrangian multiplier and search for V
     const int V_degree = 2;
-    SearchLyapunovGivenLagrangianBoxInputBound dut_search_V(
-        f, G, symmetric_dynamics, V_degree, positivity_eps, deriv_eps_sol,
-        l_sol, b_degrees, x_);
-    const auto ellipsoid_ret_V =
-        dut_search_V.AddEllipsoidInRoaConstraint(x_star, S, t, s_sol);
-    dut_search_V.get_mutable_prog()->AddLinearCost(-ellipsoid_ret_V.rho);
-    const auto result_search_V = mosek_solver.Solve(dut_search_V.prog());
+
+    symbolic::Polynomial V_new;
+    MatrixX<symbolic::Expression> positivity_constraint_gram;
+    VectorX<symbolic::Monomial> positivity_constraint_monomial;
+    VectorX<symbolic::Polynomial> b_new;
+    auto prog_V = dut.ConstructLyapunovProgram(
+        l_sol, symmetric_dynamics, deriv_eps_sol, V_degree, b_degrees, &V_new,
+        &positivity_constraint_gram, &positivity_constraint_monomial, &b_new,
+        &vdot_sos_constraint);
+    const auto result_search_V = mosek_solver.Solve(*prog_V);
     ASSERT_TRUE(result_search_V.is_success());
-    const double rho_search_V_sol =
-        result_search_V.GetSolution(ellipsoid_ret_V.rho);
-    EXPECT_GT(rho_search_V_sol, rho_sol);
     // Check if V passes the origin.
-    const symbolic::Polynomial V_sol =
-        result_search_V.GetSolution(dut_search_V.V());
+    const symbolic::Polynomial V_sol = result_search_V.GetSolution(V_new);
     for (const auto& [V_sol_monomial, V_sol_ceoff] :
          V_sol.monomial_to_coefficient_map()) {
       EXPECT_GT(V_sol_monomial.total_degree(), 1);
@@ -691,8 +693,8 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound_SearchLyapunov) {
   symbolic::Polynomial V_sol;
   VectorX<symbolic::Polynomial> b_sol;
   double d_sol;
-  dut.SearchLyapunov(l, b_degrees, V.TotalDegree(), positivity_eps, deriv_eps,
-                     x_star, S, rho_sol, r_degree, solvers::MosekSolver::id(),
+  dut.SearchLyapunov(l, b_degrees, V.TotalDegree(), deriv_eps, x_star, S,
+                     rho_sol, r_degree, solvers::MosekSolver::id(),
                      std::nullopt, backoff_scale, &V_sol, &b_sol, &r_sol,
                      &d_sol);
   // First validate that V is a valid CLF.

@@ -498,92 +498,6 @@ symbolic::Polynomial VdotSosConstraintReturn::ComputeSosConstraint(
   return ret;
 }
 
-SearchLagrangianAndBGivenVBoxInputBound::
-    SearchLagrangianAndBGivenVBoxInputBound(
-        symbolic::Polynomial V, VectorX<symbolic::Polynomial> f,
-        MatrixX<symbolic::Polynomial> G, bool symmetric_dynamics,
-        const std::vector<std::vector<symbolic::Polynomial>>& l_given,
-        std::vector<std::vector<std::array<int, 3>>> lagrangian_degrees,
-        std::vector<int> b_degrees, VectorX<symbolic::Variable> x)
-    : prog_{},
-      V_{std::move(V)},
-      f_{std::move(f)},
-      G_{std::move(G)},
-      nx_{static_cast<int>(f_.rows())},
-      nu_{static_cast<int>(G_.cols())},
-      symmetric_dynamics_{symmetric_dynamics},
-      l_{static_cast<size_t>(nu_)},
-      lagrangian_degrees_{std::move(lagrangian_degrees)},
-      lagrangian_grams_{static_cast<size_t>(nu_)},
-      b_degrees_{std::move(b_degrees)},
-      x_{std::move(x)},
-      x_set_{x_},
-      b_{nu_},
-      vdot_sos_constraint_{nu_, symmetric_dynamics_} {
-  prog_.AddIndeterminates(x_);
-  CheckDynamicsInput(V_, f_, G_, x_set_);
-  DRAKE_DEMAND(static_cast<int>(b_degrees_.size()) == nu_);
-  if (symmetric_dynamics_ && !V_.IsEven()) {
-    throw std::runtime_error(
-        "For symmetric dynamics, V should be an even function.");
-  }
-
-  const int num_vdot_sos = symmetric_dynamics_ ? 1 : 2;
-  // Add Lagrangian decision variables.
-  for (int i = 0; i < nu_; ++i) {
-    l_[i].resize(num_vdot_sos);
-    lagrangian_grams_[i].resize(num_vdot_sos);
-    for (int j = 0; j < num_vdot_sos; ++j) {
-      // k == 0
-      DRAKE_DEMAND(l_given[i][j].TotalDegree() == lagrangian_degrees_[i][j][0]);
-      l_[i][j][0] = l_given[i][j];
-
-      // k == 1
-      DRAKE_DEMAND(lagrangian_degrees_[i][j][1] % 2 == 0);
-      std::tie(l_[i][j][1], lagrangian_grams_[i][j][1]) =
-          prog_.NewSosPolynomial(x_set_, lagrangian_degrees_[i][j][1]);
-
-      // k == 2, l_[i][j][2] doesn't have 1 in its monomial basis.
-      DRAKE_DEMAND(lagrangian_degrees_[i][j][2] % 2 == 0);
-      const VectorX<symbolic::Monomial> l_monomial_basis =
-          internal::ComputeMonomialBasisNoConstant(
-              x_set_, lagrangian_degrees_[i][j][2] / 2,
-              symbolic::internal::DegreeType::kAny);
-      std::tie(l_[i][j][2], lagrangian_grams_[i][j][2]) =
-          prog_.NewSosPolynomial(l_monomial_basis);
-    }
-  }
-
-  deriv_eps_ = prog_.NewContinuousVariables<1>("deriv_eps")(0);
-
-  const RowVectorX<symbolic::Polynomial> dVdx = V_.Jacobian(x_);
-  // Since we will add the constraint ∂V/∂x*f(x) + εV = ∑ᵢ bᵢ(x), we know that
-  // the highest degree of b should be at least degree(∂V/∂x*f(x) + εV).
-  const symbolic::Polynomial dVdx_times_f = (dVdx * f_)(0);
-  if (*std::max_element(b_degrees_.begin(), b_degrees_.end()) <
-      std::max(dVdx_times_f.TotalDegree(), V_.TotalDegree())) {
-    throw std::invalid_argument("The degree of b is too low.");
-  }
-
-  // Add free polynomial b
-  const symbolic::internal::DegreeType b_degree_type =
-      symmetric_dynamics_ ? symbolic::internal::DegreeType::kEven
-                          : symbolic::internal::DegreeType::kAny;
-  for (int i = 0; i < nu_; ++i) {
-    b_(i) = NewFreePolynomialNoConstant(&prog_, x_set_, b_degrees_[i],
-                                        "b" + std::to_string(i), b_degree_type);
-  }
-
-  // Add the constraint ∂V/∂x*f(x) + εV = ∑ᵢ bᵢ(x)
-  prog_.AddEqualityConstraintBetweenPolynomials(b_.sum(),
-                                                dVdx_times_f + deriv_eps_ * V_);
-  // Add the constraint
-  // (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
-  // (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
-  AddControlLyapunovBoxInputBoundConstraints(&prog_, l_, V_, dVdx, b_, G_,
-                                             &vdot_sos_constraint_);
-}
-
 namespace {
 [[maybe_unused]] symbolic::Polynomial
 ComputePolynomialFromMonomialBasisAndGramMatrix(
@@ -766,7 +680,10 @@ ControlLyapunovBoxInputBound::ControlLyapunovBoxInputBound(
       G_{G},
       symmetric_dynamics_{internal::IsDynamicsSymmetric(f_, G_)},
       x_{x},
-      positivity_eps_{positivity_eps} {}
+      x_set_{x_},
+      positivity_eps_{positivity_eps},
+      nx_{static_cast<int>(f_.rows())},
+      nu_{static_cast<int>(G_.cols())} {}
 
 void ControlLyapunovBoxInputBound::SearchLagrangianAndB(
     const symbolic::Polynomial& V,
@@ -775,8 +692,9 @@ void ControlLyapunovBoxInputBound::SearchLagrangianAndB(
     const std::vector<int>& b_degrees, double deriv_eps_lower,
     double deriv_eps_upper, const solvers::SolverId& solver_id,
     const std::optional<solvers::SolverOptions>& solver_options,
-    double* deriv_eps, VectorX<symbolic::Polynomial>* b,
-    std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>* l) const {
+    double* deriv_eps_sol, VectorX<symbolic::Polynomial>* b_sol,
+    std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>* l_sol)
+    const {
   // Check if V(0) = 0
   const auto it_V_constant =
       V.monomial_to_coefficient_map().find(symbolic::Monomial());
@@ -784,33 +702,39 @@ void ControlLyapunovBoxInputBound::SearchLagrangianAndB(
     DRAKE_DEMAND(symbolic::is_constant(it_V_constant->second) &&
                  symbolic::get_constant_value(it_V_constant->second) == 0.);
   }
-  SearchLagrangianAndBGivenVBoxInputBound searcher(
-      V, f_, G_, symmetric_dynamics_, l_given, lagrangian_degrees, b_degrees,
-      x_);
-  searcher.get_mutable_prog()->AddBoundingBoxConstraint(
-      deriv_eps_lower, deriv_eps_upper, searcher.deriv_eps());
+
+  std::vector<std::vector<std::array<symbolic::Polynomial, 3>>> lagrangians;
+  std::vector<std::vector<std::array<MatrixX<symbolic::Variable>, 3>>>
+      lagrangian_grams;
+  VectorX<symbolic::Polynomial> b;
+  symbolic::Variable deriv_eps_var;
+  VdotSosConstraintReturn vdot_sos_constraint(nu_, symmetric_dynamics_);
+  auto prog = ConstructLagrangianAndBProgram(
+      V, l_given, lagrangian_degrees, b_degrees, symmetric_dynamics_,
+      &lagrangians, &lagrangian_grams, &deriv_eps_var, &b,
+      &vdot_sos_constraint);
+
+  prog->AddBoundingBoxConstraint(deriv_eps_lower, deriv_eps_upper,
+                                 deriv_eps_var);
   auto solver = solvers::MakeSolver(solver_id);
   solvers::MathematicalProgramResult result_searcher;
-  solver->Solve(searcher.prog(), std::nullopt, solver_options,
-                &result_searcher);
+  solver->Solve(*prog, std::nullopt, solver_options, &result_searcher);
   if (!result_searcher.is_success()) {
     log()->error("Failed to find Lagrangian and b(x)");
   }
   // PrintPsdConstraintStat(searcher.prog(), result_searcher);
   DRAKE_DEMAND(result_searcher.is_success());
-  *deriv_eps = result_searcher.GetSolution(searcher.deriv_eps());
-  const int nu = G_.cols();
-  b->resize(nu);
-  l->resize(nu);
+  *deriv_eps_sol = result_searcher.GetSolution(deriv_eps_var);
+  b_sol->resize(nu_);
+  l_sol->resize(nu_);
   const int num_vdot_sos = symmetric_dynamics_ ? 1 : 2;
-  for (int i = 0; i < nu; ++i) {
-    (*b)(i) = result_searcher.GetSolution(searcher.b()(i));
-    (*l)[i].resize(num_vdot_sos);
+  for (int i = 0; i < nu_; ++i) {
+    (*b_sol)(i) = result_searcher.GetSolution(b(i));
+    (*l_sol)[i].resize(num_vdot_sos);
     for (int j = 0; j < num_vdot_sos; ++j) {
-      (*l)[i][j][0] = l_given[i][j];
+      (*l_sol)[i][j][0] = l_given[i][j];
       for (int k = 1; k < 3; ++k) {
-        (*l)[i][j][k] =
-            result_searcher.GetSolution(searcher.lagrangians()[i][j][k]);
+        (*l_sol)[i][j][k] = result_searcher.GetSolution(lagrangians[i][j][k]);
       }
     }
   }
@@ -1016,6 +940,84 @@ ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(
     iter += 1;
   }
   return ret;
+}
+
+std::unique_ptr<solvers::MathematicalProgram>
+ControlLyapunovBoxInputBound::ConstructLagrangianAndBProgram(
+    const symbolic::Polynomial& V,
+    const std::vector<std::vector<symbolic::Polynomial>>& l_given,
+    const std::vector<std::vector<std::array<int, 3>>>& lagrangian_degrees,
+    const std::vector<int>& b_degrees, bool symmetric_dynamics,
+    std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>* lagrangians,
+    std::vector<std::vector<std::array<MatrixX<symbolic::Variable>, 3>>>*
+        lagrangian_grams,
+    symbolic::Variable* deriv_eps, VectorX<symbolic::Polynomial>* b,
+    VdotSosConstraintReturn* vdot_sos_constraint) const {
+  auto prog = std::make_unique<solvers::MathematicalProgram>();
+  prog->AddIndeterminates(x_);
+  DRAKE_DEMAND(static_cast<int>(b_degrees.size()) == nu_);
+
+  if (symmetric_dynamics && !V.IsEven()) {
+    throw std::runtime_error(
+        "For symmetric dynamics, V should be an even function.");
+  }
+
+  const int num_vdot_sos = symmetric_dynamics ? 1 : 2;
+  lagrangians->resize(nu_);
+  lagrangian_grams->resize(nu_);
+  // Add Lagrangian decision variables.
+  for (int i = 0; i < nu_; ++i) {
+    (*lagrangians)[i].resize(num_vdot_sos);
+    (*lagrangian_grams)[i].resize(num_vdot_sos);
+    for (int j = 0; j < num_vdot_sos; ++j) {
+      // k == 0
+      DRAKE_DEMAND(l_given[i][j].TotalDegree() == lagrangian_degrees[i][j][0]);
+      (*lagrangians)[i][j][0] = l_given[i][j];
+
+      // k == 1
+      DRAKE_DEMAND(lagrangian_degrees[i][j][1] % 2 == 0);
+      std::tie((*lagrangians)[i][j][1], (*lagrangian_grams)[i][j][1]) =
+          prog->NewSosPolynomial(x_set_, lagrangian_degrees[i][j][1]);
+
+      // k == 2, l_[i][j][2] doesn't have 1 in its monomial basis.
+      DRAKE_DEMAND(lagrangian_degrees[i][j][2] % 2 == 0);
+      const VectorX<symbolic::Monomial> l_monomial_basis =
+          internal::ComputeMonomialBasisNoConstant(
+              x_set_, lagrangian_degrees[i][j][2] / 2,
+              symbolic::internal::DegreeType::kAny);
+      std::tie((*lagrangians)[i][j][2], (*lagrangian_grams)[i][j][2]) =
+          prog->NewSosPolynomial(l_monomial_basis);
+    }
+  }
+  *deriv_eps = prog->NewContinuousVariables<1>("deriv_eps")(0);
+
+  const RowVectorX<symbolic::Polynomial> dVdx = V.Jacobian(x_);
+  // Since we will add the constraint ∂V/∂x*f(x) + εV = ∑ᵢ bᵢ(x), we know that
+  // the highest degree of b should be at least degree(∂V/∂x*f(x) + εV).
+  const symbolic::Polynomial dVdx_times_f = (dVdx * f_)(0);
+  if (*std::max_element(b_degrees.begin(), b_degrees.end()) <
+      std::max(dVdx_times_f.TotalDegree(), V.TotalDegree())) {
+    throw std::invalid_argument("The degree of b is too low.");
+  }
+  // Add free polynomial b
+  const symbolic::internal::DegreeType b_degree_type =
+      symmetric_dynamics ? symbolic::internal::DegreeType::kEven
+                         : symbolic::internal::DegreeType::kAny;
+  b->resize(nu_);
+  for (int i = 0; i < nu_; ++i) {
+    (*b)(i) =
+        NewFreePolynomialNoConstant(prog.get(), x_set_, b_degrees[i],
+                                    "b" + std::to_string(i), b_degree_type);
+  }
+  // Add the constraint ∂V/∂x*f(x) + εV = ∑ᵢ bᵢ(x)
+  prog->AddEqualityConstraintBetweenPolynomials(
+      b->sum(), dVdx_times_f + (*deriv_eps) * V);
+  // Add the constraint
+  // (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
+  // (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
+  AddControlLyapunovBoxInputBoundConstraints(prog.get(), *lagrangians, V, dVdx,
+                                             *b, G_, vdot_sos_constraint);
+  return prog;
 }
 
 void MaximizeInnerEllipsoidRho(

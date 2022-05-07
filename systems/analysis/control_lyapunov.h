@@ -224,116 +224,6 @@ struct VdotSosConstraintReturn {
 };
 
 /**
- * For u bounded in a unit box -1 <= u <= 1.
- * Given the Lagrangian multiplier, find the Lyapunov function V and slack
- * polynomials b, satisfying the condition
- *
- *     V(x) >= ε₁xᵀx
- *     V(0) = 0
- *     ∂V/∂x*f(x) + ε₂V = ∑ᵢ bᵢ(x)
- *     (lᵢ₀₀(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₀₁(x)*∂V/∂x*Gᵢ(x) - lᵢ₀₂(x)*(1 − V) >=
- *     0
- *     (lᵢ₁₀(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₁₁(x)*∂V/∂x*Gᵢ(x) - lᵢ₁₂(x)*(1 − V)
- *     >= 0
- * where lᵢⱼₖ(x) are all given.
- */
-class SearchLyapunovGivenLagrangianBoxInputBound {
- public:
-  DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(SearchLyapunovGivenLagrangianBoxInputBound)
-
-  /**
-   * For a control affine system with 0 being the goal state, we find the
-   * Lyapunov function given Lagrangian multipliers.
-   * @param f The dynamics is ẋ = f(x)+G(x)u
-   * @param G The dynamics is ẋ = f(x)+G(x)u
-   * @param V_degree The polynomial V(x) has highest degree=V_degree.
-   * @param positivity_eps ε₁ in the documentation above. Used to constrain
-   * V(x) to be a positive definite function.
-   * @param deriv_eps ε₂ in the documentation above. The rate of exponential
-   * convergence.
-   * @param l_given l_given[i][j][k] is lᵢⱼₖ in the documentation above.
-   * @param b_degrees b_degrees[i] is the degree of the polynomial bᵢ(x).
-   * @param x The indeterminates for the state.
-   */
-  SearchLyapunovGivenLagrangianBoxInputBound(
-      VectorX<symbolic::Polynomial> f, MatrixX<symbolic::Polynomial> G,
-      bool symmetric_dynamics, int V_degree, double positivity_eps,
-      double deriv_eps,
-      std::vector<std::vector<std::array<symbolic::Polynomial, 3>>> l_given,
-      const std::vector<int>& b_degrees, VectorX<symbolic::Variable> x);
-
-  const solvers::MathematicalProgram& prog() const { return prog_; }
-
-  solvers::MathematicalProgram* get_mutable_prog() { return &prog_; }
-
-  const VectorX<symbolic::Polynomial>& b() const { return b_; }
-
-  const symbolic::Polynomial& V() const { return V_; }
-
-  /**
-   * The Gram matrix of the positivity constraint
-   * V(x) >= ε₁xᵀx
-   */
-  const MatrixX<symbolic::Expression>& positivity_constraint_gram() const {
-    return positivity_constraint_gram_;
-  }
-
-  /**
-   * The monomial basis m(x) for the positivity constraint
-   * V(x) - ε₁xᵀx = m(x)ᵀQm(x)
-   */
-  const VectorX<symbolic::Monomial>& positivity_constraint_monomial() const {
-    return positivity_constraint_monomial_;
-  }
-
-  /**
-   * The return struct in AddEllipsoidInRoaConstraint
-   */
-  struct EllipsoidInRoaReturn {
-    // The size of the ellipoid.
-    symbolic::Variable rho;
-    // The monomials of the constraint (1+t(x))((x−x*)ᵀS(x−x*)−ρ) −
-    // s(x)(V(x)−1)
-    VectorX<symbolic::Monomial> constraint_monomials;
-    // The Gram matrix of the constraint
-    // (1+t(x))((x−x*)ᵀS(x−x*)−ρ) − s(x)(V(x)−1)
-    MatrixX<symbolic::Variable> constraint_gram;
-  };
-
-  /**
-   * Add the constraint that an ellipsoid {x|(x−x*)ᵀS(x−x*)<=ρ} is within the
-   * region-of-attraction (ROA) {x | V(x) <= 1}.
-   * We enforce the constraint
-   * (1+t(x))((x−x*)ᵀS(x−x*)−ρ) − s(x)(V(x)−1) is sos
-   * @param x_star The center of the ellipsoid.
-   * @param S The shape of the ellipsoid.
-   * @param t The Lagrangian multipler t(x).
-   * @param s The Lagrangian multiplier s(x).
-   */
-  EllipsoidInRoaReturn AddEllipsoidInRoaConstraint(
-      const Eigen::Ref<const Eigen::VectorXd>& x_star,
-      const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& t,
-      const symbolic::Polynomial& s);
-
- private:
-  solvers::MathematicalProgram prog_;
-  VectorX<symbolic::Polynomial> f_;
-  MatrixX<symbolic::Polynomial> G_;
-  bool symmetric_dynamics_;
-  double deriv_eps_;
-  std::vector<std::vector<std::array<symbolic::Polynomial, 3>>> l_;
-  VectorX<symbolic::Variable> x_;
-  symbolic::Variables x_set_;
-  symbolic::Polynomial V_;
-  VectorX<symbolic::Monomial> positivity_constraint_monomial_;
-  MatrixX<symbolic::Expression> positivity_constraint_gram_;
-  int nx_;
-  int nu_;
-  VectorX<symbolic::Polynomial> b_;
-  VdotSosConstraintReturn vdot_sos_constraint_;
-};
-
-/**
  * This is the Lagrangian step in ControlLaypunovBoxInputBound. The control
  * Lyapunov function V, together with b are fixed, and we search for the
  * Lagrangian multipliers
@@ -601,8 +491,8 @@ class ControlLyapunovBoxInputBound {
   // The objective is to maximize ρ in the ellipsoid.
   void SearchLyapunov(
       const std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>& l,
-      const std::vector<int>& b_degrees, int V_degree, double positivity_eps,
-      double deriv_eps, const Eigen::Ref<const Eigen::VectorXd>& x_star,
+      const std::vector<int>& b_degrees, int V_degree, double deriv_eps,
+      const Eigen::Ref<const Eigen::VectorXd>& x_star,
       const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& s,
       const symbolic::Polynomial& t, const solvers::SolverId& solver_id,
       const std::optional<solvers::SolverOptions>& solver_options,
@@ -615,8 +505,8 @@ class ControlLyapunovBoxInputBound {
   // by d.
   void SearchLyapunov(
       const std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>& l,
-      const std::vector<int>& b_degrees, int V_degree, double positivity_eps,
-      double deriv_eps, const Eigen::Ref<const Eigen::VectorXd>& x_star,
+      const std::vector<int>& b_degrees, int V_degree, double deriv_eps,
+      const Eigen::Ref<const Eigen::VectorXd>& x_star,
       const Eigen::Ref<const Eigen::MatrixXd>& S, double rho, int r_degree,
       const solvers::SolverId& solver_id,
       const std::optional<solvers::SolverOptions>& solver_options,
@@ -656,6 +546,30 @@ class ControlLyapunovBoxInputBound {
       std::vector<std::vector<std::array<MatrixX<symbolic::Variable>, 3>>>*
           lagrangian_grams,
       symbolic::Variable* deriv_eps, VectorX<symbolic::Polynomial>* b,
+      VdotSosConstraintReturn* vdot_sos_constraint) const;
+
+  /**
+   * For u bounded in a unit box -1 <= u <= 1.
+   * Given the Lagrangian multiplier, find the Lyapunov function V and slack
+   * polynomials b, satisfying the condition
+   *
+   *     V(x) >= ε₁xᵀx
+   *     V(0) = 0
+   *     ∂V/∂x*f(x) + ε₂V = ∑ᵢ bᵢ(x)
+   *     (lᵢ₀₀(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₀₁(x)*∂V/∂x*Gᵢ(x) - lᵢ₀₂(x)*(1 − V)
+   * >=
+   *     0
+   *     (lᵢ₁₀(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₁₁(x)*∂V/∂x*Gᵢ(x) - lᵢ₁₂(x)*(1 − V)
+   *     >= 0
+   * where lᵢⱼₖ(x) are all given.
+   */
+  std::unique_ptr<solvers::MathematicalProgram> ConstructLyapunovProgram(
+      const std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>& l,
+      bool symmetric_dynamics, double deriv_eps, int V_degree,
+      const std::vector<int>& b_degrees, symbolic::Polynomial* V,
+      MatrixX<symbolic::Expression>* positivity_constraint_gram,
+      VectorX<symbolic::Monomial>* positivity_constraint_monomial,
+      VectorX<symbolic::Polynomial>* b,
       VdotSosConstraintReturn* vdot_sos_constraint) const;
 
  private:

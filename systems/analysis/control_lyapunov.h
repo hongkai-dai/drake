@@ -111,6 +111,17 @@ class SearchControlLyapunov {
         std::nullopt};
     std::optional<solvers::SolverOptions> lyap_step_solver_options{
         std::nullopt};
+    // Small coefficient in the constraints can cause numerical issues. We will
+    // set the coefficient of linear constraints smaller than these tolerance to
+    // 0.
+    double lyap_tiny_coeff_tol = 0;
+    double lagrangian_tiny_coeff_tol = 0;
+
+    // The solution to these polynomials might contain terms with tiny
+    // coefficient, due to numerical roundoff error coming from the solver. We
+    // remove terms in the polynomial with tiny coefficients.
+    double Vsol_tiny_coeff_tol = 0;
+    double lsol_tiny_coeff_tol = 0;
   };
 
   /**
@@ -416,6 +427,10 @@ class ControlLyapunovBoxInputBound {
         std::nullopt};
     std::optional<solvers::SolverOptions> lyap_step_solver_options{
         std::nullopt};
+    // Small coefficient in the constraints can cause numerical issues. We will
+    // set the coefficient smaller than these tolerance to 0.
+    double lyap_tiny_coeff_tol = 0;
+    double lagrangian_tiny_coeff_tol = 0;
   };
 
   /**
@@ -496,7 +511,7 @@ class ControlLyapunovBoxInputBound {
       const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& s,
       const symbolic::Polynomial& t, const solvers::SolverId& solver_id,
       const std::optional<solvers::SolverOptions>& solver_options,
-      double backoff_scale, symbolic::Polynomial* V,
+      double backoff_scale, double tiny_coeff_tol, symbolic::Polynomial* V,
       VectorX<symbolic::Polynomial>* b, double* rho) const;
 
   // Overloaded step 2 of Search() function.
@@ -510,7 +525,7 @@ class ControlLyapunovBoxInputBound {
       const Eigen::Ref<const Eigen::MatrixXd>& S, double rho, int r_degree,
       const solvers::SolverId& solver_id,
       const std::optional<solvers::SolverOptions>& solver_options,
-      double backoff_scale, symbolic::Polynomial* V,
+      double backoff_scale, double tiny_coeff_tol, symbolic::Polynomial* V,
       VectorX<symbolic::Polynomial>* b, symbolic::Polynomial* r,
       double* d) const;
 

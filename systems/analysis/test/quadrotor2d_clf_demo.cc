@@ -105,11 +105,20 @@ struct Quadrotor {
   SearchControlLyapunov dut(x, f, G, u_vertices);
   const double deriv_eps = 0.1;
   const int lambda0_degree = 2;
-  std::vector<int> l_degrees = {4, 4, 4, 4};
+  std::vector<int> l_degrees = {2, 2, 2, 2};
   const int V_degree = 2;
   const Vector6d x_star = Vector6d::Zero();
   const Matrix6<double> S = Matrix6<double>::Identity();
   SearchControlLyapunov::SearchOptions search_options;
+  search_options.bilinear_iterations = 20;
+  search_options.backoff_scale = 0.02;
+  search_options.lyap_tiny_coeff_tol = 1E-7;
+  search_options.Vsol_tiny_coeff_tol = 1E-7;
+  search_options.lsol_tiny_coeff_tol = 1E-7;
+  search_options.lyap_step_solver_options = solvers::SolverOptions();
+  // search_options.lyap_step_solver_options->SetOption(solvers::CommonSolverOption::kPrintToConsole,
+  // 1);
+
   SearchControlLyapunov::RhoBisectionOption rho_bisection_option(0.01, 2, 0.01);
   symbolic::Polynomial V;
   symbolic::Polynomial lambda0;

@@ -695,7 +695,7 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound_SearchLyapunov) {
   double d_sol;
   dut.SearchLyapunov(l, b_degrees, V.TotalDegree(), deriv_eps, x_star, S,
                      rho_sol, r_degree, solvers::MosekSolver::id(),
-                     std::nullopt, backoff_scale, &V_sol, &b_sol, &r_sol,
+                     std::nullopt, backoff_scale, 0., &V_sol, &b_sol, &r_sol,
                      &d_sol);
   // First validate that V is a valid CLF.
   Eigen::Matrix<double, 2, 4> u_vertices;

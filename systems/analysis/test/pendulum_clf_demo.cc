@@ -79,9 +79,11 @@ class ControlledPendulum final : public LeafSystem<double> {
 
   ~ControlledPendulum() final{};
 
-  const OutputPortIndex& state_output_index() { return state_output_index_; }
+  const OutputPortIndex& state_output_index() const {
+    return state_output_index_;
+  }
 
-  const OutputPortIndex& clf_output_index() { return clf_output_index_; }
+  const OutputPortIndex& clf_output_index() const { return clf_output_index_; }
 
  private:
   virtual void DoCalcTimeDerivatives(
@@ -89,7 +91,7 @@ class ControlledPendulum final : public LeafSystem<double> {
       systems::ContinuousState<double>* derivatives) const final {
     solvers::MathematicalProgram prog;
     auto u = prog.NewContinuousVariables<1>();
-    prog.AddBoundingBoxConstraint(-u_bound_, u_bound_, u(0));
+    prog.AddBoundingBoxConstraint(-1, 1, u(0));
     prog.AddQuadraticCost(Eigen::Matrix<double, 1, 1>::Constant(1),
                           Eigen::Matrix<double, 1, 1>::Zero(), u);
     const Vector2<double> x_val =

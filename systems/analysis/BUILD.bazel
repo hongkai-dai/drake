@@ -828,6 +828,7 @@ drake_cc_binary(
     deps = [
         ":control_lyapunov",
         ":simulator",
+        ":simulator_config_functions",
         "//solvers:solve",
         "//systems/controllers:linear_quadratic_regulator",
         "//systems/primitives:vector_log_sink",

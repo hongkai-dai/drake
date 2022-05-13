@@ -37,22 +37,13 @@ symbolic::Polynomial NewFreePolynomialNoConstant(
   return symbolic::Polynomial(poly_map);
 }
 
-template <typename C>
-void RemoveTinyCoeff(const solvers::Binding<C>& binding, double zero_tol) {
-  const Eigen::SparseMatrix<double>& A = binding.evaluator()->get_sparse_A();
-  for (int i = 0; i < A.cols(); ++i) {
-    for (Eigen::SparseMatrix<double>::InnerIterator it(A, i); it; ++it) {
-      if (std::abs(it.value()) < zero_tol) {
-        it.valueRef() = 0;
-      }
-    }
-  }
-}
-
 void RemoveTinyCoeff(solvers::MathematicalProgram* prog, double zero_tol) {
   if (zero_tol > 0) {
     for (const auto& binding : prog->linear_equality_constraints()) {
-      RemoveTinyCoeff(binding, zero_tol);
+      binding.evaluator()->RemoveTinyCoefficient(zero_tol);
+    }
+    for (const auto& binding : prog->linear_constraints()) {
+      binding.evaluator()->RemoveTinyCoefficient(zero_tol);
     }
   }
 }
@@ -639,7 +630,8 @@ void ControlLyapunovBoxInputBound::SearchLagrangianAndB(
     const std::vector<int>& b_degrees, double deriv_eps_lower,
     double deriv_eps_upper, const solvers::SolverId& solver_id,
     const std::optional<solvers::SolverOptions>& solver_options,
-    double* deriv_eps_sol, VectorX<symbolic::Polynomial>* b_sol,
+    double lsol_tiny_coeff_tol, double* deriv_eps_sol,
+    VectorX<symbolic::Polynomial>* b_sol,
     std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>* l_sol)
     const {
   // Check if V(0) = 0
@@ -677,11 +669,20 @@ void ControlLyapunovBoxInputBound::SearchLagrangianAndB(
   const int num_vdot_sos = symmetric_dynamics_ ? 1 : 2;
   for (int i = 0; i < nu_; ++i) {
     (*b_sol)(i) = result_searcher.GetSolution(b(i));
+    if (lsol_tiny_coeff_tol > 0) {
+      (*b_sol)(i) =
+          (*b_sol)(i).RemoveTermsWithSmallCoefficients(lsol_tiny_coeff_tol);
+    }
     (*l_sol)[i].resize(num_vdot_sos);
     for (int j = 0; j < num_vdot_sos; ++j) {
       (*l_sol)[i][j][0] = l_given[i][j];
       for (int k = 1; k < 3; ++k) {
         (*l_sol)[i][j][k] = result_searcher.GetSolution(lagrangians[i][j][k]);
+        if (lsol_tiny_coeff_tol > 0) {
+          (*l_sol)[i][j][k] =
+              (*l_sol)[i][j][k].RemoveTermsWithSmallCoefficients(
+                  lsol_tiny_coeff_tol);
+        }
       }
     }
   }
@@ -694,7 +695,8 @@ void ControlLyapunovBoxInputBound::SearchLyapunov(
     const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& s,
     const symbolic::Polynomial& t, const solvers::SolverId& solver_id,
     const std::optional<solvers::SolverOptions>& solver_options,
-    double backoff_scale, double tiny_coeff_tol, symbolic::Polynomial* V_sol,
+    double backoff_scale, double lyap_tiny_coeff_tol,
+    double Vsol_tiny_coeff_tol, symbolic::Polynomial* V_sol,
     VectorX<symbolic::Polynomial>* b_sol, double* rho_sol) const {
   symbolic::Polynomial V;
   MatrixX<symbolic::Expression> positivity_constraint_gram;
@@ -710,17 +712,24 @@ void ControlLyapunovBoxInputBound::SearchLyapunov(
       AddEllipsoidInRoaConstraintHelper<symbolic::Variable>(
           prog.get(), t, x_, x_star, S, rho, s, V);
   prog->AddLinearCost(-rho);
-  RemoveTinyCoeff(prog.get(), tiny_coeff_tol);
+  RemoveTinyCoeff(prog.get(), lyap_tiny_coeff_tol);
   drake::log()->info("Smallest coeff in Lyapunov program: {}",
                      SmallestCoeff(*prog));
   const auto result =
       SearchWithBackoff(prog.get(), solver_id, solver_options, backoff_scale);
   *rho_sol = result.GetSolution(rho);
   *V_sol = result.GetSolution(V);
+  if (Vsol_tiny_coeff_tol > 0) {
+    *V_sol = V_sol->RemoveTermsWithSmallCoefficients(Vsol_tiny_coeff_tol);
+  }
   const int nu = G_.cols();
   b_sol->resize(nu);
   for (int i = 0; i < nu; ++i) {
     (*b_sol)(i) = result.GetSolution(b(i));
+    if (Vsol_tiny_coeff_tol > 0) {
+      (*b_sol)(i) =
+          (*b_sol)(i).RemoveTermsWithSmallCoefficients(Vsol_tiny_coeff_tol);
+    }
   }
 }
 
@@ -731,7 +740,8 @@ void ControlLyapunovBoxInputBound::SearchLyapunov(
     const Eigen::Ref<const Eigen::MatrixXd>& S, double rho, int r_degree,
     const solvers::SolverId& solver_id,
     const std::optional<solvers::SolverOptions>& solver_options,
-    double backoff_scale, double tiny_coeff_tol, symbolic::Polynomial* V_sol,
+    double backoff_scale, double lyap_tiny_coeff_tol,
+    double Vsol_tiny_coeff_tol, symbolic::Polynomial* V_sol,
     VectorX<symbolic::Polynomial>* b_sol, symbolic::Polynomial* r_sol,
     double* d_sol) const {
   symbolic::Polynomial V;
@@ -753,7 +763,7 @@ void ControlLyapunovBoxInputBound::SearchLyapunov(
                               r_degree, &r);
   // The objective is to minimize d.
   prog->AddLinearCost(Vector1d::Ones(), 0, Vector1<symbolic::Variable>(d_var));
-  RemoveTinyCoeff(prog.get(), tiny_coeff_tol);
+  RemoveTinyCoeff(prog.get(), lyap_tiny_coeff_tol);
   drake::log()->info("Smallest coeff in Lyapunov program: {}",
                      SmallestCoeff(*prog));
   const auto result =
@@ -761,9 +771,16 @@ void ControlLyapunovBoxInputBound::SearchLyapunov(
   // internal::PrintPsdConstraintStat(*prog, result);
   DRAKE_DEMAND(result.is_success());
   *V_sol = result.GetSolution(V);
+  if (Vsol_tiny_coeff_tol > 0) {
+    *V_sol = V_sol->RemoveTermsWithSmallCoefficients(Vsol_tiny_coeff_tol);
+  }
   b_sol->resize(b.rows());
   for (int i = 0; i < b.rows(); ++i) {
     (*b_sol)(i) = result.GetSolution(b(i));
+    if (Vsol_tiny_coeff_tol) {
+      (*b_sol)(i) =
+          (*b_sol)(i).RemoveTermsWithSmallCoefficients(Vsol_tiny_coeff_tol);
+    }
   }
   *r_sol = result.GetSolution(r);
   *d_sol = result.GetSolution(d_var);
@@ -774,6 +791,7 @@ void ControlLyapunovBoxInputBound::SearchLagrangian(
     const std::vector<std::vector<std::array<int, 3>>>& lagrangian_degrees,
     const solvers::SolverId& solver_id,
     const std::optional<solvers::SolverOptions>& solver_options,
+    double lagrangian_tiny_coeff_tol, double lsol_tiny_coeff_tol,
     std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>* l) const {
   SearchLagrangianGivenVBoxInputBound searcher(V, f_, G_, symmetric_dynamics_,
                                                b, x_, lagrangian_degrees);
@@ -786,6 +804,10 @@ void ControlLyapunovBoxInputBound::SearchLagrangian(
     for (int j = 0; j < num_vdot_sos; ++j) {
       drake::log()->info("smallest coeff in Lagrangian program ({}, {}), {}", i,
                          j, SmallestCoeff(searcher.prog(i, j)));
+      if (lagrangian_tiny_coeff_tol > 0) {
+        RemoveTinyCoeff(searcher.get_mutable_prog(i, j),
+                        lagrangian_tiny_coeff_tol);
+      }
       solvers::MathematicalProgramResult result_searcher;
       solver->Solve(searcher.prog(i, j), std::nullopt, solver_options,
                     &result_searcher);
@@ -797,6 +819,10 @@ void ControlLyapunovBoxInputBound::SearchLagrangian(
       for (int k = 0; k < 3; ++k) {
         (*l)[i][j][k] =
             result_searcher.GetSolution(searcher.lagrangians()[i][j][k]);
+        if (lsol_tiny_coeff_tol > 0) {
+          (*l)[i][j][k] = (*l)[i][j][k].RemoveTermsWithSmallCoefficients(
+              lsol_tiny_coeff_tol);
+        }
       }
     }
   }
@@ -813,11 +839,11 @@ ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(
     double deriv_eps_upper, const SearchOptions& options) const {
   // First search for b and lagrangians.
   SearchReturn ret;
-  SearchLagrangianAndB(V_init, l_given, lagrangian_degrees, b_degrees,
-                       deriv_eps_lower, deriv_eps_upper,
-                       options.lagrangian_step_solver,
-                       options.lagrangian_step_solver_options, &(ret.deriv_eps),
-                       &(ret.b), &(ret.l));
+  SearchLagrangianAndB(
+      V_init, l_given, lagrangian_degrees, b_degrees, deriv_eps_lower,
+      deriv_eps_upper, options.lagrangian_step_solver,
+      options.lagrangian_step_solver_options, options.lsol_tiny_coeff_tol,
+      &(ret.deriv_eps), &(ret.b), &(ret.l));
 
   // Solve a separate program to find the inscribed ellipsoid.
   MaximizeInnerEllipsoidRho(
@@ -833,19 +859,22 @@ ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(
     SearchLyapunov(ret.l, b_degrees, V_degree, ret.deriv_eps, x_star, S,
                    ret.ellipsoid_lagrangian, t_given, options.lyap_step_solver,
                    options.lyap_step_solver_options, options.backoff_scale,
-                   options.lyap_tiny_coeff_tol, &(ret.V), &(ret.b), &rho_new);
+                   options.lyap_tiny_coeff_tol, options.Vsol_tiny_coeff_tol,
+                   &(ret.V), &(ret.b), &rho_new);
     if (options.search_l_and_b) {
       drake::log()->info("search Lagrangian");
-      SearchLagrangianAndB(ret.V, l_given, lagrangian_degrees, b_degrees,
-                           deriv_eps_lower, deriv_eps_upper,
-                           options.lagrangian_step_solver,
-                           options.lagrangian_step_solver_options,
-                           &(ret.deriv_eps), &(ret.b), &(ret.l));
+      SearchLagrangianAndB(
+          ret.V, l_given, lagrangian_degrees, b_degrees, deriv_eps_lower,
+          deriv_eps_upper, options.lagrangian_step_solver,
+          options.lagrangian_step_solver_options, options.lsol_tiny_coeff_tol,
+          &(ret.deriv_eps), &(ret.b), &(ret.l));
     }
     drake::log()->info("search Lagrangian");
     SearchLagrangian(ret.V, ret.b, lagrangian_degrees,
                      options.lagrangian_step_solver,
-                     options.lagrangian_step_solver_options, &(ret.l));
+                     options.lagrangian_step_solver_options,
+                     options.lagrangian_tiny_coeff_tol,
+                     options.lsol_tiny_coeff_tol, &(ret.l));
     // Solve a separate program to find the innner ellipsoid.
     MaximizeInnerEllipsoidRho(
         x_, x_star, S, ret.V, t_given, s_degree, options.lagrangian_step_solver,
@@ -874,11 +903,11 @@ ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(
   SearchReturn ret;
   drake::log()->info("search Lagrangian and b.");
   // First search for b and Lagrangians.
-  SearchLagrangianAndB(V_init, l_given, lagrangian_degrees, b_degrees,
-                       deriv_eps_lower, deriv_eps_upper,
-                       options.lagrangian_step_solver,
-                       options.lagrangian_step_solver_options, &(ret.deriv_eps),
-                       &(ret.b), &(ret.l));
+  SearchLagrangianAndB(
+      V_init, l_given, lagrangian_degrees, b_degrees, deriv_eps_lower,
+      deriv_eps_upper, options.lagrangian_step_solver,
+      options.lagrangian_step_solver_options, options.lsol_tiny_coeff_tol,
+      &(ret.deriv_eps), &(ret.b), &(ret.l));
   // Solve a separate program to find the inscribed ellipsoid.
   MaximizeInnerEllipsoidRho(
       x_, x_star, S, V_init, r_degree, rho_bisection_option.rho_max,
@@ -894,8 +923,8 @@ ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(
     SearchLyapunov(ret.l, b_degrees, V_degree, ret.deriv_eps, x_star, S,
                    ret.rho, r_degree, options.lyap_step_solver,
                    options.lyap_step_solver_options, options.backoff_scale,
-                   options.lyap_tiny_coeff_tol, &(ret.V), &(ret.b),
-                   &(ret.ellipsoid_lagrangian), &d);
+                   options.lyap_tiny_coeff_tol, options.Vsol_tiny_coeff_tol,
+                   &(ret.V), &(ret.b), &(ret.ellipsoid_lagrangian), &d);
     // Solve a separate program to find the inner ellipsoid.
     double rho_new;
     MaximizeInnerEllipsoidRho(
@@ -912,16 +941,18 @@ ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(
 
     if (options.search_l_and_b) {
       drake::log()->info("search Lagrangian and b");
-      SearchLagrangianAndB(ret.V, l_given, lagrangian_degrees, b_degrees,
-                           deriv_eps_lower, deriv_eps_upper,
-                           options.lagrangian_step_solver,
-                           options.lagrangian_step_solver_options,
-                           &(ret.deriv_eps), &(ret.b), &(ret.l));
+      SearchLagrangianAndB(
+          ret.V, l_given, lagrangian_degrees, b_degrees, deriv_eps_lower,
+          deriv_eps_upper, options.lagrangian_step_solver,
+          options.lagrangian_step_solver_options, options.lsol_tiny_coeff_tol,
+          &(ret.deriv_eps), &(ret.b), &(ret.l));
     } else {
       drake::log()->info("search Lagrangian");
       SearchLagrangian(ret.V, ret.b, lagrangian_degrees,
                        options.lagrangian_step_solver,
-                       options.lagrangian_step_solver_options, &(ret.l));
+                       options.lagrangian_step_solver_options,
+                       options.lagrangian_tiny_coeff_tol,
+                       options.lsol_tiny_coeff_tol, &(ret.l));
     }
     iter += 1;
   }

@@ -116,11 +116,13 @@ drake_cc_library(
     srcs = ["control_lyapunov.cc"],
     hdrs = ["control_lyapunov.h"],
     deps = [
+        "//math:matrix_util",
         "//solvers:choose_best_solver",
         "//solvers:mathematical_program",
         "//solvers:mathematical_program_result",
         "//solvers:mosek_solver",
         "//solvers:csdp_solver",
+        "//solvers:sos_basis_generator",
     ],
 )
 
@@ -853,6 +855,21 @@ drake_cc_binary(
     deps = [
         ":control_lyapunov",
         ":simulator",
+        "//solvers:solve",
+        "//systems/controllers:linear_quadratic_regulator",
+        "//systems/primitives:vector_log_sink",
+    ],
+)
+
+drake_cc_binary(
+    name = "quadrotor3d_clf_demo",
+    srcs = ["test/quadrotor3d_clf_demo.cc"],
+    deps = [
+        ":control_lyapunov",
+        ":simulator",
+        ":simulator_config_functions",
+        "//math:geometric_transform",
+        "//math:gray_code",
         "//solvers:solve",
         "//systems/controllers:linear_quadratic_regulator",
         "//systems/primitives:vector_log_sink",

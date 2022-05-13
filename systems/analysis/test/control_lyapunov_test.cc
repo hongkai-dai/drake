@@ -673,8 +673,8 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound_SearchLyapunov) {
   std::vector<std::vector<std::array<symbolic::Polynomial, 3>>> l;
   dut.SearchLagrangianAndB(V, l_given, lagrangian_degrees, b_degrees,
                            deriv_eps_lower, deriv_eps_upper,
-                           solvers::MosekSolver::id(), std::nullopt, &deriv_eps,
-                           &b, &l);
+                           solvers::MosekSolver::id(), std::nullopt, 0.,
+                           &deriv_eps, &b, &l);
   // Find the maximal inscribed ellipsoid.
   const Eigen::Vector2d x_star(0.001, 0.002);
   const Eigen::Matrix2d S = Eigen::Vector2d(1, 2).asDiagonal();
@@ -695,8 +695,8 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound_SearchLyapunov) {
   double d_sol;
   dut.SearchLyapunov(l, b_degrees, V.TotalDegree(), deriv_eps, x_star, S,
                      rho_sol, r_degree, solvers::MosekSolver::id(),
-                     std::nullopt, backoff_scale, 0., &V_sol, &b_sol, &r_sol,
-                     &d_sol);
+                     std::nullopt, backoff_scale, 0., 0., &V_sol, &b_sol,
+                     &r_sol, &d_sol);
   // First validate that V is a valid CLF.
   Eigen::Matrix<double, 2, 4> u_vertices;
   u_vertices << 1, 1, -1, -1, 1, -1, 1, -1;
@@ -935,6 +935,9 @@ TEST_F(SimpleLinearSystemTest, SearchControlLyapunov) {
   const int V_degree = V.TotalDegree();
   auto prog_lyapunov = dut.ConstructLyapunovProgram(
       lambda0_sol, l_sol, V_degree, deriv_eps, &V_new, &V_gram);
+  for (const auto& binding : prog_lyapunov->linear_equality_constraints()) {
+    binding.evaluator()->RemoveTinyCoefficient(1E-12);
+  }
   solvers::MosekSolver mosek_solver;
   const auto result_lyapunov =
       mosek_solver.Solve(*prog_lyapunov, std::nullopt, solver_options);

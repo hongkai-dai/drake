@@ -432,6 +432,12 @@ class ControlLyapunovBoxInputBound {
     double lyap_tiny_coeff_tol = 0;
     double lagrangian_tiny_coeff_tol = 0;
 
+    // The solution to these polynomials might contain terms with tiny
+    // coefficient, due to numerical roundoff error coming from the solver. We
+    // remove terms in the polynomial with tiny coefficients.
+    double Vsol_tiny_coeff_tol = 0;
+    double lsol_tiny_coeff_tol = 0;
+
     // If set to true, then in step 3 we search for Lagrangian and b (namely
     // step 1) while fixing lᵢⱼ₀ to l_given; otherwise in step 3 we search for
     // Lagrangian (including lᵢⱼ₀) but not b.
@@ -504,7 +510,8 @@ class ControlLyapunovBoxInputBound {
       const std::vector<int>& b_degrees, double deriv_eps_lower,
       double deriv_eps_upper, const solvers::SolverId& solver_id,
       const std::optional<solvers::SolverOptions>& solver_options,
-      double* deriv_eps, VectorX<symbolic::Polynomial>* b,
+      double lsol_tiny_coeff_tol, double* deriv_eps,
+      VectorX<symbolic::Polynomial>* b,
       std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>* l) const;
 
   // Step 2 in Search() function.
@@ -516,7 +523,8 @@ class ControlLyapunovBoxInputBound {
       const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& s,
       const symbolic::Polynomial& t, const solvers::SolverId& solver_id,
       const std::optional<solvers::SolverOptions>& solver_options,
-      double backoff_scale, double tiny_coeff_tol, symbolic::Polynomial* V,
+      double backoff_scale, double lyap_tiny_coeff_tol,
+      double Vsol_tiny_coeff_tol, symbolic::Polynomial* V,
       VectorX<symbolic::Polynomial>* b, double* rho) const;
 
   // Overloaded step 2 of Search() function.
@@ -530,7 +538,8 @@ class ControlLyapunovBoxInputBound {
       const Eigen::Ref<const Eigen::MatrixXd>& S, double rho, int r_degree,
       const solvers::SolverId& solver_id,
       const std::optional<solvers::SolverOptions>& solver_options,
-      double backoff_scale, double tiny_coeff_tol, symbolic::Polynomial* V,
+      double backoff_scale, double lyap_tiny_coeff_tol,
+      double Vsol_tiny_coeff_tol, symbolic::Polynomial* V,
       VectorX<symbolic::Polynomial>* b, symbolic::Polynomial* r,
       double* d) const;
 
@@ -539,7 +548,7 @@ class ControlLyapunovBoxInputBound {
       const symbolic::Polynomial& V, const VectorX<symbolic::Polynomial>& b,
       const std::vector<std::vector<std::array<int, 3>>>& lagrangian_degrees,
       const solvers::SolverId& solver_id,
-      const std::optional<solvers::SolverOptions>& solver_options,
+      const std::optional<solvers::SolverOptions>& solver_options, double lagrangian_tiny_coeff_tol, double lsol_tiny_coeff_tol,
       std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>* l) const;
 
   /**

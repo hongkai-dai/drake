@@ -127,6 +127,21 @@ drake_cc_library(
 )
 
 drake_cc_library(
+    name = "control_barrier",
+    srcs = ["control_barrier.cc"],
+    hdrs = ["control_barrier.h"],
+    deps = [
+        "//math:matrix_util",
+        "//solvers:choose_best_solver",
+        "//solvers:mathematical_program",
+        "//solvers:mathematical_program_result",
+        "//solvers:mosek_solver",
+        "//solvers:csdp_solver",
+        "//solvers:sos_basis_generator",
+    ],
+)
+
+drake_cc_library(
     name = "dense_output",
     srcs = ["dense_output.cc"],
     hdrs = ["dense_output.h"],
@@ -887,6 +902,19 @@ drake_cc_googletest(
         "//solvers:scs_solver",
         "//solvers:solve",
         "//systems/controllers:linear_quadratic_regulator",
+    ],
+)
+
+drake_cc_googletest(
+    name = "control_barrier_test",
+    timeout = "moderate",
+    deps = [
+        ":control_barrier",
+        "//common/test_utilities:symbolic_test_util",
+        "//solvers:mosek_solver",
+        "//solvers:csdp_solver",
+        "//solvers:scs_solver",
+        "//solvers:solve",
     ],
 )
 

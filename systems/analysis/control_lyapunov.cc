@@ -1030,8 +1030,9 @@ ControlLyapunovBoxInputBound::ConstructLagrangianAndBProgram(
   prog->AddEqualityConstraintBetweenPolynomials(
       b->sum(), dVdx_times_f + (*deriv_eps) * V);
   // Add the constraint
-  // (lᵢ₁(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₃(x)*∂V/∂x*Gᵢ(x) - lᵢ₅(x)*(1 − V) >= 0
-  // (lᵢ₂(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₄(x)*∂V/∂x*Gᵢ(x) - lᵢ₆(x)*(1 − V) >= 0
+  // (lᵢ₀₀(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₀₁(x)*∂V/∂x*Gᵢ(x) - lᵢ₀₂(x)*(1 −V)>=0
+  // (lᵢ₁₀(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₁₁(x)*∂V/∂x*Gᵢ(x) -
+  // lᵢ₁₂(x)*(1 − V)>=0
   AddControlLyapunovBoxInputBoundConstraints(prog.get(), *lagrangians, V, dVdx,
                                              *b, G_, vdot_sos_constraint);
   return prog;

@@ -212,7 +212,9 @@ struct VdotSosConstraintReturn {
    * Compute the i'th pair of SOS constraint (the polynomial on the left
    * handside)
    * (lᵢ₀₀(x)+1)(∂V/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₀₁(x)*∂V/∂x*Gᵢ(x) - lᵢ₀₂(x)*(1 −
-   * V)>=0 (lᵢ₁₀(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₁₁(x)*∂V/∂x*Gᵢ(x) -
+   * V)>=0
+   *
+   * (lᵢ₁₀(x)+1)(−∂V/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₁₁(x)*∂V/∂x*Gᵢ(x) -
    * lᵢ₁₂(x)*(1 − V)>=0
    * @param i Compute the i'th pair.
    * @param result The result after solving the program.

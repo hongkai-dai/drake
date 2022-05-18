@@ -51,6 +51,68 @@ void AddHdotSosConstraint(
 }
 }  // namespace
 
+SearchControlBarrier::SearchControlBarrier(
+    const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
+    const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
+    const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+    const Eigen::Ref<const Eigen::MatrixXd>& candidate_safe_states,
+    std::vector<VectorX<symbolic::Polynomial>> unsafe_regions,
+    const Eigen::Ref<const Eigen::MatrixXd>& u_vertices)
+    : f_{f},
+      G_{G},
+      nx_{static_cast<int>(f_.rows())},
+      nu_{static_cast<int>(G_.cols())},
+      x_{x},
+      x_set_{x},
+      candidate_safe_states_{candidate_safe_states},
+      unsafe_regions_{std::move(unsafe_regions)},
+      u_vertices_{u_vertices} {
+  DRAKE_DEMAND(G_.rows() == nx_);
+  DRAKE_DEMAND(candidate_safe_states_.rows() == nx_);
+  DRAKE_DEMAND(u_vertices_.rows() == nu_);
+}
+void SearchControlBarrier::AddControlBarrierConstraint(
+    solvers::MathematicalProgram* prog, const symbolic::Polynomial& lambda0,
+    const VectorX<symbolic::Polynomial>& l, const symbolic::Polynomial& h,
+    double deriv_eps, symbolic::Polynomial* hdot_poly,
+    VectorX<symbolic::Monomial>* monomials,
+    MatrixX<symbolic::Variable>* gram) const {
+  *hdot_poly = (1 + lambda0) * (-1 - h);
+  const RowVectorX<symbolic::Polynomial> dhdx = h.Jacobian(x_);
+  const symbolic::Polynomial dhdx_times_f = dhdx.dot(f_);
+  *hdot_poly -= l.sum() * (-dhdx_times_f - deriv_eps * h);
+  *hdot_poly += (dhdx * G_ * u_vertices_).dot(l);
+  std::tie(*gram, *monomials) = prog->AddSosConstraint(
+      *hdot_poly, solvers::MathematicalProgram::NonnegativePolynomial::kSos,
+      "hd");
+}
+
+std::unique_ptr<solvers::MathematicalProgram>
+SearchControlBarrier::ConstructLagrangianProgram(
+    const symbolic::Polynomial& h, double deriv_eps, int lambda0_degree,
+    const std::vector<int>& l_degrees, symbolic::Polynomial* lambda0,
+    MatrixX<symbolic::Variable>* lambda0_gram, VectorX<symbolic::Polynomial>* l,
+    std::vector<MatrixX<symbolic::Variable>>* l_grams,
+    symbolic::Polynomial* hdot_sos, VectorX<symbolic::Monomial>* hdot_monomials,
+    MatrixX<symbolic::Variable>* hdot_gram) const {
+  DRAKE_DEMAND(static_cast<int>(l_degrees.size()) == u_vertices_.cols());
+  auto prog = std::make_unique<solvers::MathematicalProgram>();
+  prog->AddIndeterminates(x_);
+  // Now construct Lagrangian multipliers.
+  std::tie(*lambda0, *lambda0_gram) =
+      prog->NewSosPolynomial(x_set_, lambda0_degree);
+  const int num_u_vertices = u_vertices_.cols();
+  l->resize(num_u_vertices);
+  l_grams->resize(num_u_vertices);
+  for (int i = 0; i < num_u_vertices; ++i) {
+    std::tie((*l)(i), (*l_grams)[i]) =
+        prog->NewSosPolynomial(x_set_, l_degrees[i]);
+  }
+  this->AddControlBarrierConstraint(prog.get(), *lambda0, *l, h, deriv_eps,
+                                    hdot_sos, hdot_monomials, hdot_gram);
+  return prog;
+}
+
 ControlBarrierBoxInputBound::ControlBarrierBoxInputBound(
     const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
     const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,

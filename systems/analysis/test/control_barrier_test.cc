@@ -52,6 +52,67 @@ class SimpleLinearSystemTest : public ::testing::Test {
   Matrix2<symbolic::Polynomial> G_;
 };
 
+TEST_F(SimpleLinearSystemTest, SearchControlBarrier) {
+  // Test SearchControlBarrier
+  Eigen::Matrix<double, 2, 5> candidate_safe_states;
+  // clang-format off
+  candidate_safe_states << 0.1, 0.1, -0.1, -0.1, 0,
+                           0.1, -0.1, 0.1, -0.1, 0;
+  // clang-format on
+  std::vector<VectorX<symbolic::Polynomial>> unsafe_regions;
+  // The unsafe region is -2 <= x(0) <= -1
+  unsafe_regions.push_back(Vector2<symbolic::Polynomial>(
+      symbolic::Polynomial(x_(0) + 1), symbolic::Polynomial(-x_(0) - 2)));
+  Eigen::Matrix<double, 2, 4> u_vertices;
+  // clang-format off
+  u_vertices << 1, 1, -1, -1,
+                1, -1, 1, -1;
+  // clang-format on
+  u_vertices *= 10;
+  const SearchControlBarrier dut(f_, G_, x_, candidate_safe_states,
+                                 unsafe_regions, u_vertices);
+
+  const symbolic::Polynomial h_init(1 - x_(0) * x_(0) - x_(1) * x_(1));
+  const double deriv_eps = 0.1;
+  const int lambda0_degree = 2;
+  const std::vector<int> l_degrees = {2, 2, 2, 2};
+  symbolic::Polynomial lambda0;
+  MatrixX<symbolic::Variable> lambda0_gram;
+  VectorX<symbolic::Polynomial> l;
+  std::vector<MatrixX<symbolic::Variable>> l_grams;
+  symbolic::Polynomial hdot_sos;
+  VectorX<symbolic::Monomial> hdot_monomials;
+  MatrixX<symbolic::Variable> hdot_gram;
+  auto prog_lagrangian = dut.ConstructLagrangianProgram(
+      h_init, deriv_eps, lambda0_degree, l_degrees, &lambda0, &lambda0_gram, &l,
+      &l_grams, &hdot_sos, &hdot_monomials, &hdot_gram);
+  auto result_lagrangian = solvers::Solve(*prog_lagrangian);
+  ASSERT_TRUE(result_lagrangian.is_success());
+  const Eigen::MatrixXd lambda0_gram_sol =
+      result_lagrangian.GetSolution(lambda0_gram);
+  EXPECT_TRUE(math::IsPositiveDefinite(lambda0_gram_sol));
+  const symbolic::Polynomial lambda0_sol =
+      result_lagrangian.GetSolution(lambda0);
+  symbolic::Polynomial hdot_sos_expected = (1 + lambda0_sol) * (-1 - h_init);
+  std::vector<symbolic::Polynomial> l_sol(u_vertices.cols());
+  RowVectorX<symbolic::Polynomial> dhdx = h_init.Jacobian(x_);
+  for (int i = 0; i < u_vertices.cols(); ++i) {
+    EXPECT_TRUE(
+        math::IsPositiveDefinite(result_lagrangian.GetSolution(l_grams[i])));
+    l_sol[i] = result_lagrangian.GetSolution(l[i]);
+    hdot_sos_expected -= l_sol[i] * (-deriv_eps * h_init - dhdx.dot(f_) -
+                                     dhdx.dot(G_ * u_vertices.col(i)));
+  }
+  EXPECT_PRED3(symbolic::test::PolynomialEqual,
+               result_lagrangian.GetSolution(hdot_sos).Expand(),
+               hdot_sos_expected.Expand(), 1E-5);
+  const Eigen::MatrixXd hdot_gram_sol =
+      result_lagrangian.GetSolution(hdot_gram);
+  EXPECT_TRUE(math::IsPositiveDefinite(hdot_gram_sol));
+  EXPECT_PRED3(symbolic::test::PolynomialEqual, hdot_sos_expected.Expand(),
+               hdot_monomials.dot(hdot_gram_sol * hdot_monomials), 1E-5);
+}
+
 TEST_F(SimpleLinearSystemTest, ConstructLagrangianAndBProgram) {
   Eigen::Matrix<double, 2, 5> candidate_safe_states;
   // clang-format off
@@ -101,3 +162,9 @@ TEST_F(SimpleLinearSystemTest, ConstructLagrangianAndBProgram) {
 }  // namespace analysis
 }  // namespace systems
 }  // namespace drake
+
+int main(int argc, char** argv) {
+  auto mosek_license = drake::solvers::MosekSolver::AcquireLicense();
+  ::testing::InitGoogleTest(&argc, argv);
+  return RUN_ALL_TESTS();
+}

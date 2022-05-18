@@ -58,7 +58,7 @@ class SearchControlLyapunov {
 
   /**
    * A helper function to add the constraint
-   * (1+λ₀(x))xᵀx(V−1) − ∑ᵢ lᵢ(x)*(∂V/∂x*f(x)+ε*V + ∂V/∂x*G(x)*sᵢ) is sos.
+   * (1+λ₀(x))xᵀx(V−1) − ∑ᵢ lᵢ(x)*(∂V/∂x*f(x)+ε*V + ∂V/∂x*G(x)*uᵢ) is sos.
    * @param[out] monomials The monomial basis of this sos constraint.
    * @param[out] gram The Gram matrix of this sos constraint.
    */

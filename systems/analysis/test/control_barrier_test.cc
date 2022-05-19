@@ -111,6 +111,36 @@ TEST_F(SimpleLinearSystemTest, SearchControlBarrier) {
   EXPECT_TRUE(math::IsPositiveDefinite(hdot_gram_sol));
   EXPECT_PRED3(symbolic::test::PolynomialEqual, hdot_sos_expected.Expand(),
                hdot_monomials.dot(hdot_gram_sol * hdot_monomials), 1E-5);
+
+  const int t_degree = 0;
+  const std::vector<int> s_degrees = {0, 0};
+  symbolic::Polynomial t;
+  MatrixX<symbolic::Variable> t_gram;
+  VectorX<symbolic::Polynomial> s;
+  std::vector<MatrixX<symbolic::Variable>> s_grams;
+  symbolic::Polynomial unsafe_sos_poly;
+  MatrixX<symbolic::Variable> unsafe_sos_poly_gram;
+  auto prog_unsafe = dut.ConstructUnsafeRegionProgram(
+      h_init, 0, t_degree, s_degrees, &t, &t_gram, &s, &s_grams,
+      &unsafe_sos_poly, &unsafe_sos_poly_gram);
+  const auto result_unsafe = solvers::Solve(*prog_unsafe);
+  ASSERT_TRUE(result_unsafe.is_success());
+  const symbolic::Polynomial t_sol = result_unsafe.GetSolution(t);
+  EXPECT_TRUE(math::IsPositiveDefinite(result_unsafe.GetSolution(t_gram)));
+  VectorX<symbolic::Polynomial> s_sol(s.rows());
+  EXPECT_EQ(s.rows(), unsafe_regions[0].rows());
+  for (int i = 0; i < s.rows(); ++i) {
+    s_sol(i) = result_unsafe.GetSolution(s(i));
+    EXPECT_TRUE(
+        math::IsPositiveDefinite(result_unsafe.GetSolution(s_grams[i])));
+  }
+  const symbolic::Polynomial unsafe_sos_poly_expected =
+      (1 + t_sol) * -h_init + s_sol.dot(unsafe_regions[0]);
+  EXPECT_PRED3(symbolic::test::PolynomialEqual,
+               unsafe_sos_poly_expected.Expand(),
+               result_unsafe.GetSolution(unsafe_sos_poly).Expand(), 1E-5);
+  EXPECT_TRUE(math::IsPositiveDefinite(
+      result_unsafe.GetSolution(unsafe_sos_poly_gram)));
 }
 
 TEST_F(SimpleLinearSystemTest, ConstructLagrangianAndBProgram) {

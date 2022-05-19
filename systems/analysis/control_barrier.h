@@ -24,8 +24,9 @@ namespace analysis {
  * 𝒳ᵤ¹ ∪ ... ∪ 𝒳ᵤᵐ, where each 𝒳ᵤʲ = { x | pⱼ(x)≤ 0} where pⱼ(x) is a vector of
  * polynomials. Condition (1) can be imposed through the following sos condition
  * <pre>
- * -h(x) + sⱼ(x)ᵀpⱼ(x) is sos
- * sⱼ is sos.
+ * (1 + t(x))*(-h(x)) + sⱼ(x)ᵀpⱼ(x) is sos
+ * t(x) is sos
+ * sⱼ(x) is sos.
  * </pre>
  *
  * Condition (2) is the same as ḣ ≤ −εh ⇒ h(x)≤−1
@@ -62,6 +63,14 @@ class SearchControlBarrier {
                                    VectorX<symbolic::Monomial>* monomials,
                                    MatrixX<symbolic::Variable>* gram) const;
 
+  /**
+   * Given the CBF h(x), constructs the program to find the Lagrangian λ₀(x) and
+   * lᵢ(x)
+   * <pre>
+   * (1+λ₀(x))(−1 − h(x)) −∑ᵢ lᵢ(x)(−εh − ∂h/∂xf(x)−∂h/∂xG(x)uⁱ) is sos
+   * λ₀(x), lᵢ(x) is sos
+   * </pre>
+   */
   std::unique_ptr<solvers::MathematicalProgram> ConstructLagrangianProgram(
       const symbolic::Polynomial& h, double deriv_eps, int lambda0_degree,
       const std::vector<int>& l_degrees, symbolic::Polynomial* lambda0,
@@ -71,6 +80,23 @@ class SearchControlBarrier {
       symbolic::Polynomial* hdot_sos,
       VectorX<symbolic::Monomial>* hdot_monomials,
       MatrixX<symbolic::Variable>* hdot_gram) const;
+
+  /**
+   * Given h(x), find the Lagrangian t(x) and sⱼ(x) to prove that the j'th
+   * unsafe region is within the sub-level set {x | h(x)<=0}
+   * <pre>
+   * (1 + t(x))*(-h(x)) + sⱼ(x)ᵀpⱼ(x) is sos
+   * t(x) is sos
+   * sⱼ(x) is sos.
+   * </pre>
+   */
+  std::unique_ptr<solvers::MathematicalProgram> ConstructUnsafeRegionProgram(
+      const symbolic::Polynomial& h, int region_index, int t_degree,
+      const std::vector<int>& s_degrees, symbolic::Polynomial* t,
+      MatrixX<symbolic::Variable>* t_gram, VectorX<symbolic::Polynomial>* s,
+      std::vector<MatrixX<symbolic::Variable>>* s_grams,
+      symbolic::Polynomial* sos_poly,
+      MatrixX<symbolic::Variable>* sos_poly_gram) const;
 
  private:
   VectorX<symbolic::Polynomial> f_;

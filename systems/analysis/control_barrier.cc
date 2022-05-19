@@ -113,6 +113,31 @@ SearchControlBarrier::ConstructLagrangianProgram(
   return prog;
 }
 
+std::unique_ptr<solvers::MathematicalProgram>
+SearchControlBarrier::ConstructUnsafeRegionProgram(
+    const symbolic::Polynomial& h, int region_index, int t_degree,
+    const std::vector<int>& s_degrees, symbolic::Polynomial* t,
+    MatrixX<symbolic::Variable>* t_gram, VectorX<symbolic::Polynomial>* s,
+    std::vector<MatrixX<symbolic::Variable>>* s_grams,
+    symbolic::Polynomial* sos_poly,
+    MatrixX<symbolic::Variable>* sos_poly_gram) const {
+  auto prog = std::make_unique<solvers::MathematicalProgram>();
+  prog->AddIndeterminates(x_);
+  std::tie(*t, *t_gram) = prog->NewSosPolynomial(
+      x_set_, t_degree,
+      solvers::MathematicalProgram::NonnegativePolynomial::kSos, "T");
+  s->resize(unsafe_regions_[region_index].rows());
+  s_grams->resize(s->rows());
+  for (int i = 0; i < s->rows(); ++i) {
+    std::tie((*s)(i), (*s_grams)[i]) = prog->NewSosPolynomial(
+        x_set_, s_degrees[i],
+        solvers::MathematicalProgram::NonnegativePolynomial::kSos, "S");
+  }
+  *sos_poly = (1 + *t) * (-h) + s->dot(unsafe_regions_[region_index]);
+  std::tie(*sos_poly_gram, std::ignore) = prog->AddSosConstraint(*sos_poly);
+  return prog;
+}
+
 ControlBarrierBoxInputBound::ControlBarrierBoxInputBound(
     const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
     const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,

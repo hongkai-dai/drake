@@ -8,6 +8,7 @@
 #include "drake/solvers/mathematical_program.h"
 #include "drake/solvers/mathematical_program_result.h"
 #include "drake/solvers/sos_basis_generator.h"
+#include "drake/systems/analysis/clf_cbf_utils.h"
 
 namespace drake {
 namespace systems {
@@ -37,16 +38,6 @@ symbolic::Polynomial NewFreePolynomialNoConstant(
   return symbolic::Polynomial(poly_map);
 }
 
-void RemoveTinyCoeff(solvers::MathematicalProgram* prog, double zero_tol) {
-  if (zero_tol > 0) {
-    for (const auto& binding : prog->linear_equality_constraints()) {
-      binding.evaluator()->RemoveTinyCoefficient(zero_tol);
-    }
-    for (const auto& binding : prog->linear_constraints()) {
-      binding.evaluator()->RemoveTinyCoefficient(zero_tol);
-    }
-  }
-}
 
 template <typename C>
 double SmallestCoeff(const solvers::Binding<C>& binding) {

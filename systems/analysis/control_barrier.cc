@@ -2,7 +2,7 @@
 
 #include <limits.h>
 
-#include "control_barrier.h"
+#include <limits>
 
 #include "drake/common/text_logging.h"
 #include "drake/math/matrix_util.h"
@@ -10,9 +10,11 @@
 #include "drake/solvers/mathematical_program.h"
 #include "drake/solvers/mathematical_program_result.h"
 #include "drake/solvers/sos_basis_generator.h"
+#include "drake/systems/analysis/clf_cbf_utils.h"
 namespace drake {
 namespace systems {
 namespace analysis {
+const double kInf = std::numeric_limits<double>::infinity();
 namespace {
 void AddHdotSosConstraint(
     solvers::MathematicalProgram* prog,
@@ -138,6 +140,82 @@ SearchControlBarrier::ConstructUnsafeRegionProgram(
   return prog;
 }
 
+std::unique_ptr<solvers::MathematicalProgram>
+SearchControlBarrier::ConstructBarrierProgram(
+    const symbolic::Polynomial& lambda0, const VectorX<symbolic::Polynomial>& l,
+    const std::vector<symbolic::Polynomial>& t, int h_degree, double deriv_eps,
+    const std::vector<std::vector<int>>& s_degrees,
+    const Eigen::MatrixXd& verified_safe_states,
+    const Eigen::MatrixXd& unverified_candidate_states, symbolic::Polynomial* h,
+    symbolic::Polynomial* hdot_sos, MatrixX<symbolic::Variable>* hdot_sos_gram,
+    std::vector<VectorX<symbolic::Polynomial>>* s,
+    std::vector<std::vector<MatrixX<symbolic::Variable>>>* s_grams,
+    std::vector<symbolic::Polynomial>* unsafe_sos_polys,
+    std::vector<MatrixX<symbolic::Variable>>* unsafe_sos_poly_grams) const {
+  auto prog = std::make_unique<solvers::MathematicalProgram>();
+  prog->AddIndeterminates(x_);
+  *h = prog->NewFreePolynomial(x_set_, h_degree, "H");
+  VectorX<symbolic::Monomial> hdot_monomials;
+  // Add the constraint on hdot.
+  this->AddControlBarrierConstraint(prog.get(), lambda0, l, *h, deriv_eps,
+                                    hdot_sos, &hdot_monomials, hdot_sos_gram);
+  // Add the constraint that the unsafe region has h <= 0
+  const int num_unsafe_regions = static_cast<int>(unsafe_regions_.size());
+  DRAKE_DEMAND(static_cast<int>(t.size()) == num_unsafe_regions);
+  DRAKE_DEMAND(static_cast<int>(s_degrees.size()) == num_unsafe_regions);
+  s->resize(num_unsafe_regions);
+  s_grams->resize(num_unsafe_regions);
+  unsafe_sos_polys->resize(num_unsafe_regions);
+  unsafe_sos_poly_grams->resize(num_unsafe_regions);
+  for (int i = 0; i < num_unsafe_regions; ++i) {
+    const int num_unsafe_polys = static_cast<int>(unsafe_regions_[i].rows());
+    (*s)[i].resize(num_unsafe_polys);
+    (*s_grams)[i].resize(num_unsafe_polys);
+    DRAKE_DEMAND(static_cast<int>(s_degrees[i].size()) == num_unsafe_polys);
+    for (int j = 0; j < num_unsafe_polys; ++j) {
+      std::tie((*s)[i](j), (*s_grams)[i][j]) = prog->NewSosPolynomial(
+          x_set_, s_degrees[i][j],
+          solvers::MathematicalProgram::NonnegativePolynomial::kSos,
+          fmt::format("S{},{}", i, j));
+    }
+    (*unsafe_sos_polys)[i] =
+        (1 + t[i]) * (-(*h)) + (*s)[i].dot(unsafe_regions_[i]);
+    std::tie((*unsafe_sos_poly_grams)[i], std::ignore) =
+        prog->AddSosConstraint((*unsafe_sos_polys)[i]);
+  }
+
+  // Add the constraint that the verified states all have h(x) >= 0
+  Eigen::MatrixXd h_monomial_vals;
+  VectorX<symbolic::Variable> h_coeff_vars;
+  EvaluatePolynomial(*h, x_, verified_safe_states, &h_monomial_vals,
+                     &h_coeff_vars);
+  prog->AddLinearConstraint(
+      h_monomial_vals, Eigen::VectorXd::Zero(h_monomial_vals.rows()),
+      Eigen::VectorXd::Constant(h_monomial_vals.rows(), kInf), h_coeff_vars);
+  // Add the objective to maximize sum min(h(xʲ), 0) for xʲ in
+  // unverified_candidate_states
+  EvaluatePolynomial(*h, x_, unverified_candidate_states, &h_monomial_vals,
+                     &h_coeff_vars);
+  auto h_unverified_min0 =
+      prog->NewContinuousVariables(unverified_candidate_states.cols());
+  prog->AddBoundingBoxConstraint(-kInf, 0, h_unverified_min0);
+  // Add constraint h_unverified_min0 <= h(xʲ)
+  Eigen::MatrixXd A_unverified(
+      unverified_candidate_states.cols(),
+      unverified_candidate_states.cols() + h_monomial_vals.cols());
+  A_unverified << Eigen::MatrixXd::Identity(unverified_candidate_states.cols(),
+                                            unverified_candidate_states.cols()),
+      -h_monomial_vals;
+  prog->AddLinearConstraint(
+      A_unverified, Eigen::VectorXd::Constant(A_unverified.rows(), -kInf),
+      Eigen::VectorXd::Zero(A_unverified.rows()),
+      {h_unverified_min0, h_coeff_vars});
+  prog->AddLinearCost(-Eigen::VectorXd::Ones(h_unverified_min0.rows()), 0,
+                      h_unverified_min0);
+
+  return prog;
+}
+
 ControlBarrierBoxInputBound::ControlBarrierBoxInputBound(
     const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
     const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
@@ -198,8 +276,8 @@ ControlBarrierBoxInputBound::ConstructLagrangianAndBProgram(
   *deriv_eps = prog->NewContinuousVariables<1>("eps")(0);
 
   const RowVectorX<symbolic::Polynomial> dhdx = h.Jacobian(x_);
-  // Since we will add the constraint -∂h/∂x*f(x) - εh = ∑ᵢ bᵢ(x), we know that
-  // the highest degree of b should be at least degree(∂h/∂x*f(x) + εh).
+  // Since we will add the constraint -∂h/∂x*f(x) - εh = ∑ᵢ bᵢ(x), we know
+  // that the highest degree of b should be at least degree(∂h/∂x*f(x) + εh).
   const symbolic::Polynomial dhdx_times_f = (dhdx * f_)(0);
   if (*std::max_element(b_degrees.begin(), b_degrees.end()) <
       std::max(dhdx_times_f.TotalDegree(), h.TotalDegree())) {

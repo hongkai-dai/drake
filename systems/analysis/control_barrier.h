@@ -98,6 +98,31 @@ class SearchControlBarrier {
       symbolic::Polynomial* sos_poly,
       MatrixX<symbolic::Variable>* sos_poly_gram) const;
 
+  /**
+   * Given Lagrangian multipliers λ₀(x), l(x), t(x), find the control barrier
+   * function through
+   * <pre>
+   * max ∑ᵢ min(h(xⁱ), 0),   xⁱ ∈ unverified_candidate_states
+   * s.t (1+λ₀(x))(−1 − h(x)) −∑ᵢlᵢ(x)(−εh − ∂h/∂xf(x)−∂h/∂xG(x)uⁱ) is sos
+   *     (1 + t(x))*(-h(x)) + sⱼ(x)ᵀpⱼ(x) is sos
+   *     sⱼ(x) is sos.
+   *     h(xʲ) >= 0, xʲ ∈ verified_safe_states
+   * </pre>
+   */
+  std::unique_ptr<solvers::MathematicalProgram> ConstructBarrierProgram(
+      const symbolic::Polynomial& lambda0,
+      const VectorX<symbolic::Polynomial>& l,
+      const std::vector<symbolic::Polynomial>& t, int h_degree,
+      double deriv_eps, const std::vector<std::vector<int>>& s_degrees,
+      const Eigen::MatrixXd& verified_safe_states,
+      const Eigen::MatrixXd& unverified_candidate_states,
+      symbolic::Polynomial* h, symbolic::Polynomial* hdot_sos,
+      MatrixX<symbolic::Variable>* hdot_sos_gram,
+      std::vector<VectorX<symbolic::Polynomial>>* s,
+      std::vector<std::vector<MatrixX<symbolic::Variable>>>* s_grams,
+      std::vector<symbolic::Polynomial>* unsafe_sos_polys,
+      std::vector<MatrixX<symbolic::Variable>>* unsafe_sos_poly_grams) const;
+
  private:
   VectorX<symbolic::Polynomial> f_;
   MatrixX<symbolic::Polynomial> G_;
@@ -173,6 +198,7 @@ class ControlBarrierBoxInputBound {
   Eigen::MatrixXd candidate_safe_states_;
   std::vector<VectorX<symbolic::Polynomial>> unsafe_regions_;
 };
+
 }  // namespace analysis
 }  // namespace systems
 }  // namespace drake

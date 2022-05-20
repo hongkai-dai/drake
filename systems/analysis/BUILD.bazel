@@ -21,6 +21,7 @@ drake_cc_package_library(
         ":batch_eval",
         ":bogacki_shampine3_integrator",
         ":control_lyapunov",
+        ":control_barrier",
         ":dense_output",
         ":explicit_euler_integrator",
         ":hermitian_dense_output",
@@ -112,10 +113,21 @@ drake_cc_library(
 )
 
 drake_cc_library(
+    name = "clf_cbf_utils",
+    srcs = ["clf_cbf_utils.cc"],
+    hdrs = ["clf_cbf_utils.h"],
+    deps = [
+        "//common:symbolic",
+        "//solvers:mathematical_program",
+    ],
+)
+
+drake_cc_library(
     name = "control_lyapunov",
     srcs = ["control_lyapunov.cc"],
     hdrs = ["control_lyapunov.h"],
     deps = [
+        ":clf_cbf_utils",
         "//math:matrix_util",
         "//solvers:choose_best_solver",
         "//solvers:mathematical_program",
@@ -131,6 +143,7 @@ drake_cc_library(
     srcs = ["control_barrier.cc"],
     hdrs = ["control_barrier.h"],
     deps = [
+        ":clf_cbf_utils",
         "//math:matrix_util",
         "//solvers:choose_best_solver",
         "//solvers:mathematical_program",
@@ -915,6 +928,14 @@ drake_cc_googletest(
         "//solvers:csdp_solver",
         "//solvers:scs_solver",
         "//solvers:solve",
+    ],
+)
+
+drake_cc_googletest(
+    name = "clf_cbf_utils_test",
+    deps = [
+        ":clf_cbf_utils",
+        "//common/test_utilities:symbolic_test_util",
     ],
 )
 

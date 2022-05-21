@@ -938,6 +938,7 @@ drake_cc_googletest(
     deps = [
         ":clf_cbf_utils",
         "//common/test_utilities:symbolic_test_util",
+        "//solvers:mosek_solver",
     ],
 )
 

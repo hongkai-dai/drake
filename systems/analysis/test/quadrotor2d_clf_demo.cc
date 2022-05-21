@@ -242,7 +242,7 @@ void Simulate(const Vector6<symbolic::Variable>& x,
   u_vertices << 1, 1, -1, -1,
                 1, -1, 1, -1;
   // clang-format on
-  SearchControlLyapunov dut(x, f, G, u_vertices);
+  ControlLyapunov dut(x, f, G, u_vertices);
   const double deriv_eps = 0.2;
   *deriv_eps_sol = deriv_eps;
   const int lambda0_degree = 2;
@@ -250,7 +250,7 @@ void Simulate(const Vector6<symbolic::Variable>& x,
   const int V_degree = 2;
   const Vector6d x_star = Vector6d::Zero();
   const Matrix6<double> S = Matrix6<double>::Identity();
-  SearchControlLyapunov::SearchOptions search_options;
+  ControlLyapunov::SearchOptions search_options;
   search_options.bilinear_iterations = 10;
   search_options.backoff_scale = 0.02;
   search_options.lyap_tiny_coeff_tol = 2E-7;
@@ -260,7 +260,7 @@ void Simulate(const Vector6<symbolic::Variable>& x,
   // search_options.lyap_step_solver_options->SetOption(solvers::CommonSolverOption::kPrintToConsole,
   // 1);
 
-  SearchControlLyapunov::RhoBisectionOption rho_bisection_option(0.01, 2, 0.01);
+  ControlLyapunov::RhoBisectionOption rho_bisection_option(0.01, 2, 0.01);
   symbolic::Polynomial lambda0;
   VectorX<symbolic::Polynomial> l;
   symbolic::Polynomial r;

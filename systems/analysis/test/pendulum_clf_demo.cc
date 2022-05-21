@@ -178,21 +178,21 @@ void Simulate(const Vector2<symbolic::Variable>& x,
                              symbolic::Polynomial* V_sol,
                              double* deriv_eps_sol) {
   const Eigen::RowVector2d u_vertices(1, -1);
-  const SearchControlLyapunov dut(x, f, G, u_vertices);
+  const ControlLyapunov dut(x, f, G, u_vertices);
   const int lambda0_degree = 2;
   const std::vector<int> l_degrees{2, 2};
   const int V_degree = 2;
   const Eigen::Vector2d x_star(0, 0);
   const Eigen::Matrix2d S = Eigen::Matrix2d::Identity();
 
-  SearchControlLyapunov::SearchOptions search_options;
+  ControlLyapunov::SearchOptions search_options;
   search_options.backoff_scale = 0.02;
   // There are tiny coefficients coming from numerical roundoff error.
   search_options.lyap_tiny_coeff_tol = 1E-10;
   const double rho_min = 0.01;
   const double rho_max = 15;
   const double rho_bisection_tol = 0.01;
-  const SearchControlLyapunov::RhoBisectionOption rho_bisection_option(
+  const ControlLyapunov::RhoBisectionOption rho_bisection_option(
       rho_min, rho_max, rho_bisection_tol);
   symbolic::Polynomial lambda0;
   VectorX<symbolic::Polynomial> l;

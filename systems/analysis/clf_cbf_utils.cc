@@ -1,8 +1,13 @@
 #include "drake/systems/analysis/clf_cbf_utils.h"
 
+#include <limits>
+
+#include "drake/common/text_logging.h"
+#include "drake/solvers/choose_best_solver.h"
 namespace drake {
 namespace systems {
 namespace analysis {
+const double kInf = std::numeric_limits<double>::infinity();
 void EvaluatePolynomial(const symbolic::Polynomial& p,
                         const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
                         const Eigen::Ref<const Eigen::MatrixXd>& x_vals,
@@ -75,6 +80,41 @@ void RemoveTinyCoeff(solvers::MathematicalProgram* prog, double zero_tol) {
       binding.evaluator()->RemoveTinyCoefficient(zero_tol);
     }
   }
+}
+
+solvers::MathematicalProgramResult SearchWithBackoff(
+    solvers::MathematicalProgram* prog, const solvers::SolverId& solver_id,
+    const std::optional<solvers::SolverOptions>& solver_options,
+    double backoff_scale) {
+  DRAKE_DEMAND(prog->linear_costs().size() == 1u);
+  DRAKE_DEMAND(prog->quadratic_costs().size() == 0u);
+  auto solver = solvers::MakeSolver(solver_id);
+  solvers::MathematicalProgramResult result;
+  solver->Solve(*prog, std::nullopt, solver_options, &result);
+  if (!result.is_success()) {
+    drake::log()->error("Failed before backoff\n");
+    return result;
+  }
+  // PrintPsdConstraintStat(*prog, result);
+  DRAKE_DEMAND(backoff_scale >= 0 && backoff_scale <= 1);
+  if (backoff_scale > 0) {
+    drake::log()->info("backoff");
+    auto cost = prog->linear_costs()[0];
+    prog->RemoveCost(cost);
+    const double cost_val = result.get_optimal_cost();
+    const double cost_ub = cost_val >= 0 ? (1 + backoff_scale) * cost_val
+                                         : (1 - backoff_scale) * cost_val;
+    prog->AddLinearConstraint(cost.evaluator()->a(), -kInf,
+                              cost_ub - cost.evaluator()->b(),
+                              cost.variables());
+    solver->Solve(*prog, std::nullopt, solver_options, &result);
+    if (!result.is_success()) {
+      drake::log()->error("Backoff failed\n");
+      return result;
+    }
+    // PrintPsdConstraintStat(*prog, result);
+  }
+  return result;
 }
 
 }  // namespace analysis

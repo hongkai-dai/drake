@@ -2,6 +2,8 @@
 
 #include "drake/common/symbolic.h"
 #include "drake/solvers/mathematical_program.h"
+#include "drake/solvers/mathematical_program_result.h"
+
 namespace drake {
 namespace systems {
 namespace analysis {
@@ -37,6 +39,11 @@ void SplitCandidateStates(
  * Remove coefficient with absolute value <= zero_tol.
  */
 void RemoveTinyCoeff(solvers::MathematicalProgram* prog, double zero_tol);
+
+solvers::MathematicalProgramResult SearchWithBackoff(
+    solvers::MathematicalProgram* prog, const solvers::SolverId& solver_id,
+    const std::optional<solvers::SolverOptions>& solver_options,
+    double backoff_scale);
 }  // namespace analysis
 }  // namespace systems
 }  // namespace drake

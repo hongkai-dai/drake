@@ -2,8 +2,6 @@
 
 #include <limits.h>
 
-#include <limits>
-
 #include "drake/common/text_logging.h"
 #include "drake/math/matrix_util.h"
 #include "drake/solvers/choose_best_solver.h"
@@ -53,7 +51,7 @@ void AddHdotSosConstraint(
 }
 }  // namespace
 
-SearchControlBarrier::SearchControlBarrier(
+ControlBarrier::ControlBarrier(
     const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
     const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
@@ -73,7 +71,7 @@ SearchControlBarrier::SearchControlBarrier(
   DRAKE_DEMAND(candidate_safe_states_.rows() == nx_);
   DRAKE_DEMAND(u_vertices_.rows() == nu_);
 }
-void SearchControlBarrier::AddControlBarrierConstraint(
+void ControlBarrier::AddControlBarrierConstraint(
     solvers::MathematicalProgram* prog, const symbolic::Polynomial& lambda0,
     const VectorX<symbolic::Polynomial>& l, const symbolic::Polynomial& h,
     double deriv_eps, symbolic::Polynomial* hdot_poly,
@@ -90,7 +88,7 @@ void SearchControlBarrier::AddControlBarrierConstraint(
 }
 
 std::unique_ptr<solvers::MathematicalProgram>
-SearchControlBarrier::ConstructLagrangianProgram(
+ControlBarrier::ConstructLagrangianProgram(
     const symbolic::Polynomial& h, double deriv_eps, int lambda0_degree,
     const std::vector<int>& l_degrees, symbolic::Polynomial* lambda0,
     MatrixX<symbolic::Variable>* lambda0_gram, VectorX<symbolic::Polynomial>* l,
@@ -116,7 +114,7 @@ SearchControlBarrier::ConstructLagrangianProgram(
 }
 
 std::unique_ptr<solvers::MathematicalProgram>
-SearchControlBarrier::ConstructUnsafeRegionProgram(
+ControlBarrier::ConstructUnsafeRegionProgram(
     const symbolic::Polynomial& h, int region_index, int t_degree,
     const std::vector<int>& s_degrees, symbolic::Polynomial* t,
     MatrixX<symbolic::Variable>* t_gram, VectorX<symbolic::Polynomial>* s,
@@ -141,13 +139,14 @@ SearchControlBarrier::ConstructUnsafeRegionProgram(
 }
 
 std::unique_ptr<solvers::MathematicalProgram>
-SearchControlBarrier::ConstructBarrierProgram(
+ControlBarrier::ConstructBarrierProgram(
     const symbolic::Polynomial& lambda0, const VectorX<symbolic::Polynomial>& l,
     const std::vector<symbolic::Polynomial>& t, int h_degree, double deriv_eps,
     const std::vector<std::vector<int>>& s_degrees,
     const Eigen::MatrixXd& verified_safe_states,
-    const Eigen::MatrixXd& unverified_candidate_states, symbolic::Polynomial* h,
-    symbolic::Polynomial* hdot_sos, MatrixX<symbolic::Variable>* hdot_sos_gram,
+    const Eigen::MatrixXd& unverified_candidate_states, double eps,
+    symbolic::Polynomial* h, symbolic::Polynomial* hdot_sos,
+    MatrixX<symbolic::Variable>* hdot_sos_gram,
     std::vector<VectorX<symbolic::Polynomial>>* s,
     std::vector<std::vector<MatrixX<symbolic::Variable>>>* s_grams,
     std::vector<symbolic::Polynomial>* unsafe_sos_polys,
@@ -192,13 +191,13 @@ SearchControlBarrier::ConstructBarrierProgram(
   prog->AddLinearConstraint(
       h_monomial_vals, Eigen::VectorXd::Zero(h_monomial_vals.rows()),
       Eigen::VectorXd::Constant(h_monomial_vals.rows(), kInf), h_coeff_vars);
-  // Add the objective to maximize sum min(h(xʲ), 0) for xʲ in
+  // Add the objective to maximize sum min(h(xʲ), eps) for xʲ in
   // unverified_candidate_states
   EvaluatePolynomial(*h, x_, unverified_candidate_states, &h_monomial_vals,
                      &h_coeff_vars);
   auto h_unverified_min0 =
       prog->NewContinuousVariables(unverified_candidate_states.cols());
-  prog->AddBoundingBoxConstraint(-kInf, 0, h_unverified_min0);
+  prog->AddBoundingBoxConstraint(-kInf, eps, h_unverified_min0);
   // Add constraint h_unverified_min0 <= h(xʲ)
   Eigen::MatrixXd A_unverified(
       unverified_candidate_states.cols(),
@@ -214,6 +213,174 @@ SearchControlBarrier::ConstructBarrierProgram(
                       h_unverified_min0);
 
   return prog;
+}
+
+void ControlBarrier::Search(
+    const symbolic::Polynomial& h_init, int h_degree, double deriv_eps,
+    int lambda0_degree, const std::vector<int>& l_degrees,
+    const std::vector<int>& t_degree,
+    const std::vector<std::vector<int>>& s_degrees,
+    const SearchOptions& search_options, symbolic::Polynomial* h_sol,
+    symbolic::Polynomial* lambda0_sol, VectorX<symbolic::Polynomial>* l_sol,
+    std::vector<symbolic::Polynomial>* t_sol,
+    std::vector<VectorX<symbolic::Polynomial>>* s_sol,
+    Eigen::MatrixXd* verified_safe_states,
+    Eigen::MatrixXd* unverified_candidate_states) const {
+  *h_sol = h_init;
+  SplitCandidateStates(*h_sol, x_, candidate_safe_states_, verified_safe_states,
+                       unverified_candidate_states);
+  drake::log()->info("Number of verified safe states: {}",
+                     verified_safe_states->cols());
+  int verified_safe_states_count = verified_safe_states->cols();
+
+  int iter_count = 0;
+
+  while (iter_count < search_options.bilinear_iterations) {
+    {
+      symbolic::Polynomial lambda0;
+      MatrixX<symbolic::Variable> lambda0_gram;
+      VectorX<symbolic::Polynomial> l;
+      std::vector<MatrixX<symbolic::Variable>> l_grams;
+      symbolic::Polynomial hdot_sos;
+      VectorX<symbolic::Monomial> hdot_monomials;
+      MatrixX<symbolic::Variable> hdot_gram;
+      auto prog_lagrangian = this->ConstructLagrangianProgram(
+          h_init, deriv_eps, lambda0_degree, l_degrees, &lambda0, &lambda0_gram,
+          &l, &l_grams, &hdot_sos, &hdot_monomials, &hdot_gram);
+      if (search_options.lagrangian_tiny_coeff_tol > 0) {
+        RemoveTinyCoeff(prog_lagrangian.get(),
+                        search_options.lagrangian_tiny_coeff_tol);
+      }
+      auto lagrangian_solver =
+          solvers::MakeSolver(search_options.lagrangian_step_solver);
+      solvers::MathematicalProgramResult result_lagrangian;
+      drake::log()->info("Iter {}, search Lagrangian", iter_count);
+      lagrangian_solver->Solve(*prog_lagrangian, std::nullopt,
+                               search_options.lagrangian_step_solver_options,
+                               &result_lagrangian);
+      if (result_lagrangian.is_success()) {
+        *lambda0_sol = result_lagrangian.GetSolution(lambda0);
+        l_sol->resize(l.rows());
+        for (int i = 0; i < l_sol->rows(); ++i) {
+          (*l_sol)(i) = result_lagrangian.GetSolution(l(i));
+          if (search_options.lsol_tiny_coeff_tol > 0) {
+            (*l_sol)(i) = (*l_sol)(i).RemoveTermsWithSmallCoefficients(
+                search_options.lsol_tiny_coeff_tol);
+          }
+        }
+      } else {
+        drake::log()->error("Failed to find Lagrangian");
+        return;
+      }
+    }
+
+    {
+      // Find Lagrangian multiplier for each unsafe region.
+      t_sol->resize(unsafe_regions_.size());
+      s_sol->resize(unsafe_regions_.size());
+      for (int i = 0; i < static_cast<int>(unsafe_regions_.size()); ++i) {
+        symbolic::Polynomial t;
+        VectorX<symbolic::Polynomial> s;
+        MatrixX<symbolic::Variable> t_gram;
+        std::vector<MatrixX<symbolic::Variable>> s_grams;
+        symbolic::Polynomial unsafe_sos_poly;
+        MatrixX<symbolic::Variable> unsafe_sos_poly_gram;
+
+        auto prog_unsafe = this->ConstructUnsafeRegionProgram(
+            *h_sol, i, t_degree[i], s_degrees[i], &t, &t_gram, &s, &s_grams,
+            &unsafe_sos_poly, &unsafe_sos_poly_gram);
+        if (search_options.lagrangian_tiny_coeff_tol > 0) {
+          RemoveTinyCoeff(prog_unsafe.get(),
+                          search_options.lagrangian_tiny_coeff_tol);
+        }
+        drake::log()->info("Search Lagrangian multiplier for unsafe region {}",
+                           i);
+        solvers::MathematicalProgramResult result_unsafe;
+        auto lagrangian_solver =
+            solvers::MakeSolver(search_options.lagrangian_step_solver);
+        lagrangian_solver->Solve(*prog_unsafe, std::nullopt,
+                                 search_options.lagrangian_step_solver_options,
+                                 &result_unsafe);
+        if (result_unsafe.is_success()) {
+          (*t_sol)[i] = result_unsafe.GetSolution(t);
+          if (search_options.lsol_tiny_coeff_tol > 0) {
+            (*t_sol)[i] = (*t_sol)[i].RemoveTermsWithSmallCoefficients(
+                search_options.lsol_tiny_coeff_tol);
+          }
+          (*s_sol)[i].resize(s.rows());
+          for (int j = 0; j < (*s_sol)[i].rows(); ++j) {
+            (*s_sol)[i](j) = result_unsafe.GetSolution(s(j));
+            if (search_options.lsol_tiny_coeff_tol > 0) {
+              (*s_sol)[i](j) = (*s_sol)[i](j).RemoveTermsWithSmallCoefficients(
+                  search_options.lsol_tiny_coeff_tol);
+            }
+          }
+        } else {
+          drake::log()->error(
+              "Cannot find Lagrangian multipler for unsafe region {}", i);
+          return;
+        }
+      }
+    }
+
+    {
+      // Now search for the barrier function.
+
+      symbolic::Polynomial h;
+      std::vector<VectorX<symbolic::Polynomial>> s;
+      std::vector<std::vector<MatrixX<symbolic::Variable>>> s_grams;
+      std::vector<symbolic::Polynomial> unsafe_sos_polys;
+      std::vector<MatrixX<symbolic::Variable>> unsafe_sos_poly_grams;
+      symbolic::Polynomial hdot_sos;
+      MatrixX<symbolic::Variable> hdot_gram;
+      auto prog_barrier = this->ConstructBarrierProgram(
+          *lambda0_sol, *l_sol, *t_sol, h_degree, deriv_eps, s_degrees,
+          *verified_safe_states, *unverified_candidate_states,
+          search_options.candidate_state_eps, &h, &hdot_sos, &hdot_gram, &s,
+          &s_grams, &unsafe_sos_polys, &unsafe_sos_poly_grams);
+      if (search_options.barrier_tiny_coeff_tol > 0) {
+        RemoveTinyCoeff(prog_barrier.get(),
+                        search_options.barrier_tiny_coeff_tol);
+      }
+      drake::log()->info("Search barrier");
+      const auto result_barrier = SearchWithBackoff(
+          prog_barrier.get(), search_options.barrier_step_solver,
+          search_options.barrier_step_solver_options,
+          search_options.backoff_scale);
+      if (result_barrier.is_success()) {
+        *h_sol = result_barrier.GetSolution(h);
+        if (search_options.hsol_tiny_coeff_tol > 0) {
+          *h_sol = h_sol->RemoveTermsWithSmallCoefficients(
+              search_options.hsol_tiny_coeff_tol);
+        }
+        std::cout << "h: " << *h_sol << "\n";
+        SplitCandidateStates(*h_sol, x_, candidate_safe_states_,
+                             verified_safe_states, unverified_candidate_states);
+        drake::log()->info("Number of verified safe states {}",
+                           verified_safe_states->cols());
+        if (verified_safe_states->cols() == verified_safe_states_count) {
+          return;
+        } else {
+          verified_safe_states_count = verified_safe_states->cols();
+        }
+        s_sol->resize(s.size());
+        for (int i = 0; i < static_cast<int>(unsafe_regions_.size()); ++i) {
+          (*s_sol)[i].resize(s[i].rows());
+          for (int j = 0; j < (*s_sol)[i].rows(); ++j) {
+            (*s_sol)[i](j) = result_barrier.GetSolution(s[i](j));
+            if (search_options.hsol_tiny_coeff_tol > 0) {
+              (*s_sol)[i](j) = (*s_sol)[i](j).RemoveTermsWithSmallCoefficients(
+                  search_options.hsol_tiny_coeff_tol);
+            }
+          }
+        }
+      } else {
+        drake::log()->error("Failed to find the barrier.");
+        return;
+      }
+    }
+    iter_count++;
+  }
 }
 
 ControlBarrierBoxInputBound::ControlBarrierBoxInputBound(

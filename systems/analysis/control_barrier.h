@@ -36,17 +36,16 @@ namespace analysis {
  * λ₀(x), lᵢ(x) is sos
  * </pre>
  */
-class SearchControlBarrier {
+class ControlBarrier {
  public:
-  DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(SearchControlBarrier)
+  DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(ControlBarrier)
 
-  SearchControlBarrier(
-      const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
-      const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
-      const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
-      const Eigen::Ref<const Eigen::MatrixXd>& candidate_safe_states,
-      std::vector<VectorX<symbolic::Polynomial>> unsafe_regions,
-      const Eigen::Ref<const Eigen::MatrixXd>& u_vertices);
+  ControlBarrier(const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
+                 const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
+                 const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+                 const Eigen::Ref<const Eigen::MatrixXd>& candidate_safe_states,
+                 std::vector<VectorX<symbolic::Polynomial>> unsafe_regions,
+                 const Eigen::Ref<const Eigen::MatrixXd>& u_vertices);
 
   /**
    * A helper function to add the constraint
@@ -102,12 +101,13 @@ class SearchControlBarrier {
    * Given Lagrangian multipliers λ₀(x), l(x), t(x), find the control barrier
    * function through
    * <pre>
-   * max ∑ᵢ min(h(xⁱ), 0),   xⁱ ∈ unverified_candidate_states
+   * max ∑ᵢ min(h(xⁱ), eps),   xⁱ ∈ unverified_candidate_states
    * s.t (1+λ₀(x))(−1 − h(x)) −∑ᵢlᵢ(x)(−εh − ∂h/∂xf(x)−∂h/∂xG(x)uⁱ) is sos
    *     (1 + t(x))*(-h(x)) + sⱼ(x)ᵀpⱼ(x) is sos
    *     sⱼ(x) is sos.
    *     h(xʲ) >= 0, xʲ ∈ verified_safe_states
    * </pre>
+   * where eps in the objective is a small positive constant.
    */
   std::unique_ptr<solvers::MathematicalProgram> ConstructBarrierProgram(
       const symbolic::Polynomial& lambda0,
@@ -115,13 +115,50 @@ class SearchControlBarrier {
       const std::vector<symbolic::Polynomial>& t, int h_degree,
       double deriv_eps, const std::vector<std::vector<int>>& s_degrees,
       const Eigen::MatrixXd& verified_safe_states,
-      const Eigen::MatrixXd& unverified_candidate_states,
+      const Eigen::MatrixXd& unverified_candidate_states, double eps,
       symbolic::Polynomial* h, symbolic::Polynomial* hdot_sos,
       MatrixX<symbolic::Variable>* hdot_sos_gram,
       std::vector<VectorX<symbolic::Polynomial>>* s,
       std::vector<std::vector<MatrixX<symbolic::Variable>>>* s_grams,
       std::vector<symbolic::Polynomial>* unsafe_sos_polys,
       std::vector<MatrixX<symbolic::Variable>>* unsafe_sos_poly_grams) const;
+
+  struct SearchOptions {
+    solvers::SolverId barrier_step_solver{solvers::MosekSolver::id()};
+    solvers::SolverId lagrangian_step_solver{solvers::MosekSolver::id()};
+    int bilinear_iterations{10};
+    double backoff_scale{0.};
+    std::optional<solvers::SolverOptions> lagrangian_step_solver_options{
+        std::nullopt};
+    std::optional<solvers::SolverOptions> barrier_step_solver_options{
+        std::nullopt};
+    // Small coefficient in the constraints can cause numerical issues. We will
+    // set the coefficient of linear constraints smaller than these tolerance to
+    // 0.
+    double barrier_tiny_coeff_tol = 0;
+    double lagrangian_tiny_coeff_tol = 0;
+
+    // The solution to these polynomials might contain terms with tiny
+    // coefficient, due to numerical roundoff error coming from the solver. We
+    // remove terms in the polynomial with tiny coefficients.
+    double hsol_tiny_coeff_tol = 0;
+    double lsol_tiny_coeff_tol = 0;
+
+    double candidate_state_eps{1E-2};
+  };
+
+  void Search(const symbolic::Polynomial& h_init, int h_degree,
+              double deriv_eps, int lambda0_degree,
+              const std::vector<int>& l_degrees,
+              const std::vector<int>& t_degree,
+              const std::vector<std::vector<int>>& s_degrees,
+              const SearchOptions& search_options, symbolic::Polynomial* h_sol,
+              symbolic::Polynomial* lambda0_sol,
+              VectorX<symbolic::Polynomial>* l_sol,
+              std::vector<symbolic::Polynomial>* t_sol,
+              std::vector<VectorX<symbolic::Polynomial>>* s_sol,
+              Eigen::MatrixXd* verified_safe_states,
+              Eigen::MatrixXd* unverified_candidate_states) const;
 
  private:
   VectorX<symbolic::Polynomial> f_;

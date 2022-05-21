@@ -53,8 +53,8 @@ class SimpleLinearSystemTest : public ::testing::Test {
   Matrix2<symbolic::Polynomial> G_;
 };
 
-TEST_F(SimpleLinearSystemTest, SearchControlBarrier) {
-  // Test SearchControlBarrier
+TEST_F(SimpleLinearSystemTest, ControlBarrier) {
+  // Test ControlBarrier
   Eigen::Matrix<double, 2, 7> candidate_safe_states;
   // clang-format off
   candidate_safe_states << 0.1, 0.1, -0.1, -0.1, 0, 1, 0.5,
@@ -70,8 +70,8 @@ TEST_F(SimpleLinearSystemTest, SearchControlBarrier) {
                 1, -1, 1, -1;
   // clang-format on
   u_vertices *= 10;
-  const SearchControlBarrier dut(f_, G_, x_, candidate_safe_states,
-                                 unsafe_regions, u_vertices);
+  const ControlBarrier dut(f_, G_, x_, candidate_safe_states, unsafe_regions,
+                           u_vertices);
 
   const symbolic::Polynomial h_init(1 - x_(0) * x_(0) - x_(1) * x_(1));
   const double deriv_eps = 0.1;
@@ -153,9 +153,10 @@ TEST_F(SimpleLinearSystemTest, SearchControlBarrier) {
   std::vector<symbolic::Polynomial> unsafe_sos_polys;
   std::vector<MatrixX<symbolic::Variable>> unsafe_sos_poly_grams;
   lambda0_sol = lambda0_sol.RemoveTermsWithSmallCoefficients(1e-10);
+  const double eps = 1E-3;
   auto prog_barrier = dut.ConstructBarrierProgram(
       lambda0_sol, l_sol, {t_sol}, h_degree, deriv_eps, {s_degrees},
-      verified_safe_states, unverified_candidate_states, &h, &hdot_sos,
+      verified_safe_states, unverified_candidate_states, eps, &h, &hdot_sos,
       &hdot_gram, &s, &s_grams, &unsafe_sos_polys, &unsafe_sos_poly_grams);
   RemoveTinyCoeff(prog_barrier.get(), 1E-10);
   const auto result_barrier = solvers::Solve(*prog_barrier);
@@ -168,12 +169,13 @@ TEST_F(SimpleLinearSystemTest, SearchControlBarrier) {
   // Check cost.
   const auto h_unverified_vals =
       h_sol.EvaluateIndeterminates(x_, unverified_candidate_states);
-  EXPECT_NEAR(-result_barrier.get_optimal_cost(),
-              (h_unverified_vals.array() >= 0)
-                  .select(Eigen::VectorXd::Zero(h_unverified_vals.rows()),
-                          h_unverified_vals)
-                  .sum(),
-              1E-5);
+  EXPECT_NEAR(
+      -result_barrier.get_optimal_cost(),
+      (h_unverified_vals.array() >= eps)
+          .select(Eigen::VectorXd::Constant(h_unverified_vals.rows(), eps),
+                  h_unverified_vals)
+          .sum(),
+      1E-5);
   // Check sos for unsafe regions.
   EXPECT_EQ(s.size(), unsafe_regions.size());
   for (int i = 0; i < static_cast<int>(s.size()); ++i) {
@@ -192,6 +194,54 @@ TEST_F(SimpleLinearSystemTest, SearchControlBarrier) {
     EXPECT_TRUE(math::IsPositiveDefinite(
         result_barrier.GetSolution(unsafe_sos_poly_grams[i])));
   }
+}
+
+TEST_F(SimpleLinearSystemTest, ControlBarrierSearch) {
+  // Test ControlBarrier::Search function.
+  Eigen::Matrix<double, 2, 12> candidate_safe_states;
+  // clang-format off
+  candidate_safe_states << 0.1, 0.1, -0.1, -0.1, 0, 1, 0.5, 0.2, 1., 0.2, 0.4, 0.8,
+                           0.1, -0.1, 0.1, -0.1, 0, 0.5, -1, 0.5, -0.1, 1, 1, -1;
+  // clang-format on
+  std::vector<VectorX<symbolic::Polynomial>> unsafe_regions;
+  // The unsafe region is -2 <= x(0) <= -1
+  unsafe_regions.push_back(Vector2<symbolic::Polynomial>(
+      symbolic::Polynomial(x_(0) + 1), symbolic::Polynomial(-x_(0) - 2)));
+  Eigen::Matrix<double, 2, 4> u_vertices;
+  // clang-format off
+  u_vertices << 1, 1, -1, -1,
+                1, -1, 1, -1;
+  // clang-format on
+  u_vertices *= 10;
+  const ControlBarrier dut(f_, G_, x_, candidate_safe_states, unsafe_regions,
+                           u_vertices);
+
+  const symbolic::Polynomial h_init(1 - x_(0) * x_(0) - x_(1) * x_(1));
+  const int h_degree = 2;
+  const double deriv_eps = 0.1;
+  const int lambda0_degree = 2;
+  const std::vector<int> l_degrees = {2, 2, 2, 2};
+  const std::vector<int> t_degree = {0};
+  const std::vector<std::vector<int>> s_degrees = {{0, 0}};
+
+  ControlBarrier::SearchOptions search_options;
+  search_options.hsol_tiny_coeff_tol = 1E-8;
+  search_options.lsol_tiny_coeff_tol = 1E-8;
+
+  symbolic::Polynomial h_sol;
+  symbolic::Polynomial lambda0_sol;
+  VectorX<symbolic::Polynomial> l_sol;
+  std::vector<symbolic::Polynomial> t_sol;
+  std::vector<VectorX<symbolic::Polynomial>> s_sol;
+  Eigen::MatrixXd verified_safe_states;
+  Eigen::MatrixXd unverified_candidate_states;
+
+  dut.Search(h_init, h_degree, deriv_eps, lambda0_degree, l_degrees, t_degree,
+             s_degrees, search_options, &h_sol, &lambda0_sol, &l_sol, &t_sol,
+             &s_sol, &verified_safe_states, &unverified_candidate_states);
+  std::cout << "verified safe states:\n" << verified_safe_states << "\n";
+  std::cout << "unverified candidate states:\n"
+            << unverified_candidate_states << "\n";
 }
 
 TEST_F(SimpleLinearSystemTest, ConstructLagrangianAndBProgram) {

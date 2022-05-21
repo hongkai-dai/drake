@@ -13,6 +13,7 @@
 #include "drake/solvers/scs_solver.h"
 #include "drake/solvers/sdpa_free_format.h"
 #include "drake/solvers/solve.h"
+#include "drake/systems/analysis/clf_cbf_utils.h"
 #include "drake/systems/controllers/linear_quadratic_regulator.h"
 
 namespace drake {
@@ -92,7 +93,7 @@ class SimpleLinearSystemTest : public ::testing::Test {
     }
   }
 
-  // This is used for SearchControlLyapunovBoxInputBound
+  // This is used for ControlLyapunovBoxInputBound
   void InitializeWithLQR(
       bool symmetric_dynamics, symbolic::Polynomial* V,
       Vector2<symbolic::Polynomial>* f, Matrix2<symbolic::Polynomial>* G,
@@ -456,7 +457,7 @@ TEST_F(SimpleLinearSystemTest, MaximizeEllipsoid) {
 
     double rho_sol;
     symbolic::Polynomial s_sol;
-    MaximizeInnerEllipsoidRho(x_, x_star, S, V, t, s_degree,
+    MaximizeInnerEllipsoidRho(x_, x_star, S, V - 1, t, s_degree,
                               solvers::MosekSolver::id(), std::nullopt, 1.,
                               &rho_sol, &s_sol);
 
@@ -533,7 +534,7 @@ TEST_F(SimpleLinearSystemTest, SearchLagrangianGivenVBoxInputBound) {
     }
     double rho_sol;
     symbolic::Polynomial s_sol;
-    MaximizeInnerEllipsoidRho(x_, x_star, S, V, t, s_degree,
+    MaximizeInnerEllipsoidRho(x_, x_star, S, V - 1, t, s_degree,
                               solvers::MosekSolver::id(), std::nullopt, 1.,
                               &rho_sol, &s_sol);
 
@@ -684,7 +685,7 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound_SearchLyapunov) {
   double rho_tol = 0.001;
   double rho_sol;
   symbolic::Polynomial r_sol;
-  MaximizeInnerEllipsoidRho(x_, x_star, S, V, r_degree, rho_max, rho_min,
+  MaximizeInnerEllipsoidRho(x_, x_star, S, V - 1, r_degree, rho_max, rho_min,
                             solvers::MosekSolver::id(), std::nullopt, rho_tol,
                             &rho_sol, &r_sol);
 
@@ -711,99 +712,10 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound_SearchLyapunov) {
   // should be larger than the one before searching for V.
   double rho_sol_new;
   symbolic::Polynomial r_sol_new;
-  MaximizeInnerEllipsoidRho(x_, x_star, S, V_sol, r_degree, rho_max, rho_min,
-                            solvers::MosekSolver::id(), std::nullopt, rho_tol,
-                            &rho_sol_new, &r_sol_new);
+  MaximizeInnerEllipsoidRho(x_, x_star, S, V_sol - 1, r_degree, rho_max,
+                            rho_min, solvers::MosekSolver::id(), std::nullopt,
+                            rho_tol, &rho_sol_new, &r_sol_new);
   EXPECT_GT(rho_sol_new, rho_sol);
-}
-
-GTEST_TEST(MaximizeInnerEllipsoidRho, Test1) {
-  // Test a 2D case with known solution.
-  // Find the largest x²+4y² <= ρ within the circle 2x²+2y² <= 1
-  const Vector2<symbolic::Variable> x(symbolic::Variable("x0"),
-                                      symbolic::Variable("x1"));
-  const Eigen::Vector2d x_star(0, 0);
-  Eigen::Matrix2d S;
-  // clang-format off
-  S << 1, 0,
-       0, 4;
-  // clang-format on
-  const symbolic::Polynomial V(2 * x(0) * x(0) + 2 * x(1) * x(1));
-  const symbolic::Polynomial t(x(0) * x(0) + x(1) * x(1));
-  const int s_degree(2);
-  const double backoff_scale = 0.;
-  double rho_sol;
-  symbolic::Polynomial s_sol;
-  MaximizeInnerEllipsoidRho(x, x_star, S, V, t, s_degree,
-                            solvers::MosekSolver::id(), std::nullopt,
-                            backoff_scale, &rho_sol, &s_sol);
-  const double tol = 1E-5;
-  EXPECT_NEAR(rho_sol, 0.5, tol);
-
-  CheckEllipsoidInRoa(x, x_star, S, rho_sol, V);
-}
-
-GTEST_TEST(MaximizeInnerEllipsoidRho, Test2) {
-  // Test a case that I cannot compute the solution analytically.
-  const Vector2<symbolic::Variable> x(symbolic::Variable("x0"),
-                                      symbolic::Variable("x1"));
-  const Eigen::Vector2d x_star(1, 2);
-  Eigen::Matrix2d S;
-  // clang-format off
-  S << 1, 2,
-       2, 9;
-  // clang-format on
-  using std::pow;
-  const symbolic::Polynomial V(pow(x(0), 4) + pow(x(1), 4) - 2 * x(0) * x(0) -
-                               4 * x(1) * x(1) - 20 * x(0) * x(1));
-  ASSERT_LE(
-      V.Evaluate(symbolic::Environment({{x(0), x_star(0)}, {x(1), x_star(1)}})),
-      1);
-  {
-    // Test the program
-    // max ρ
-    // s.t (1+t(x))((x-x*)ᵀS(x-x*)-ρ) - s(x)(V(x)-1) is sos
-    //     s(x) is sos
-    const symbolic::Polynomial t(0);
-    const int s_degree = 2;
-    const double backoff_scale = 0.05;
-    double rho_sol;
-    symbolic::Polynomial s_sol;
-    solvers::SolverOptions solver_options;
-    solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 0);
-    // I am really surprised that this SOS finds a solution with rho > 0. AFAIK,
-    // t(x) is constant, hence (1+t(x))((x-x*)ᵀS(x-x*)-ρ) is a degree 2
-    // polynomial, while -s(x)*(V(x)-1) has much higher degree (>6) with
-    // negative leading terms. The resulting polynomial cannot be sos.
-    MaximizeInnerEllipsoidRho(x, x_star, S, V, t, s_degree,
-                              solvers::MosekSolver::id(), solver_options,
-                              backoff_scale, &rho_sol, &s_sol);
-    CheckEllipsoidInRoa(x, x_star, S, rho_sol, V);
-  }
-
-  {
-    // Test the bisection approach
-    const int r_degree = 2;
-    const double rho_max = 1;
-    const double rho_min = 0.2;
-    const double rho_tol = 0.1;
-    double rho_sol;
-    symbolic::Polynomial r_sol;
-    MaximizeInnerEllipsoidRho(x, x_star, S, V, r_degree, rho_max, rho_min,
-                              solvers::MosekSolver::id(), std::nullopt, rho_tol,
-                              &rho_sol, &r_sol);
-    CheckEllipsoidInRoa(x, x_star, S, rho_sol, V);
-    // Check if r_sol is sos.
-    Eigen::Matrix2Xd x_check = Eigen::Matrix2Xd::Random(2, 100);
-    const symbolic::Polynomial sos_cond =
-        1 - V + r_sol * internal::EllipsoidPolynomial(x, x_star, S, rho_sol);
-    for (int i = 0; i < x_check.cols(); ++i) {
-      symbolic::Environment env;
-      env.insert(x, x_check.col(i));
-      EXPECT_GE(r_sol.Evaluate(env), 0.);
-      EXPECT_GE(sos_cond.Evaluate(env), 0.);
-    }
-  }
 }
 
 GTEST_TEST(EllipsoidPolynomial, Test) {
@@ -865,16 +777,16 @@ GTEST_TEST(NewFreePolynomialNoConstantOrLinear, Test) {
   check(4, symbolic::internal::DegreeType::kOdd, 4);
 }
 
-TEST_F(SimpleLinearSystemTest, SearchControlLyapunov) {
-  // Test SearchControlLyapunov::ConstructLagrangianProgram
-  // and SearchControlLyapunov::ConstructLyapunovProgram
+TEST_F(SimpleLinearSystemTest, ControlLyapunov) {
+  // Test ControlLyapunov::ConstructLagrangianProgram
+  // and ControlLyapunov::ConstructLyapunovProgram
   Vector2<symbolic::Polynomial> f;
   Matrix2<symbolic::Polynomial> G;
   symbolic::Polynomial V;
   bool symmetric_dynamics = true;
   InitializeWithLQR(symmetric_dynamics, &V, &f, &G);
   V *= 0.1;
-  SearchControlLyapunov dut(x_, f, G, u_vertices_);
+  ControlLyapunov dut(x_, f, G, u_vertices_);
   const int lambda0_degree = 0;
   const std::vector<int> l_degrees = {2, 2, 2, 2};
   const double deriv_eps = 0.01;
@@ -961,15 +873,15 @@ TEST_F(SimpleLinearSystemTest, SearchControlLyapunov) {
   const Eigen::Vector2d x_star = Eigen::Vector2d::Zero();
   const Eigen::Matrix2d S = Eigen::Matrix2d::Identity();
   int r_degree = V_degree - 2;
-  SearchControlLyapunov::SearchOptions search_options;
+  ControlLyapunov::SearchOptions search_options;
   search_options.backoff_scale = 0.01;
   search_options.bilinear_iterations = 15;
   const double rho_min = 0.01;
   const double rho_max = 1;
   const double rho_tol = 0.001;
   double rho_sol;
-  SearchControlLyapunov::RhoBisectionOption rho_bisection_option(
-      rho_min, rho_max, rho_tol);
+  ControlLyapunov::RhoBisectionOption rho_bisection_option(rho_min, rho_max,
+                                                           rho_tol);
   symbolic::Polynomial r_sol;
   dut.Search(V_init, lambda0_degree, l_degrees, V_degree, deriv_eps, x_star, S,
              r_degree, search_options, rho_bisection_option, &V_sol,

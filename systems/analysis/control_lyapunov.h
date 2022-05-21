@@ -40,9 +40,9 @@ namespace analysis {
  * λ(x), lᵢ(x) >= 0
  * We will search for such V, λ(x), lᵢ(x) through bilinear alternation.
  */
-class SearchControlLyapunov {
+class ControlLyapunov {
  public:
-  DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(SearchControlLyapunov)
+  DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(ControlLyapunov)
 
   /**
    * @param f The dynamics of the system is ẋ = f(x) + G(x)u
@@ -50,11 +50,10 @@ class SearchControlLyapunov {
    * @param u_vertices An nᵤ * K matrix. u_vertices.col(i) is the i'th vertex
    * of the polytope as the bounds on the control action.
    */
-  SearchControlLyapunov(
-      const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
-      const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
-      const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
-      const Eigen::Ref<const Eigen::MatrixXd>& u_vertices);
+  ControlLyapunov(const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+                  const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
+                  const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
+                  const Eigen::Ref<const Eigen::MatrixXd>& u_vertices);
 
   /**
    * A helper function to add the constraint
@@ -615,50 +614,7 @@ class ControlLyapunovBoxInputBound {
   int nu_;
 };
 
-/**
- * Find the largest inscribed ellipsoid {x | (x-x*)ᵀS(x-x*) <= ρ} in the
- * sub-level set {x | V(x)<= 1}. Solve the following problem on the variable
- * s(x), ρ
- * max ρ
- * s.t (1+t(x))((x-x*)ᵀS(x-x*)-ρ) - s(x)(V(x)-1) is sos
- *     s(x) is sos
- */
-void MaximizeInnerEllipsoidRho(
-    const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
-    const Eigen::Ref<const Eigen::VectorXd>& x_star,
-    const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& V,
-    const symbolic::Polynomial& t, int s_degree,
-    const solvers::SolverId& solver_id,
-    const std::optional<solvers::SolverOptions>& solver_options,
-    double backoff_scale, double* rho_sol, symbolic::Polynomial* s_sol);
-
-/**
- * Find the largest inscribed ellipsoid {x | (x-x*)ᵀS(x-x*) <= ρ} in the
- * sub-level set {x | V(x)<= 1}. Solve the following problem on the variable
- * r(x) through bisecting ρ
- *
- *     max ρ
- *     s.t 1 - V(x) - r(x)*(ρ-(x-x*)ᵀS(x-x*)) is sos
- *         r(x) is sos.
- */
-void MaximizeInnerEllipsoidRho(
-    const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
-    const Eigen::Ref<const Eigen::VectorXd>& x_star,
-    const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& V,
-    int r_degree, double rho_max, double rho_min,
-    const solvers::SolverId& solver_id,
-    const std::optional<solvers::SolverOptions>& solver_options, double rho_tol,
-    double* rho_sol, symbolic::Polynomial* r_sol);
-
 namespace internal {
-/** The ellipsoid polynomial (x−x*)ᵀS(x−x*)−ρ
- */
-template <typename RhoType>
-symbolic::Polynomial EllipsoidPolynomial(
-    const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
-    const Eigen::Ref<const Eigen::VectorXd>& x_star,
-    const Eigen::Ref<const Eigen::MatrixXd>& S, const RhoType& rho);
-
 /**
  * Compute the monomial basis for a given set of variables up to a certain
  * degree, but remove the constant term 1 from the basis.

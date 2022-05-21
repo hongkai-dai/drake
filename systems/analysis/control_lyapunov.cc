@@ -139,7 +139,7 @@ void AddEllipsoidInRoaConstraint(
 
 }  // namespace
 
-SearchControlLyapunov::SearchControlLyapunov(
+ControlLyapunov::ControlLyapunov(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
     const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
     const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
@@ -157,7 +157,7 @@ SearchControlLyapunov::SearchControlLyapunov(
   DRAKE_DEMAND(u_vertices.rows() == num_u);
 }
 
-void SearchControlLyapunov::AddControlLyapunovConstraint(
+void ControlLyapunov::AddControlLyapunovConstraint(
     solvers::MathematicalProgram* prog, const VectorX<symbolic::Variable>& x,
     const symbolic::Polynomial& lambda0, const VectorX<symbolic::Polynomial>& l,
     const symbolic::Polynomial& V, const Eigen::MatrixXd& u_vertices,
@@ -182,7 +182,7 @@ void SearchControlLyapunov::AddControlLyapunovConstraint(
 }
 
 std::unique_ptr<solvers::MathematicalProgram>
-SearchControlLyapunov::ConstructLagrangianProgram(
+ControlLyapunov::ConstructLagrangianProgram(
     const symbolic::Polynomial& V, double deriv_eps, int lambda0_degree,
     const std::vector<int>& l_degrees, symbolic::Polynomial* lambda0,
     MatrixX<symbolic::Variable>* lambda0_gram, VectorX<symbolic::Polynomial>* l,
@@ -218,7 +218,7 @@ SearchControlLyapunov::ConstructLagrangianProgram(
 }
 
 std::unique_ptr<solvers::MathematicalProgram>
-SearchControlLyapunov::ConstructLyapunovProgram(
+ControlLyapunov::ConstructLyapunovProgram(
     const symbolic::Polynomial& lambda0, const VectorX<symbolic::Polynomial>& l,
     int V_degree, double deriv_eps, symbolic::Polynomial* V,
     MatrixX<symbolic::Expression>* V_gram) const {
@@ -240,7 +240,7 @@ SearchControlLyapunov::ConstructLyapunovProgram(
   return prog;
 }
 
-void SearchControlLyapunov::Search(
+void ControlLyapunov::Search(
     const symbolic::Polynomial& V_init, int lambda0_degree,
     const std::vector<int>& l_degrees, int V_degree, double deriv_eps,
     const Eigen::Ref<const Eigen::VectorXd>& x_star,
@@ -255,7 +255,7 @@ void SearchControlLyapunov::Search(
   while (iter_count < search_options.bilinear_iterations) {
     {
       MaximizeInnerEllipsoidRho(
-          x_, x_star, S, *V_sol, r_degree, rho_bisection_option.rho_max,
+          x_, x_star, S, *V_sol - 1, r_degree, rho_bisection_option.rho_max,
           rho_bisection_option.rho_min, search_options.lyap_step_solver,
           search_options.lyap_step_solver_options, rho_bisection_option.rho_tol,
           rho_sol, r_sol);
@@ -804,9 +804,9 @@ ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(
 
   // Solve a separate program to find the inscribed ellipsoid.
   MaximizeInnerEllipsoidRho(
-      x_, x_star, S, V_init, t_given, s_degree, options.lagrangian_step_solver,
-      options.lagrangian_step_solver_options, options.backoff_scale, &(ret.rho),
-      &(ret.ellipsoid_lagrangian));
+      x_, x_star, S, V_init - 1, t_given, s_degree,
+      options.lagrangian_step_solver, options.lagrangian_step_solver_options,
+      options.backoff_scale, &(ret.rho), &(ret.ellipsoid_lagrangian));
 
   int iter = 0;
   bool converged = false;
@@ -834,9 +834,9 @@ ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(
                      options.lsol_tiny_coeff_tol, &(ret.l));
     // Solve a separate program to find the innner ellipsoid.
     MaximizeInnerEllipsoidRho(
-        x_, x_star, S, ret.V, t_given, s_degree, options.lagrangian_step_solver,
-        options.lagrangian_step_solver_options, options.backoff_scale, &rho_new,
-        &(ret.ellipsoid_lagrangian));
+        x_, x_star, S, ret.V - 1, t_given, s_degree,
+        options.lagrangian_step_solver, options.lagrangian_step_solver_options,
+        options.backoff_scale, &rho_new, &(ret.ellipsoid_lagrangian));
     drake::log()->info("iter: {}, rho: {}", iter, rho_new);
     if (rho_new - ret.rho < options.rho_converge_tol) {
       converged = true;
@@ -867,7 +867,7 @@ ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(
       &(ret.deriv_eps), &(ret.b), &(ret.l));
   // Solve a separate program to find the inscribed ellipsoid.
   MaximizeInnerEllipsoidRho(
-      x_, x_star, S, V_init, r_degree, rho_bisection_option.rho_max,
+      x_, x_star, S, V_init - 1, r_degree, rho_bisection_option.rho_max,
       rho_bisection_option.rho_min, options.lagrangian_step_solver,
       options.lagrangian_step_solver_options, rho_bisection_option.rho_tol,
       &(ret.rho), &(ret.ellipsoid_lagrangian));
@@ -885,7 +885,7 @@ ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(
     // Solve a separate program to find the inner ellipsoid.
     double rho_new;
     MaximizeInnerEllipsoidRho(
-        x_, x_star, S, ret.V, r_degree, rho_bisection_option.rho_max,
+        x_, x_star, S, ret.V - 1, r_degree, rho_bisection_option.rho_max,
         rho_bisection_option.rho_min, options.lagrangian_step_solver,
         options.lagrangian_step_solver_options, rho_bisection_option.rho_tol,
         &rho_new, &(ret.ellipsoid_lagrangian));
@@ -1055,113 +1055,7 @@ ControlLyapunovBoxInputBound::ConstructLyapunovProgram(
   return prog;
 }
 
-void MaximizeInnerEllipsoidRho(
-    const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
-    const Eigen::Ref<const Eigen::VectorXd>& x_star,
-    const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& V,
-    const symbolic::Polynomial& t, int s_degree,
-    const solvers::SolverId& solver_id,
-    const std::optional<solvers::SolverOptions>& solver_options,
-    double backoff_scale, double* rho_sol, symbolic::Polynomial* s_sol) {
-  solvers::MathematicalProgram prog;
-  prog.AddIndeterminates(x);
-  auto rho = prog.NewContinuousVariables<1>("rho")(0);
-  const symbolic::Variables x_set(x);
-  symbolic::Polynomial s;
-  if (s_degree == 0) {
-    const auto s_constant = prog.NewContinuousVariables<1>("s_constant")(0);
-    prog.AddBoundingBoxConstraint(0, kInf, s_constant);
-    s = symbolic::Polynomial({{symbolic::Monomial(), s_constant}});
-  } else {
-    std::tie(s, std::ignore) = prog.NewSosPolynomial(x_set, s_degree);
-  }
-
-  AddEllipsoidInRoaConstraintHelper(&prog, t, x, x_star, S, rho, s, V);
-  prog.AddLinearCost(-rho);
-  const auto result =
-      SearchWithBackoff(&prog, solver_id, solver_options, backoff_scale);
-  DRAKE_DEMAND(result.is_success());
-  *rho_sol = result.GetSolution(rho);
-  *s_sol = result.GetSolution(s);
-}
-
-void MaximizeInnerEllipsoidRho(
-    const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
-    const Eigen::Ref<const Eigen::VectorXd>& x_star,
-    const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& V,
-    int r_degree, double rho_max, double rho_min,
-    const solvers::SolverId& solver_id,
-    const std::optional<solvers::SolverOptions>& solver_options, double rho_tol,
-    double* rho_sol, symbolic::Polynomial* r_sol) {
-  DRAKE_DEMAND(rho_max > rho_min);
-  DRAKE_DEMAND(rho_tol > 0);
-  const symbolic::Polynomial ellipsoid_quadratic =
-      internal::EllipsoidPolynomial(x, x_star, S, 0.);
-  auto is_feasible = [&x, &V, &r_degree, &solver_id, &solver_options,
-                      &ellipsoid_quadratic, r_sol](double rho) {
-    solvers::MathematicalProgram prog;
-    prog.AddIndeterminates(x);
-    symbolic::Polynomial r;
-    std::tie(r, std::ignore) =
-        prog.NewSosPolynomial(symbolic::Variables(x), r_degree);
-    prog.AddSosConstraint(1 - V - r * (rho - ellipsoid_quadratic));
-    auto solver = solvers::MakeSolver(solver_id);
-    solvers::MathematicalProgramResult result;
-    solver->Solve(prog, std::nullopt, solver_options, &result);
-    if (result.is_success()) {
-      *r_sol = result.GetSolution(r);
-      return true;
-    } else {
-      return false;
-    }
-  };
-
-  if (!is_feasible(rho_min)) {
-    drake::log()->error("MaximizeEllipsoidRho: rho_min={} is infeasible",
-                        rho_min);
-  }
-  if (is_feasible(rho_max)) {
-    *rho_sol = rho_max;
-    return;
-  }
-  while (rho_max - rho_min > rho_tol) {
-    const double rho_mid = (rho_max + rho_min) / 2;
-    if (is_feasible(rho_mid)) {
-      rho_min = rho_mid;
-    } else {
-      rho_max = rho_mid;
-    }
-  }
-  *rho_sol = rho_min;
-}
-
 namespace internal {
-template <typename RhoType>
-symbolic::Polynomial EllipsoidPolynomial(
-    const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
-    const Eigen::Ref<const Eigen::VectorXd>& x_star,
-    const Eigen::Ref<const Eigen::MatrixXd>& S, const RhoType& rho) {
-  // The ellipsoid polynomial (x−x*)ᵀS(x−x*)−ρ
-  symbolic::Polynomial::MapType ellipsoid_poly_map;
-  // Add constant term x*ᵀ*S*x* - ρ
-  ellipsoid_poly_map.emplace(symbolic::Monomial(),
-                             x_star.dot(S * x_star) - rho);
-  const Eigen::VectorXd S_times_x_star = (S + S.transpose()) / 2 * x_star;
-  for (int i = 0; i < x.rows(); ++i) {
-    // Add S(i, i) * x(i)²
-    ellipsoid_poly_map.emplace(symbolic::Monomial(x(i), 2), S(i, i));
-    // Add -2 * x_starᵀ * S.col(i) * x(i)
-    ellipsoid_poly_map.emplace(symbolic::Monomial(x(i)),
-                               -2 * S_times_x_star(i));
-    for (int j = i + 1; j < x.rows(); ++j) {
-      // Add 2*S(i, j) * x(i) * x(j)
-      ellipsoid_poly_map.emplace(symbolic::Monomial({{x(i), 1}, {x(j), 1}}),
-                                 S(i, j) + S(j, i));
-    }
-  }
-  return symbolic::Polynomial{ellipsoid_poly_map};
-}
-
 VectorX<symbolic::Monomial> ComputeMonomialBasisNoConstant(
     const symbolic::Variables& vars, int degree,
     symbolic::internal::DegreeType degree_type) {
@@ -1259,16 +1153,6 @@ symbolic::Polynomial NewFreePolynomialNoConstantOrLinear(
         psd_dual.array().abs().maxCoeff());
   }
 }
-
-// Explicit instantiation
-template symbolic::Polynomial EllipsoidPolynomial<double>(
-    const Eigen::Ref<const VectorX<symbolic::Variable>>&,
-    const Eigen::Ref<const Eigen::VectorXd>&,
-    const Eigen::Ref<const Eigen::MatrixXd>&, const double&);
-template symbolic::Polynomial EllipsoidPolynomial<symbolic::Variable>(
-    const Eigen::Ref<const VectorX<symbolic::Variable>>&,
-    const Eigen::Ref<const Eigen::VectorXd>&,
-    const Eigen::Ref<const Eigen::MatrixXd>&, const symbolic::Variable&);
 }  // namespace internal
 }  // namespace analysis
 }  // namespace systems

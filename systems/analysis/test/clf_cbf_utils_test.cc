@@ -3,10 +3,46 @@
 #include <gtest/gtest.h>
 
 #include "drake/common/test_utilities/symbolic_test_util.h"
+#include "drake/solvers/mosek_solver.h"
 
 namespace drake {
 namespace systems {
 namespace analysis {
+
+// Check if the ellipsoid {x | (x-x*)ᵀS(x-x*) <= ρ} in the
+// sub-level set {x | f(x) <= 0}
+void CheckEllipsoidInSublevelSet(
+    const Eigen::Ref<const VectorX<symbolic::Variable>> x,
+    const Eigen::Ref<const Eigen::VectorXd>& x_star,
+    const Eigen::Ref<const Eigen::MatrixXd>& S, double rho,
+    const symbolic::Polynomial& f) {
+  // Check if any point within the ellipsoid also satisfies V(x)<=1.
+  // A point on the boundary of ellipsoid (x−x*)ᵀS(x−x*)=ρ
+  // can be writeen as x=√ρ*L⁻ᵀ*u+x*
+  // where L is the Cholesky decomposition of S, u is a vector with norm < 1.
+  Eigen::LLT<Eigen::Matrix2d> llt_solver;
+  llt_solver.compute(S);
+  const int x_dim = x.rows();
+  srand(0);
+  Eigen::MatrixXd u_samples = Eigen::MatrixXd::Random(x_dim, 1000);
+  std::default_random_engine generator;
+  std::uniform_real_distribution<double> distribution(0., 1.);
+  for (int i = 0; i < u_samples.cols(); ++i) {
+    u_samples.col(i) /= u_samples.col(i).norm();
+    u_samples.col(i) *= distribution(generator);
+  }
+
+  Eigen::ColPivHouseholderQR<Eigen::Matrix2d> qr_solver;
+  qr_solver.compute(llt_solver.matrixL().transpose());
+  for (int i = 0; i < u_samples.cols(); ++i) {
+    const Eigen::VectorXd x_val =
+        std::sqrt(rho) * qr_solver.solve(u_samples.col(i)) + x_star;
+    symbolic::Environment env;
+    env.insert(x, x_val);
+    EXPECT_LE(f.Evaluate(env), 1E-5);
+  }
+}
+
 GTEST_TEST(EvaluatePolynomial, Test1) {
   const Vector2<symbolic::Variable> x(symbolic::Variable("x0"),
                                       symbolic::Variable("x1"));
@@ -80,6 +116,104 @@ GTEST_TEST(SplitCandidateStates, Test) {
       (p.EvaluateIndeterminates(x, positive_states).array() >= 0).all());
   EXPECT_TRUE((p.EvaluateIndeterminates(x, negative_states).array() < 0).all());
 }
+
+GTEST_TEST(MaximizeInnerEllipsoidRho, Test1) {
+  // Test a 2D case with known solution.
+  // Find the largest x²+4y² <= ρ within the circle 2x²+2y² <= 1
+  const Vector2<symbolic::Variable> x(symbolic::Variable("x0"),
+                                      symbolic::Variable("x1"));
+  const Eigen::Vector2d x_star(0, 0);
+  Eigen::Matrix2d S;
+  // clang-format off
+  S << 1, 0,
+       0, 4;
+  // clang-format on
+  const symbolic::Polynomial V(2 * x(0) * x(0) + 2 * x(1) * x(1));
+  const symbolic::Polynomial t(x(0) * x(0) + x(1) * x(1));
+  const int s_degree(2);
+  const double backoff_scale = 0.;
+  double rho_sol;
+  symbolic::Polynomial s_sol;
+  MaximizeInnerEllipsoidRho(x, x_star, S, V - 1, t, s_degree,
+                            solvers::MosekSolver::id(), std::nullopt,
+                            backoff_scale, &rho_sol, &s_sol);
+  const double tol = 1E-5;
+  EXPECT_NEAR(rho_sol, 0.5, tol);
+
+  CheckEllipsoidInSublevelSet(x, x_star, S, rho_sol, V - 1);
+}
+
+GTEST_TEST(MaximizeInnerEllipsoidRho, Test2) {
+  // Test a case that I cannot compute the solution analytically.
+  const Vector2<symbolic::Variable> x(symbolic::Variable("x0"),
+                                      symbolic::Variable("x1"));
+  const Eigen::Vector2d x_star(1, 2);
+  Eigen::Matrix2d S;
+  // clang-format off
+  S << 1, 2,
+       2, 9;
+  // clang-format on
+  using std::pow;
+  const symbolic::Polynomial V(pow(x(0), 4) + pow(x(1), 4) - 2 * x(0) * x(0) -
+                               4 * x(1) * x(1) - 20 * x(0) * x(1));
+  ASSERT_LE(
+      V.Evaluate(symbolic::Environment({{x(0), x_star(0)}, {x(1), x_star(1)}})),
+      1);
+  {
+    // Test the program
+    // max ρ
+    // s.t (1+t(x))((x-x*)ᵀS(x-x*)-ρ) - s(x)(V(x)-1) is sos
+    //     s(x) is sos
+    const symbolic::Polynomial t(0);
+    const int s_degree = 2;
+    const double backoff_scale = 0.05;
+    double rho_sol;
+    symbolic::Polynomial s_sol;
+    solvers::SolverOptions solver_options;
+    solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 0);
+    // I am really surprised that this SOS finds a solution with rho > 0. AFAIK,
+    // t(x) is constant, hence (1+t(x))((x-x*)ᵀS(x-x*)-ρ) is a degree 2
+    // polynomial, while -s(x)*(V(x)-1) has much higher degree (>6) with
+    // negative leading terms. The resulting polynomial cannot be sos.
+    MaximizeInnerEllipsoidRho(x, x_star, S, V - 1, t, s_degree,
+                              solvers::MosekSolver::id(), solver_options,
+                              backoff_scale, &rho_sol, &s_sol);
+    CheckEllipsoidInSublevelSet(x, x_star, S, rho_sol, V - 1);
+  }
+
+  {
+    // Test the bisection approach
+    const int r_degree = 2;
+    const double rho_max = 1;
+    const double rho_min = 0.2;
+    const double rho_tol = 0.1;
+    double rho_sol;
+    symbolic::Polynomial r_sol;
+    MaximizeInnerEllipsoidRho(x, x_star, S, V - 1, r_degree, rho_max, rho_min,
+                              solvers::MosekSolver::id(), std::nullopt, rho_tol,
+                              &rho_sol, &r_sol);
+    CheckEllipsoidInSublevelSet(x, x_star, S, rho_sol, V - 1);
+    // Check if r_sol is sos.
+    Eigen::Matrix2Xd x_check = Eigen::Matrix2Xd::Random(2, 100);
+    const symbolic::Polynomial sos_cond =
+        1 - V + r_sol * internal::EllipsoidPolynomial(x, x_star, S, rho_sol);
+    for (int i = 0; i < x_check.cols(); ++i) {
+      symbolic::Environment env;
+      env.insert(x, x_check.col(i));
+      EXPECT_GE(r_sol.Evaluate(env), 0.);
+      EXPECT_GE(sos_cond.Evaluate(env), 0.);
+    }
+  }
+}
+
 }  // namespace analysis
 }  // namespace systems
 }  // namespace drake
+int main(int argc, char** argv) {
+  // Ensure that we have the MOSEK license for the entire duration of this test,
+  // so that we do not have to release and re-acquire the license for every
+  // test.
+  auto mosek_license = drake::solvers::MosekSolver::AcquireLicense();
+  ::testing::InitGoogleTest(&argc, argv);
+  return RUN_ALL_TESTS();
+}

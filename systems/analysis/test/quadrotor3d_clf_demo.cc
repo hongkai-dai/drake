@@ -163,7 +163,7 @@ struct Quadrotor {
       Eigen::Matrix<double, 4, 16>::Ones();
   std::cout << u_vertices.transpose() << "\n";
 
-  SearchControlLyapunov dut(x, f, G, u_vertices);
+  ControlLyapunov dut(x, f, G, u_vertices);
   const double deriv_eps = 0.2;
   *deriv_eps_sol = deriv_eps;
   const int lambda0_degree = 2;
@@ -173,7 +173,7 @@ struct Quadrotor {
       Eigen::Matrix<double, 12, 1>::Zero();
   const Eigen::Matrix<double, 12, 12> S =
       Eigen::Matrix<double, 12, 12>::Identity();
-  SearchControlLyapunov::SearchOptions search_options;
+  ControlLyapunov::SearchOptions search_options;
   search_options.bilinear_iterations = 20;
   search_options.backoff_scale = 0.02;
   search_options.lyap_tiny_coeff_tol = 2E-7;
@@ -185,7 +185,7 @@ struct Quadrotor {
   search_options.lagrangian_step_solver_options = solvers::SolverOptions();
   // search_options.lagrangian_step_solver_options->SetOption(
   //    solvers::CommonSolverOption::kPrintToConsole, 1);
-  SearchControlLyapunov::RhoBisectionOption rho_bisection_option(0.01, 3, 0.01);
+  ControlLyapunov::RhoBisectionOption rho_bisection_option(0.01, 3, 0.01);
   symbolic::Polynomial lambda0;
   VectorX<symbolic::Polynomial> l;
   symbolic::Polynomial r;

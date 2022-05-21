@@ -44,6 +44,51 @@ solvers::MathematicalProgramResult SearchWithBackoff(
     solvers::MathematicalProgram* prog, const solvers::SolverId& solver_id,
     const std::optional<solvers::SolverOptions>& solver_options,
     double backoff_scale);
+
+/**
+ * Find the largest inscribed ellipsoid {x | (x-x*)ᵀS(x-x*) <= ρ} in the
+ * sub-level set {x | f(x)<= 0}. Solve the following problem on the variable
+ * s(x), ρ
+ * max ρ
+ * s.t (1+t(x))((x-x*)ᵀS(x-x*)-ρ) - s(x)*f(x) is sos
+ *     s(x) is sos
+ */
+void MaximizeInnerEllipsoidRho(
+    const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+    const Eigen::Ref<const Eigen::VectorXd>& x_star,
+    const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& f,
+    const symbolic::Polynomial& t, int s_degree,
+    const solvers::SolverId& solver_id,
+    const std::optional<solvers::SolverOptions>& solver_options,
+    double backoff_scale, double* rho_sol, symbolic::Polynomial* s_sol);
+
+/**
+ * Find the largest inscribed ellipsoid {x | (x-x*)ᵀS(x-x*) <= ρ} in the
+ * sub-level set {x | f(x) <= 0}. Solve the following problem on the variable
+ * r(x) through bisecting ρ
+ *
+ *     max ρ
+ *     s.t -f(x) - r(x)*(ρ-(x-x*)ᵀS(x-x*)) is sos
+ *         r(x) is sos.
+ */
+void MaximizeInnerEllipsoidRho(
+    const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+    const Eigen::Ref<const Eigen::VectorXd>& x_star,
+    const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& f,
+    int r_degree, double rho_max, double rho_min,
+    const solvers::SolverId& solver_id,
+    const std::optional<solvers::SolverOptions>& solver_options, double rho_tol,
+    double* rho_sol, symbolic::Polynomial* r_sol);
+
+namespace internal {
+/** The ellipsoid polynomial (x−x*)ᵀS(x−x*)−ρ
+ */
+template <typename RhoType>
+symbolic::Polynomial EllipsoidPolynomial(
+    const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+    const Eigen::Ref<const Eigen::VectorXd>& x_star,
+    const Eigen::Ref<const Eigen::MatrixXd>& S, const RhoType& rho);
+}  // namespace internal
 }  // namespace analysis
 }  // namespace systems
 }  // namespace drake

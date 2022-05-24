@@ -55,7 +55,6 @@ ControlBarrier::ControlBarrier(
     const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
     const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
-    const Eigen::Ref<const Eigen::MatrixXd>& candidate_safe_states,
     std::vector<VectorX<symbolic::Polynomial>> unsafe_regions,
     const Eigen::Ref<const Eigen::MatrixXd>& u_vertices)
     : f_{f},
@@ -64,11 +63,9 @@ ControlBarrier::ControlBarrier(
       nu_{static_cast<int>(G_.cols())},
       x_{x},
       x_set_{x},
-      candidate_safe_states_{candidate_safe_states},
       unsafe_regions_{std::move(unsafe_regions)},
       u_vertices_{u_vertices} {
   DRAKE_DEMAND(G_.rows() == nx_);
-  DRAKE_DEMAND(candidate_safe_states_.rows() == nx_);
   DRAKE_DEMAND(u_vertices_.rows() == nu_);
 }
 void ControlBarrier::AddControlBarrierConstraint(
@@ -142,11 +139,8 @@ std::unique_ptr<solvers::MathematicalProgram>
 ControlBarrier::ConstructBarrierProgram(
     const symbolic::Polynomial& lambda0, const VectorX<symbolic::Polynomial>& l,
     const std::vector<symbolic::Polynomial>& t, int h_degree, double deriv_eps,
-    const std::vector<std::vector<int>>& s_degrees,
-    const Eigen::MatrixXd& verified_safe_states,
-    const Eigen::MatrixXd& unverified_candidate_states, double eps,
-    symbolic::Polynomial* h, symbolic::Polynomial* hdot_sos,
-    MatrixX<symbolic::Variable>* hdot_sos_gram,
+    const std::vector<std::vector<int>>& s_degrees, symbolic::Polynomial* h,
+    symbolic::Polynomial* hdot_sos, MatrixX<symbolic::Variable>* hdot_sos_gram,
     std::vector<VectorX<symbolic::Polynomial>>* s,
     std::vector<std::vector<MatrixX<symbolic::Variable>>>* s_grams,
     std::vector<symbolic::Polynomial>* unsafe_sos_polys,
@@ -183,17 +177,24 @@ ControlBarrier::ConstructBarrierProgram(
         prog->AddSosConstraint((*unsafe_sos_polys)[i]);
   }
 
+  return prog;
+}
+
+void ControlBarrier::AddBarrierProgramCost(
+    solvers::MathematicalProgram* prog, const symbolic::Polynomial& h,
+    const Eigen::MatrixXd& verified_safe_states,
+    const Eigen::MatrixXd& unverified_candidate_states, double eps) const {
   // Add the constraint that the verified states all have h(x) >= 0
   Eigen::MatrixXd h_monomial_vals;
   VectorX<symbolic::Variable> h_coeff_vars;
-  EvaluatePolynomial(*h, x_, verified_safe_states, &h_monomial_vals,
+  EvaluatePolynomial(h, x_, verified_safe_states, &h_monomial_vals,
                      &h_coeff_vars);
   prog->AddLinearConstraint(
       h_monomial_vals, Eigen::VectorXd::Zero(h_monomial_vals.rows()),
       Eigen::VectorXd::Constant(h_monomial_vals.rows(), kInf), h_coeff_vars);
   // Add the objective to maximize sum min(h(xʲ), eps) for xʲ in
   // unverified_candidate_states
-  EvaluatePolynomial(*h, x_, unverified_candidate_states, &h_monomial_vals,
+  EvaluatePolynomial(h, x_, unverified_candidate_states, &h_monomial_vals,
                      &h_coeff_vars);
   auto h_unverified_min0 =
       prog->NewContinuousVariables(unverified_candidate_states.cols());
@@ -211,8 +212,25 @@ ControlBarrier::ConstructBarrierProgram(
       {h_unverified_min0, h_coeff_vars});
   prog->AddLinearCost(-Eigen::VectorXd::Ones(h_unverified_min0.rows()), 0,
                       h_unverified_min0);
+}
 
-  return prog;
+void ControlBarrier::AddBarrierProgramCost(
+    solvers::MathematicalProgram* prog, const symbolic::Polynomial& h,
+    const std::vector<Ellipsoid>& inner_ellipsoids,
+    std::vector<symbolic::Polynomial>* r, symbolic::Variable* d) const {
+  r->resize(inner_ellipsoids.size());
+  *d = prog->NewContinuousVariables<1>("d")(0);
+  for (int i = 0; i < static_cast<int>(inner_ellipsoids.size()); ++i) {
+    std::tie((*r)[i], std::ignore) = prog->NewSosPolynomial(
+        x_set_, inner_ellipsoids[i].r_degree,
+        solvers::MathematicalProgram::NonnegativePolynomial::kSos, "R");
+    prog->AddSosConstraint(
+        h - *d +
+        (*r)[i] * internal::EllipsoidPolynomial(x_, inner_ellipsoids[i].c,
+                                                inner_ellipsoids[i].S,
+                                                inner_ellipsoids[i].rho));
+  }
+  prog->AddLinearCost(-Vector1d::Ones(), 0, Vector1<symbolic::Variable>(*d));
 }
 
 void ControlBarrier::Search(
@@ -220,21 +238,18 @@ void ControlBarrier::Search(
     int lambda0_degree, const std::vector<int>& l_degrees,
     const std::vector<int>& t_degree,
     const std::vector<std::vector<int>>& s_degrees,
+    const std::vector<ControlBarrier::Ellipsoid>& ellipsoids,
     const SearchOptions& search_options, symbolic::Polynomial* h_sol,
     symbolic::Polynomial* lambda0_sol, VectorX<symbolic::Polynomial>* l_sol,
     std::vector<symbolic::Polynomial>* t_sol,
-    std::vector<VectorX<symbolic::Polynomial>>* s_sol,
-    Eigen::MatrixXd* verified_safe_states,
-    Eigen::MatrixXd* unverified_candidate_states) const {
+    std::vector<VectorX<symbolic::Polynomial>>* s_sol) const {
   *h_sol = h_init;
-  SplitCandidateStates(*h_sol, x_, candidate_safe_states_, verified_safe_states,
-                       unverified_candidate_states);
-  drake::log()->info("Number of verified safe states: {}",
-                     verified_safe_states->cols());
-  int verified_safe_states_count = verified_safe_states->cols();
 
   int iter_count = 0;
 
+  std::vector<ControlBarrier::Ellipsoid> inner_ellipsoids;
+  std::list<ControlBarrier::Ellipsoid> uncovered_ellipsoids{ellipsoids.begin(),
+                                                            ellipsoids.end()};
   while (iter_count < search_options.bilinear_iterations) {
     {
       symbolic::Polynomial lambda0;
@@ -324,8 +339,48 @@ void ControlBarrier::Search(
     }
 
     {
-      // Now search for the barrier function.
+      // Maximize the inner ellipsoids.
+      drake::log()->info("Find maximal inner ellipsoids");
+      // For each inner ellipsoid, compute rho.
+      for (auto& ellipsoid : inner_ellipsoids) {
+        double rho_sol;
+        symbolic::Polynomial r_sol;
+        MaximizeInnerEllipsoidRho(x_, ellipsoid.c, ellipsoid.S, -(*h_sol),
+                                  ellipsoid.r_degree, ellipsoid.rho_max,
+                                  ellipsoid.rho,
+                                  search_options.lagrangian_step_solver,
+                                  search_options.lagrangian_step_solver_options,
+                                  ellipsoid.rho_tol, &rho_sol, &r_sol);
+        drake::log()->info("rho {}", rho_sol);
+        ellipsoid.rho = rho_sol;
+        ellipsoid.rho_min = rho_sol;
+      }
+      // First determine if the ellipsoid center is within the super-level set
+      // {x|h(x)>=0}, if yes, then find rho for the ellipsoid.
+      for (auto it = uncovered_ellipsoids.begin();
+           it != uncovered_ellipsoids.end();) {
+        symbolic::Environment env;
+        env.insert(x_, it->c);
+        if (h_sol->Evaluate(env) > 0) {
+          double rho_sol;
+          symbolic::Polynomial r_sol;
+          MaximizeInnerEllipsoidRho(
+              x_, it->c, it->S, -(*h_sol), it->r_degree, it->rho_max,
+              it->rho_min, search_options.lagrangian_step_solver,
+              search_options.lagrangian_step_solver_options, it->rho_tol,
+              &rho_sol, &r_sol);
+          inner_ellipsoids.emplace_back(it->c, it->S, rho_sol, rho_sol,
+                                        it->rho_max, it->rho_tol, it->r_degree);
+          drake::log()->info("rho {}", rho_sol);
+          it = uncovered_ellipsoids.erase(it);
+        } else {
+          ++it;
+        }
+      }
+    }
 
+    {
+      // Now search for the barrier function.
       symbolic::Polynomial h;
       std::vector<VectorX<symbolic::Polynomial>> s;
       std::vector<std::vector<MatrixX<symbolic::Variable>>> s_grams;
@@ -334,10 +389,28 @@ void ControlBarrier::Search(
       symbolic::Polynomial hdot_sos;
       MatrixX<symbolic::Variable> hdot_gram;
       auto prog_barrier = this->ConstructBarrierProgram(
-          *lambda0_sol, *l_sol, *t_sol, h_degree, deriv_eps, s_degrees,
-          *verified_safe_states, *unverified_candidate_states,
-          search_options.candidate_state_eps, &h, &hdot_sos, &hdot_gram, &s,
-          &s_grams, &unsafe_sos_polys, &unsafe_sos_poly_grams);
+          *lambda0_sol, *l_sol, *t_sol, h_degree, deriv_eps, s_degrees, &h,
+          &hdot_sos, &hdot_gram, &s, &s_grams, &unsafe_sos_polys,
+          &unsafe_sos_poly_grams);
+      std::vector<symbolic::Polynomial> r;
+      symbolic::Variable d;
+      this->AddBarrierProgramCost(prog_barrier.get(), h, inner_ellipsoids, &r,
+                                  &d);
+      // Add constraint h(inner_ellipsoids[0].c) <= h_sol(inner_ellipsoids[0].c)
+      // to prevent the program being unbounded. Without this constraint the
+      // solver can arbitrarily scale h.
+      {
+        Eigen::MatrixXd h_monomial_at_c;
+        VectorX<symbolic::Variable> h_coeff_vars;
+        EvaluatePolynomial(h, x_, inner_ellipsoids[0].c, &h_monomial_at_c,
+                           &h_coeff_vars);
+        symbolic::Environment env_c;
+        env_c.insert(x_, inner_ellipsoids[0].c);
+        const double h_sol_at_c = h_sol->Evaluate(env_c);
+        prog_barrier->AddLinearConstraint(h_monomial_at_c.row(0), -kInf,
+                                          h_sol_at_c, h_coeff_vars);
+      }
+
       if (search_options.barrier_tiny_coeff_tol > 0) {
         RemoveTinyCoeff(prog_barrier.get(),
                         search_options.barrier_tiny_coeff_tol);
@@ -352,16 +425,6 @@ void ControlBarrier::Search(
         if (search_options.hsol_tiny_coeff_tol > 0) {
           *h_sol = h_sol->RemoveTermsWithSmallCoefficients(
               search_options.hsol_tiny_coeff_tol);
-        }
-        std::cout << "h: " << *h_sol << "\n";
-        SplitCandidateStates(*h_sol, x_, candidate_safe_states_,
-                             verified_safe_states, unverified_candidate_states);
-        drake::log()->info("Number of verified safe states {}",
-                           verified_safe_states->cols());
-        if (verified_safe_states->cols() == verified_safe_states_count) {
-          return;
-        } else {
-          verified_safe_states_count = verified_safe_states->cols();
         }
         s_sol->resize(s.size());
         for (int i = 0; i < static_cast<int>(unsafe_regions_.size()); ++i) {

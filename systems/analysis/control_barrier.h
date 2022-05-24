@@ -43,7 +43,6 @@ class ControlBarrier {
   ControlBarrier(const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
                  const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
                  const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
-                 const Eigen::Ref<const Eigen::MatrixXd>& candidate_safe_states,
                  std::vector<VectorX<symbolic::Polynomial>> unsafe_regions,
                  const Eigen::Ref<const Eigen::MatrixXd>& u_vertices);
 
@@ -114,14 +113,70 @@ class ControlBarrier {
       const VectorX<symbolic::Polynomial>& l,
       const std::vector<symbolic::Polynomial>& t, int h_degree,
       double deriv_eps, const std::vector<std::vector<int>>& s_degrees,
-      const Eigen::MatrixXd& verified_safe_states,
-      const Eigen::MatrixXd& unverified_candidate_states, double eps,
       symbolic::Polynomial* h, symbolic::Polynomial* hdot_sos,
       MatrixX<symbolic::Variable>* hdot_sos_gram,
       std::vector<VectorX<symbolic::Polynomial>>* s,
       std::vector<std::vector<MatrixX<symbolic::Variable>>>* s_grams,
       std::vector<symbolic::Polynomial>* unsafe_sos_polys,
       std::vector<MatrixX<symbolic::Variable>>* unsafe_sos_poly_grams) const;
+
+  /**
+   * Add the cost
+   * max ∑ᵢ min(h(xⁱ), eps),   xⁱ ∈ unverified_candidate_states
+   * and the constraint
+   * h(xʲ) >= 0, xʲ ∈ verified_safe_states
+   * to prog.
+   */
+  void AddBarrierProgramCost(solvers::MathematicalProgram* prog,
+                             const symbolic::Polynomial& h,
+                             const Eigen::MatrixXd& verified_safe_states,
+                             const Eigen::MatrixXd& unverified_candidate_states,
+                             double eps) const;
+
+  /**
+   * An ellipsoid as
+   * (x−c)ᵀS(x−c) ≤ ρ
+   */
+  struct Ellipsoid {
+    Ellipsoid(const Eigen::Ref<const Eigen::VectorXd>& m_c,
+              const Eigen::Ref<const Eigen::MatrixXd>& m_S, double m_rho,
+              double m_rho_min, double m_rho_max, double m_rho_tol,
+              int m_r_degree)
+        : c{m_c},
+          S{m_S},
+          rho{m_rho},
+          rho_min{m_rho_min},
+          rho_max{m_rho_max},
+          rho_tol{m_rho_tol},
+          r_degree{m_r_degree} {
+      DRAKE_DEMAND(c.rows() == S.rows());
+      DRAKE_DEMAND(c.rows() == S.cols());
+      DRAKE_DEMAND(rho_min <= rho);
+      DRAKE_DEMAND(rho_max >= rho);
+      DRAKE_DEMAND(rho_tol > 0);
+    }
+
+    Eigen::VectorXd c;
+    Eigen::MatrixXd S;
+    double rho;
+    double rho_min;
+    double rho_max;
+    double rho_tol;
+    int r_degree;
+  };
+
+  /**
+   * Maximize the minimal value of h(x) within the ellipsoids.
+   * Add the cost max d
+   * with constraint
+   * h(x)-d - rᵢ(x) * (ρᵢ−(x−cᵢ)ᵀS(x−cᵢ)) is sos.
+   * rᵢ(x) is sos.
+   */
+  void AddBarrierProgramCost(solvers::MathematicalProgram* prog,
+                             const symbolic::Polynomial& h,
+                             const std::vector<Ellipsoid>& inner_ellipsoids,
+                             std::vector<symbolic::Polynomial>* r,
+                             symbolic::Variable* d) const;
 
   struct SearchOptions {
     solvers::SolverId barrier_step_solver{solvers::MosekSolver::id()};
@@ -143,8 +198,6 @@ class ControlBarrier {
     // remove terms in the polynomial with tiny coefficients.
     double hsol_tiny_coeff_tol = 0;
     double lsol_tiny_coeff_tol = 0;
-
-    double candidate_state_eps{1E-2};
   };
 
   void Search(const symbolic::Polynomial& h_init, int h_degree,
@@ -152,13 +205,12 @@ class ControlBarrier {
               const std::vector<int>& l_degrees,
               const std::vector<int>& t_degree,
               const std::vector<std::vector<int>>& s_degrees,
+              const std::vector<ControlBarrier::Ellipsoid>& ellipsoids,
               const SearchOptions& search_options, symbolic::Polynomial* h_sol,
               symbolic::Polynomial* lambda0_sol,
               VectorX<symbolic::Polynomial>* l_sol,
               std::vector<symbolic::Polynomial>* t_sol,
-              std::vector<VectorX<symbolic::Polynomial>>* s_sol,
-              Eigen::MatrixXd* verified_safe_states,
-              Eigen::MatrixXd* unverified_candidate_states) const;
+              std::vector<VectorX<symbolic::Polynomial>>* s_sol) const;
 
  private:
   VectorX<symbolic::Polynomial> f_;
@@ -167,7 +219,6 @@ class ControlBarrier {
   int nu_;
   VectorX<symbolic::Variable> x_;
   symbolic::Variables x_set_;
-  Eigen::MatrixXd candidate_safe_states_;
   std::vector<VectorX<symbolic::Polynomial>> unsafe_regions_;
   Eigen::MatrixXd u_vertices_;
 };

@@ -18,6 +18,39 @@ namespace drake {
 namespace systems {
 namespace analysis {
 const double kInf = std::numeric_limits<double>::infinity();
+// Check if the ellipsoid {x | (x-x*)ᵀS(x-x*) <= ρ} in the
+// sub-level set {x | f(x) <= 0}
+void CheckEllipsoidInSublevelSet(
+    const Eigen::Ref<const VectorX<symbolic::Variable>> x,
+    const Eigen::Ref<const Eigen::VectorXd>& x_star,
+    const Eigen::Ref<const Eigen::MatrixXd>& S, double rho,
+    const symbolic::Polynomial& f) {
+  // Check if any point within the ellipsoid also satisfies V(x)<=1.
+  // A point on the boundary of ellipsoid (x−x*)ᵀS(x−x*)=ρ
+  // can be writeen as x=√ρ*L⁻ᵀ*u+x*
+  // where L is the Cholesky decomposition of S, u is a vector with norm < 1.
+  Eigen::LLT<Eigen::Matrix2d> llt_solver;
+  llt_solver.compute(S);
+  const int x_dim = x.rows();
+  srand(0);
+  Eigen::MatrixXd u_samples = Eigen::MatrixXd::Random(x_dim, 1000);
+  std::default_random_engine generator;
+  std::uniform_real_distribution<double> distribution(0., 1.);
+  for (int i = 0; i < u_samples.cols(); ++i) {
+    u_samples.col(i) /= u_samples.col(i).norm();
+    u_samples.col(i) *= distribution(generator);
+  }
+
+  Eigen::ColPivHouseholderQR<Eigen::Matrix2d> qr_solver;
+  qr_solver.compute(llt_solver.matrixL().transpose());
+  for (int i = 0; i < u_samples.cols(); ++i) {
+    const Eigen::VectorXd x_val =
+        std::sqrt(rho) * qr_solver.solve(u_samples.col(i)) + x_star;
+    symbolic::Environment env;
+    env.insert(x, x_val);
+    EXPECT_LE(f.Evaluate(env), 1E-5);
+  }
+}
 
 class SimpleLinearSystemTest : public ::testing::Test {
  public:
@@ -70,8 +103,7 @@ TEST_F(SimpleLinearSystemTest, ControlBarrier) {
                 1, -1, 1, -1;
   // clang-format on
   u_vertices *= 10;
-  const ControlBarrier dut(f_, G_, x_, candidate_safe_states, unsafe_regions,
-                           u_vertices);
+  const ControlBarrier dut(f_, G_, x_, unsafe_regions, u_vertices);
 
   const symbolic::Polynomial h_init(1 - x_(0) * x_(0) - x_(1) * x_(1));
   const double deriv_eps = 0.1;
@@ -155,27 +187,13 @@ TEST_F(SimpleLinearSystemTest, ControlBarrier) {
   lambda0_sol = lambda0_sol.RemoveTermsWithSmallCoefficients(1e-10);
   const double eps = 1E-3;
   auto prog_barrier = dut.ConstructBarrierProgram(
-      lambda0_sol, l_sol, {t_sol}, h_degree, deriv_eps, {s_degrees},
-      verified_safe_states, unverified_candidate_states, eps, &h, &hdot_sos,
-      &hdot_gram, &s, &s_grams, &unsafe_sos_polys, &unsafe_sos_poly_grams);
+      lambda0_sol, l_sol, {t_sol}, h_degree, deriv_eps, {s_degrees}, &h,
+      &hdot_sos, &hdot_gram, &s, &s_grams, &unsafe_sos_polys,
+      &unsafe_sos_poly_grams);
   RemoveTinyCoeff(prog_barrier.get(), 1E-10);
-  const auto result_barrier = solvers::Solve(*prog_barrier);
+  auto result_barrier = solvers::Solve(*prog_barrier);
   ASSERT_TRUE(result_barrier.is_success());
-  const auto h_sol = result_barrier.GetSolution(h);
-  // Check h_sol on verified_safe_states;
-  EXPECT_TRUE(
-      (h_sol.EvaluateIndeterminates(x_, verified_safe_states).array() >= 0)
-          .all());
-  // Check cost.
-  const auto h_unverified_vals =
-      h_sol.EvaluateIndeterminates(x_, unverified_candidate_states);
-  EXPECT_NEAR(
-      -result_barrier.get_optimal_cost(),
-      (h_unverified_vals.array() >= eps)
-          .select(Eigen::VectorXd::Constant(h_unverified_vals.rows(), eps),
-                  h_unverified_vals)
-          .sum(),
-      1E-5);
+  auto h_sol = result_barrier.GetSolution(h);
   // Check sos for unsafe regions.
   EXPECT_EQ(s.size(), unsafe_regions.size());
   for (int i = 0; i < static_cast<int>(s.size()); ++i) {
@@ -193,6 +211,51 @@ TEST_F(SimpleLinearSystemTest, ControlBarrier) {
         result_barrier.GetSolution(unsafe_sos_polys[i]).Expand(), 1E-5);
     EXPECT_TRUE(math::IsPositiveDefinite(
         result_barrier.GetSolution(unsafe_sos_poly_grams[i])));
+  }
+  {
+    // Add cost to maximize min(h(x), 0) on sampled states.
+    // Check h_sol on verified_safe_states;
+    auto prog_cost1 = prog_barrier->Clone();
+    dut.AddBarrierProgramCost(prog_cost1.get(), h, verified_safe_states,
+                              unverified_candidate_states, eps);
+    result_barrier = solvers::Solve(*prog_cost1);
+    h_sol = result_barrier.GetSolution(h);
+    EXPECT_TRUE(
+        (h_sol.EvaluateIndeterminates(x_, verified_safe_states).array() >= 0)
+            .all());
+    // Check cost.
+    const auto h_unverified_vals =
+        h_sol.EvaluateIndeterminates(x_, unverified_candidate_states);
+    EXPECT_NEAR(
+        -result_barrier.get_optimal_cost(),
+        (h_unverified_vals.array() >= eps)
+            .select(Eigen::VectorXd::Constant(h_unverified_vals.rows(), eps),
+                    h_unverified_vals)
+            .sum(),
+        1E-5);
+  }
+  {
+    // Add cost to maximize min(h(x)) within some ellipsoids.
+    auto prog_cost2 = prog_barrier->Clone();
+    std::vector<ControlBarrier::Ellipsoid> ellipsoids;
+    ellipsoids.emplace_back(Eigen::Vector2d(0.1, 0.5),
+                            Eigen::Matrix2d::Identity(), 0.5, 0.1, 1, 0.1, 0);
+    ellipsoids.emplace_back(Eigen::Vector2d(0.1, -0.5),
+                            Eigen::Matrix2d::Identity(), 0.3, 0.1, 1, 0.1, 0);
+    std::vector<symbolic::Polynomial> r;
+    symbolic::Variable d;
+    dut.AddBarrierProgramCost(prog_cost2.get(), h, ellipsoids, &r, &d);
+    // Add an upper bound on d to avoid the optimization program being
+    // unbounded.
+    prog_cost2->AddBoundingBoxConstraint(-kInf, 1E4, d);
+    result_barrier = solvers::Solve(*prog_cost2);
+    ASSERT_TRUE(result_barrier.is_success());
+    h_sol = result_barrier.GetSolution(h);
+    const double d_sol = result_barrier.GetSolution(d);
+    for (const auto& ellipsoid : ellipsoids) {
+      CheckEllipsoidInSublevelSet(x_, ellipsoid.c, ellipsoid.S, ellipsoid.rho,
+                                  d_sol - h_sol);
+    }
   }
 }
 
@@ -213,8 +276,7 @@ TEST_F(SimpleLinearSystemTest, ControlBarrierSearch) {
                 1, -1, 1, -1;
   // clang-format on
   u_vertices *= 10;
-  const ControlBarrier dut(f_, G_, x_, candidate_safe_states, unsafe_regions,
-                           u_vertices);
+  const ControlBarrier dut(f_, G_, x_, unsafe_regions, u_vertices);
 
   const symbolic::Polynomial h_init(1 - x_(0) * x_(0) - x_(1) * x_(1));
   const int h_degree = 2;
@@ -223,6 +285,14 @@ TEST_F(SimpleLinearSystemTest, ControlBarrierSearch) {
   const std::vector<int> l_degrees = {2, 2, 2, 2};
   const std::vector<int> t_degree = {0};
   const std::vector<std::vector<int>> s_degrees = {{0, 0}};
+
+  std::vector<ControlBarrier::Ellipsoid> ellipsoids;
+  ellipsoids.emplace_back(Eigen::Vector2d(0.1, 0.2),
+                          Eigen::Matrix2d::Identity(), 0, 0, 2, 0.1, 0);
+  ellipsoids.emplace_back(Eigen::Vector2d(0.5, -0.9),
+                          Eigen::Matrix2d::Identity(), 0, 0, 2, 0.1, 0);
+  ellipsoids.emplace_back(Eigen::Vector2d(0.5, -1.9),
+                          Eigen::Matrix2d::Identity(), 0, 0, 2, 0.1, 0);
 
   ControlBarrier::SearchOptions search_options;
   search_options.hsol_tiny_coeff_tol = 1E-8;
@@ -233,15 +303,10 @@ TEST_F(SimpleLinearSystemTest, ControlBarrierSearch) {
   VectorX<symbolic::Polynomial> l_sol;
   std::vector<symbolic::Polynomial> t_sol;
   std::vector<VectorX<symbolic::Polynomial>> s_sol;
-  Eigen::MatrixXd verified_safe_states;
-  Eigen::MatrixXd unverified_candidate_states;
 
   dut.Search(h_init, h_degree, deriv_eps, lambda0_degree, l_degrees, t_degree,
-             s_degrees, search_options, &h_sol, &lambda0_sol, &l_sol, &t_sol,
-             &s_sol, &verified_safe_states, &unverified_candidate_states);
-  std::cout << "verified safe states:\n" << verified_safe_states << "\n";
-  std::cout << "unverified candidate states:\n"
-            << unverified_candidate_states << "\n";
+             s_degrees, ellipsoids, search_options, &h_sol, &lambda0_sol,
+             &l_sol, &t_sol, &s_sol);
 }
 
 TEST_F(SimpleLinearSystemTest, ConstructLagrangianAndBProgram) {

@@ -876,6 +876,7 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunov) {
   ControlLyapunov::SearchOptions search_options;
   search_options.backoff_scale = 0.01;
   search_options.bilinear_iterations = 15;
+  search_options.lyap_tiny_coeff_tol = 1E-10;
   const double rho_min = 0.01;
   const double rho_max = 1;
   const double rho_tol = 0.001;
@@ -886,6 +887,52 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunov) {
   dut.Search(V_init, lambda0_degree, l_degrees, V_degree, deriv_eps, x_star, S,
              r_degree, search_options, rho_bisection_option, &V_sol,
              &lambda0_sol, &l_sol, &r_sol, &rho_sol);
+}
+
+TEST_F(SimpleLinearSystemTest, ControlLyapunovConstructLagrangianProgram) {
+  // Test ControlLyapunov::ConstructLagrangianProgram which maximizes rho.
+  Vector2<symbolic::Polynomial> f;
+  Matrix2<symbolic::Polynomial> G;
+  symbolic::Polynomial V;
+  bool symmetric_dynamics = true;
+  InitializeWithLQR(symmetric_dynamics, &V, &f, &G);
+  V *= 0.1;
+  ControlLyapunov dut(x_, f, G, u_vertices_);
+  const symbolic::Polynomial lambda0(1);
+  const int d_degree = 1;
+  const std::vector<int> l_degrees{2, 2, 2, 2};
+  const double deriv_eps = 0.01;
+  VectorX<symbolic::Polynomial> l;
+  std::vector<MatrixX<symbolic::Variable>> l_grams;
+  symbolic::Variable rho;
+  symbolic::Polynomial vdot_sos;
+  VectorX<symbolic::Monomial> vdot_monomials;
+  MatrixX<symbolic::Variable> vdot_gram;
+  auto prog = dut.ConstructLagrangianProgram(
+      V, lambda0, d_degree, l_degrees, deriv_eps, &l, &l_grams, &rho, &vdot_sos,
+      &vdot_monomials, &vdot_gram);
+  const auto result = solvers::Solve(*prog);
+  ASSERT_TRUE(result.is_success());
+  const auto vdot_gram_sol = result.GetSolution(vdot_gram);
+  EXPECT_TRUE(math::IsPositiveDefinite(vdot_gram_sol));
+  const double rho_sol = result.GetSolution(rho);
+  using std::pow;
+  symbolic::Polynomial vdot_sos_expected{
+      (1 + lambda0.ToExpression()) *
+          pow(x_.cast<symbolic::Expression>().dot(x_), d_degree) *
+          (V.ToExpression() - rho_sol),
+      symbolic::Variables(x_)};
+  const RowVectorX<symbolic::Polynomial> dVdx = V.Jacobian(x_);
+  const RowVectorX<symbolic::Polynomial> dVdx_times_G = dVdx * G;
+  for (int i = 0; i < u_vertices_.cols(); ++i) {
+    const symbolic::Polynomial l_sol = result.GetSolution(l(i));
+    EXPECT_TRUE(math::IsPositiveDefinite(result.GetSolution(l_grams[i])));
+    vdot_sos_expected -= l_sol * (dVdx.dot(f) + deriv_eps * V +
+                                  dVdx_times_G.dot(u_vertices_.col(i)));
+  }
+  EXPECT_PRED3(symbolic::test::PolynomialEqual, vdot_sos_expected.Expand(),
+               result.GetSolution(vdot_sos).Expand(), 1E-5);
+  EXPECT_GT(rho_sol, 1);
 }
 }  // namespace analysis
 }  // namespace systems

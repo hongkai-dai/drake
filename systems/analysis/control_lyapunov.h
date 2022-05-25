@@ -87,6 +87,24 @@ class ControlLyapunov {
       VectorX<symbolic::Monomial>* vdot_monomials,
       MatrixX<symbolic::Variable>* vdot_gram) const;
 
+  /*
+   * Given λ₀(x) and V(x), constructs the following optimization problem
+   * <pre>
+   * max ρ
+   * s.t (1+λ₀(x))(xᵀx)ᵈ(V(x) − ρ) − ∑ᵢ lᵢ(x)(∂V/∂x*f(x) + ε*V+∂V/∂xG(x)uⁱ) is
+   * sos. lᵢ(x) is sos.
+   * </pre>
+   * The decision variables are ρ, l(x)
+   */
+  std::unique_ptr<solvers::MathematicalProgram> ConstructLagrangianProgram(
+      const symbolic::Polynomial& V, const symbolic::Polynomial& lambda0,
+      int d_degree, const std::vector<int>& l_degrees, double deriv_eps,
+      VectorX<symbolic::Polynomial>* l,
+      std::vector<MatrixX<symbolic::Variable>>* l_grams,
+      symbolic::Variable* rho, symbolic::Polynomial* vdot_sos,
+      VectorX<symbolic::Monomial>* vdot_monomials,
+      MatrixX<symbolic::Variable>* vdot_gram) const;
+
   /**
    * Given λ₀(x) and l(x), construct a methematical program
    *    find V(x)
@@ -549,7 +567,8 @@ class ControlLyapunovBoxInputBound {
       const symbolic::Polynomial& V, const VectorX<symbolic::Polynomial>& b,
       const std::vector<std::vector<std::array<int, 3>>>& lagrangian_degrees,
       const solvers::SolverId& solver_id,
-      const std::optional<solvers::SolverOptions>& solver_options, double lagrangian_tiny_coeff_tol, double lsol_tiny_coeff_tol,
+      const std::optional<solvers::SolverOptions>& solver_options,
+      double lagrangian_tiny_coeff_tol, double lsol_tiny_coeff_tol,
       std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>* l) const;
 
   /**

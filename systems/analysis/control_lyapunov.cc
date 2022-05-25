@@ -38,7 +38,6 @@ symbolic::Polynomial NewFreePolynomialNoConstant(
   return symbolic::Polynomial(poly_map);
 }
 
-
 template <typename C>
 double SmallestCoeff(const solvers::Binding<C>& binding) {
   double ret = kInf;
@@ -214,6 +213,42 @@ ControlLyapunov::ConstructLagrangianProgram(
   this->AddControlLyapunovConstraint(prog.get(), x_, *lambda0, *l, V,
                                      u_vertices_, deriv_eps, vdot_sos,
                                      vdot_monomials, vdot_gram);
+  return prog;
+}
+
+std::unique_ptr<solvers::MathematicalProgram>
+ControlLyapunov::ConstructLagrangianProgram(
+    const symbolic::Polynomial& V, const symbolic::Polynomial& lambda0,
+    int d_degree, const std::vector<int>& l_degrees, double deriv_eps,
+    VectorX<symbolic::Polynomial>* l,
+    std::vector<MatrixX<symbolic::Variable>>* l_grams, symbolic::Variable* rho,
+    symbolic::Polynomial* vdot_sos, VectorX<symbolic::Monomial>* vdot_monomials,
+    MatrixX<symbolic::Variable>* vdot_gram) const {
+  auto prog = std::make_unique<solvers::MathematicalProgram>();
+  prog->AddIndeterminates(x_);
+  *rho = prog->NewContinuousVariables<1>("rho")(0);
+  l->resize(u_vertices_.cols());
+  l_grams->resize(u_vertices_.cols());
+  DRAKE_DEMAND(static_cast<int>(l_degrees.size()) == u_vertices_.cols());
+  for (int i = 0; i < u_vertices_.cols(); ++i) {
+    std::tie((*l)(i), (*l_grams)[i]) = prog->NewSosPolynomial(
+        x_set_, l_degrees[i],
+        solvers::MathematicalProgram::NonnegativePolynomial::kSos,
+        fmt::format("L{}", i));
+  }
+  // construct the polynomial (xᵀx)ᵈ
+  DRAKE_DEMAND(d_degree >= 1);
+  using std::pow;
+  const symbolic::Polynomial x_square_power(
+      pow(x_.cast<symbolic::Expression>().dot(x_), d_degree));
+  const RowVectorX<symbolic::Polynomial> dVdx = V.Jacobian(x_);
+  const RowVectorX<symbolic::Polynomial> dVdx_times_G = dVdx * G_;
+  *vdot_sos = (symbolic::Polynomial(1) + lambda0) * x_square_power *
+                  (V - symbolic::Polynomial({{symbolic::Monomial(), *rho}})) -
+              l->sum() * (dVdx.dot(f_) + deriv_eps * V) -
+              l->dot(dVdx_times_G * u_vertices_);
+  std::tie(*vdot_gram, *vdot_monomials) = prog->AddSosConstraint(*vdot_sos);
+  prog->AddLinearCost(-Vector1d::Ones(), 0, Vector1<symbolic::Variable>(rho));
   return prog;
 }
 

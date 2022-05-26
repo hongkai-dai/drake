@@ -243,18 +243,21 @@ TEST_F(SimpleLinearSystemTest, ControlBarrier) {
     ellipsoids.emplace_back(Eigen::Vector2d(0.1, -0.5),
                             Eigen::Matrix2d::Identity(), 0.3, 0.1, 1, 0.1, 0);
     std::vector<symbolic::Polynomial> r;
-    symbolic::Variable d;
+    VectorX<symbolic::Variable> d;
     dut.AddBarrierProgramCost(prog_cost2.get(), h, ellipsoids, &r, &d);
-    // Add an upper bound on d to avoid the optimization program being
-    // unbounded.
-    prog_cost2->AddBoundingBoxConstraint(-kInf, 1E4, d);
+    Eigen::MatrixXd h_monomial_vals;
+    VectorX<symbolic::Variable> h_coeff_vars;
+    Eigen::Vector2d x_anchor(0.1, 0.2);
+    EvaluatePolynomial(h, x_, x_anchor, &h_monomial_vals, &h_coeff_vars);
+    prog_cost2->AddLinearConstraint(h_monomial_vals.row(0), -kInf, 100,
+                                    h_coeff_vars);
     result_barrier = solvers::Solve(*prog_cost2);
     ASSERT_TRUE(result_barrier.is_success());
     h_sol = result_barrier.GetSolution(h);
-    const double d_sol = result_barrier.GetSolution(d);
-    for (const auto& ellipsoid : ellipsoids) {
-      CheckEllipsoidInSublevelSet(x_, ellipsoid.c, ellipsoid.S, ellipsoid.rho,
-                                  d_sol - h_sol);
+    const auto d_sol = result_barrier.GetSolution(d);
+    for (int i = 0; i < static_cast<int>(ellipsoids.size()); ++i) {
+      CheckEllipsoidInSublevelSet(x_, ellipsoids[i].c, ellipsoids[i].S,
+                                  ellipsoids[i].rho, d_sol(i) - h_sol);
     }
   }
 }
@@ -288,15 +291,21 @@ TEST_F(SimpleLinearSystemTest, ControlBarrierSearch) {
 
   std::vector<ControlBarrier::Ellipsoid> ellipsoids;
   ellipsoids.emplace_back(Eigen::Vector2d(0.1, 0.2),
-                          Eigen::Matrix2d::Identity(), 0, 0, 2, 0.1, 0);
+                          Eigen::Matrix2d::Identity(), 0, 0, 2, 0.001, 0);
   ellipsoids.emplace_back(Eigen::Vector2d(0.5, -0.9),
-                          Eigen::Matrix2d::Identity(), 0, 0, 2, 0.1, 0);
+                          Eigen::Matrix2d::Identity(), 0, 0, 2, 0.001, 0);
   ellipsoids.emplace_back(Eigen::Vector2d(0.5, -1.9),
-                          Eigen::Matrix2d::Identity(), 0, 0, 2, 0.1, 0);
+                          Eigen::Matrix2d::Identity(), 0, 0, 2, 0.01, 0);
+  const Eigen::Vector2d x_anchor(0.3, 0.5);
 
   ControlBarrier::SearchOptions search_options;
   search_options.hsol_tiny_coeff_tol = 1E-8;
   search_options.lsol_tiny_coeff_tol = 1E-8;
+  search_options.barrier_tiny_coeff_tol = 1E-10;
+  search_options.barrier_step_solver_options = solvers::SolverOptions();
+  search_options.barrier_step_solver = solvers::CsdpSolver::id();
+  // search_options.barrier_step_solver_options->SetOption(
+  //     solvers::CommonSolverOption::kPrintToConsole, 1);
 
   symbolic::Polynomial h_sol;
   symbolic::Polynomial lambda0_sol;
@@ -305,8 +314,8 @@ TEST_F(SimpleLinearSystemTest, ControlBarrierSearch) {
   std::vector<VectorX<symbolic::Polynomial>> s_sol;
 
   dut.Search(h_init, h_degree, deriv_eps, lambda0_degree, l_degrees, t_degree,
-             s_degrees, ellipsoids, search_options, &h_sol, &lambda0_sol,
-             &l_sol, &t_sol, &s_sol);
+             s_degrees, ellipsoids, x_anchor, search_options, &h_sol,
+             &lambda0_sol, &l_sol, &t_sol, &s_sol);
 }
 
 TEST_F(SimpleLinearSystemTest, ConstructLagrangianAndBProgram) {

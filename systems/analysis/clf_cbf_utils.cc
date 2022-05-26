@@ -75,6 +75,13 @@ void RemoveTinyCoeff(solvers::MathematicalProgram* prog, double zero_tol) {
   if (zero_tol > 0) {
     for (const auto& binding : prog->linear_equality_constraints()) {
       binding.evaluator()->RemoveTinyCoefficient(zero_tol);
+      auto bnd = binding.evaluator()->lower_bound();
+      for (int i = 0; i < bnd.rows(); ++i) {
+        if (std::abs(bnd(i)) < zero_tol) {
+          bnd(i) = 0;
+        }
+      }
+      binding.evaluator()->set_bounds(bnd, bnd);
     }
     for (const auto& binding : prog->linear_constraints()) {
       binding.evaluator()->RemoveTinyCoefficient(zero_tol);
@@ -92,7 +99,8 @@ solvers::MathematicalProgramResult SearchWithBackoff(
   solvers::MathematicalProgramResult result;
   solver->Solve(*prog, std::nullopt, solver_options, &result);
   if (!result.is_success()) {
-    drake::log()->error("Failed before backoff\n");
+    drake::log()->error("Failed before backoff with solution_result={}\n",
+                        result.get_solution_result());
     return result;
   }
   // PrintPsdConstraintStat(*prog, result);

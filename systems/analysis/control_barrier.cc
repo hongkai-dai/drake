@@ -217,20 +217,23 @@ void ControlBarrier::AddBarrierProgramCost(
 void ControlBarrier::AddBarrierProgramCost(
     solvers::MathematicalProgram* prog, const symbolic::Polynomial& h,
     const std::vector<Ellipsoid>& inner_ellipsoids,
-    std::vector<symbolic::Polynomial>* r, symbolic::Variable* d) const {
+    std::vector<symbolic::Polynomial>* r,
+    VectorX<symbolic::Variable>* d) const {
   r->resize(inner_ellipsoids.size());
-  *d = prog->NewContinuousVariables<1>("d")(0);
+  *d = prog->NewContinuousVariables(static_cast<int>(inner_ellipsoids.size()),
+                                    "d");
   for (int i = 0; i < static_cast<int>(inner_ellipsoids.size()); ++i) {
     std::tie((*r)[i], std::ignore) = prog->NewSosPolynomial(
         x_set_, inner_ellipsoids[i].r_degree,
         solvers::MathematicalProgram::NonnegativePolynomial::kSos, "R");
     prog->AddSosConstraint(
-        h - *d +
+        h - (*d)(i) +
         (*r)[i] * internal::EllipsoidPolynomial(x_, inner_ellipsoids[i].c,
                                                 inner_ellipsoids[i].S,
                                                 inner_ellipsoids[i].rho));
   }
-  prog->AddLinearCost(-Vector1d::Ones(), 0, Vector1<symbolic::Variable>(*d));
+  prog->AddLinearCost(-Eigen::VectorXd::Ones(d->rows()), 0, *d);
+  prog->AddBoundingBoxConstraint(0, kInf, *d);
 }
 
 void ControlBarrier::Search(
@@ -239,11 +242,23 @@ void ControlBarrier::Search(
     const std::vector<int>& t_degree,
     const std::vector<std::vector<int>>& s_degrees,
     const std::vector<ControlBarrier::Ellipsoid>& ellipsoids,
+    const Eigen::Ref<const Eigen::VectorXd>& x_anchor,
     const SearchOptions& search_options, symbolic::Polynomial* h_sol,
     symbolic::Polynomial* lambda0_sol, VectorX<symbolic::Polynomial>* l_sol,
     std::vector<symbolic::Polynomial>* t_sol,
     std::vector<VectorX<symbolic::Polynomial>>* s_sol) const {
   *h_sol = h_init;
+  double h_at_x_anchor{};
+  {
+    symbolic::Environment env;
+    env.insert(x_, x_anchor);
+    h_at_x_anchor = h_init.Evaluate(env);
+    if (h_at_x_anchor <= 0) {
+      throw std::runtime_error(fmt::format(
+          "ControlBarrier::Search(): h_init(x_anchor) = {}, should be > 0",
+          h_at_x_anchor));
+    }
+  }
 
   int iter_count = 0;
 
@@ -393,22 +408,17 @@ void ControlBarrier::Search(
           &hdot_sos, &hdot_gram, &s, &s_grams, &unsafe_sos_polys,
           &unsafe_sos_poly_grams);
       std::vector<symbolic::Polynomial> r;
-      symbolic::Variable d;
+      VectorX<symbolic::Variable> d;
       this->AddBarrierProgramCost(prog_barrier.get(), h, inner_ellipsoids, &r,
                                   &d);
-      // Add constraint h(inner_ellipsoids[0].c) <= h_sol(inner_ellipsoids[0].c)
-      // to prevent the program being unbounded. Without this constraint the
-      // solver can arbitrarily scale h.
+      // To prevent scaling h arbitrarily to infinity, we constraint h(x_anchor)
+      // <= h_init(x_anchor).
       {
-        Eigen::MatrixXd h_monomial_at_c;
+        Eigen::MatrixXd h_monomial_vals;
         VectorX<symbolic::Variable> h_coeff_vars;
-        EvaluatePolynomial(h, x_, inner_ellipsoids[0].c, &h_monomial_at_c,
-                           &h_coeff_vars);
-        symbolic::Environment env_c;
-        env_c.insert(x_, inner_ellipsoids[0].c);
-        const double h_sol_at_c = h_sol->Evaluate(env_c);
-        prog_barrier->AddLinearConstraint(h_monomial_at_c.row(0), -kInf,
-                                          h_sol_at_c, h_coeff_vars);
+        EvaluatePolynomial(h, x_, x_anchor, &h_monomial_vals, &h_coeff_vars);
+        prog_barrier->AddLinearConstraint(h_monomial_vals.row(0), -kInf,
+                                          h_at_x_anchor, h_coeff_vars);
       }
 
       if (search_options.barrier_tiny_coeff_tol > 0) {
@@ -426,6 +436,7 @@ void ControlBarrier::Search(
           *h_sol = h_sol->RemoveTermsWithSmallCoefficients(
               search_options.hsol_tiny_coeff_tol);
         }
+        drake::log()->debug("d: {}", result_barrier.GetSolution(d).transpose());
         s_sol->resize(s.size());
         for (int i = 0; i < static_cast<int>(unsafe_regions_.size()); ++i) {
           (*s_sol)[i].resize(s[i].rows());

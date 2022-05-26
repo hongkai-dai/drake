@@ -167,16 +167,16 @@ class ControlBarrier {
 
   /**
    * Maximize the minimal value of h(x) within the ellipsoids.
-   * Add the cost max d
+   * Add the cost max ∑ᵢ dᵢ
    * with constraint
-   * h(x)-d - rᵢ(x) * (ρᵢ−(x−cᵢ)ᵀS(x−cᵢ)) is sos.
+   * h(x)-dᵢ - rᵢ(x) * (ρᵢ−(x−cᵢ)ᵀS(x−cᵢ)) is sos.
    * rᵢ(x) is sos.
    */
   void AddBarrierProgramCost(solvers::MathematicalProgram* prog,
                              const symbolic::Polynomial& h,
                              const std::vector<Ellipsoid>& inner_ellipsoids,
                              std::vector<symbolic::Polynomial>* r,
-                             symbolic::Variable* d) const;
+                             VectorX<symbolic::Variable>* d) const;
 
   struct SearchOptions {
     solvers::SolverId barrier_step_solver{solvers::MosekSolver::id()};
@@ -200,12 +200,20 @@ class ControlBarrier {
     double lsol_tiny_coeff_tol = 0;
   };
 
+  /**
+   * @param x_anchor When searching for the barrier function h(x), we will
+   * require h(x_anchor) <= h_init(x_anchor) to prevent scaling the barrier
+   * function to infinity. This is because any positive scaling of a barrier
+   * function is still a barrier function with the same verified safe set.
+   * @pre h_init(x_anchor) > 0
+   */
   void Search(const symbolic::Polynomial& h_init, int h_degree,
               double deriv_eps, int lambda0_degree,
               const std::vector<int>& l_degrees,
               const std::vector<int>& t_degree,
               const std::vector<std::vector<int>>& s_degrees,
               const std::vector<ControlBarrier::Ellipsoid>& ellipsoids,
+              const Eigen::Ref<const Eigen::VectorXd>& x_anchor,
               const SearchOptions& search_options, symbolic::Polynomial* h_sol,
               symbolic::Polynomial* lambda0_sol,
               VectorX<symbolic::Polynomial>* l_sol,

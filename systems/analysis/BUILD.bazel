@@ -879,11 +879,36 @@ drake_cc_binary(
     ],
 )
 
+drake_cc_library(
+    name = "quadrotor2d",
+    srcs = ["test/quadrotor2d.cc"],
+    hdrs = ["test/quadrotor2d.h"],
+    deps = [
+        "//common:essential",
+        "//common:symbolic",
+    ],
+)
+
 drake_cc_binary(
     name = "quadrotor2d_clf_demo",
     srcs = ["test/quadrotor2d_clf_demo.cc"],
     deps = [
         ":control_lyapunov",
+        ":quadrotor2d",
+        ":simulator",
+        ":simulator_config_functions",
+        "//solvers:solve",
+        "//systems/controllers:linear_quadratic_regulator",
+        "//systems/primitives:vector_log_sink",
+    ],
+)
+
+drake_cc_binary(
+    name = "quadrotor2d_cbf_demo",
+    srcs = ["test/quadrotor2d_cbf_demo.cc"],
+    deps = [
+        ":control_barrier",
+        ":quadrotor2d",
         ":simulator",
         "//solvers:solve",
         "//systems/controllers:linear_quadratic_regulator",

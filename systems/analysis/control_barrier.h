@@ -220,6 +220,20 @@ class ControlBarrier {
               std::vector<symbolic::Polynomial>* t_sol,
               std::vector<VectorX<symbolic::Polynomial>>* s_sol) const;
 
+  /**
+   * Search Lagrangian multiplier λ₀(x), l(x), t(x), s(x) to prove that h(x) is
+   * a valid CBF, whose super-level set doesn't contain any unsafe regions.
+   * @return success Returns true if the Lagrangian multipliers are found.
+   */
+  bool SearchLagrangian(
+      const symbolic::Polynomial& h, double deriv_eps, int lambda0_degree,
+      const std::vector<int>& l_degrees, const std::vector<int>& t_degree,
+      const std::vector<std::vector<int>>& s_degrees,
+      const SearchOptions& search_options, symbolic::Polynomial* lambda0_sol,
+      VectorX<symbolic::Polynomial>* l_sol,
+      std::vector<symbolic::Polynomial>* t_sol,
+      std::vector<VectorX<symbolic::Polynomial>>* s_sol) const;
+
  private:
   VectorX<symbolic::Polynomial> f_;
   MatrixX<symbolic::Polynomial> G_;

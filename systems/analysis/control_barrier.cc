@@ -266,131 +266,46 @@ void ControlBarrier::Search(
   std::list<ControlBarrier::Ellipsoid> uncovered_ellipsoids{ellipsoids.begin(),
                                                             ellipsoids.end()};
   while (iter_count < search_options.bilinear_iterations) {
-    {
-      symbolic::Polynomial lambda0;
-      MatrixX<symbolic::Variable> lambda0_gram;
-      VectorX<symbolic::Polynomial> l;
-      std::vector<MatrixX<symbolic::Variable>> l_grams;
-      symbolic::Polynomial hdot_sos;
-      VectorX<symbolic::Monomial> hdot_monomials;
-      MatrixX<symbolic::Variable> hdot_gram;
-      auto prog_lagrangian = this->ConstructLagrangianProgram(
-          h_init, deriv_eps, lambda0_degree, l_degrees, &lambda0, &lambda0_gram,
-          &l, &l_grams, &hdot_sos, &hdot_monomials, &hdot_gram);
-      if (search_options.lagrangian_tiny_coeff_tol > 0) {
-        RemoveTinyCoeff(prog_lagrangian.get(),
-                        search_options.lagrangian_tiny_coeff_tol);
-      }
-      auto lagrangian_solver =
-          solvers::MakeSolver(search_options.lagrangian_step_solver);
-      solvers::MathematicalProgramResult result_lagrangian;
-      drake::log()->info("Iter {}, search Lagrangian", iter_count);
-      lagrangian_solver->Solve(*prog_lagrangian, std::nullopt,
-                               search_options.lagrangian_step_solver_options,
-                               &result_lagrangian);
-      if (result_lagrangian.is_success()) {
-        *lambda0_sol = result_lagrangian.GetSolution(lambda0);
-        l_sol->resize(l.rows());
-        for (int i = 0; i < l_sol->rows(); ++i) {
-          (*l_sol)(i) = result_lagrangian.GetSolution(l(i));
-          if (search_options.lsol_tiny_coeff_tol > 0) {
-            (*l_sol)(i) = (*l_sol)(i).RemoveTermsWithSmallCoefficients(
-                search_options.lsol_tiny_coeff_tol);
-          }
-        }
-      } else {
-        drake::log()->error("Failed to find Lagrangian");
-        return;
-      }
+    SearchLagrangian(*h_sol, deriv_eps, lambda0_degree, l_degrees, t_degree,
+                     s_degrees, search_options, lambda0_sol, l_sol, t_sol,
+                     s_sol);
+
+    // Maximize the inner ellipsoids.
+    drake::log()->info("Find maximal inner ellipsoids");
+    // For each inner ellipsoid, compute rho.
+    for (auto& ellipsoid : inner_ellipsoids) {
+      double rho_sol;
+      symbolic::Polynomial r_sol;
+      MaximizeInnerEllipsoidRho(x_, ellipsoid.c, ellipsoid.S, -(*h_sol),
+                                ellipsoid.r_degree, ellipsoid.rho_max,
+                                ellipsoid.rho,
+                                search_options.lagrangian_step_solver,
+                                search_options.lagrangian_step_solver_options,
+                                ellipsoid.rho_tol, &rho_sol, &r_sol);
+      drake::log()->info("rho {}", rho_sol);
+      ellipsoid.rho = rho_sol;
+      ellipsoid.rho_min = rho_sol;
     }
-
-    {
-      // Find Lagrangian multiplier for each unsafe region.
-      t_sol->resize(unsafe_regions_.size());
-      s_sol->resize(unsafe_regions_.size());
-      for (int i = 0; i < static_cast<int>(unsafe_regions_.size()); ++i) {
-        symbolic::Polynomial t;
-        VectorX<symbolic::Polynomial> s;
-        MatrixX<symbolic::Variable> t_gram;
-        std::vector<MatrixX<symbolic::Variable>> s_grams;
-        symbolic::Polynomial unsafe_sos_poly;
-        MatrixX<symbolic::Variable> unsafe_sos_poly_gram;
-
-        auto prog_unsafe = this->ConstructUnsafeRegionProgram(
-            *h_sol, i, t_degree[i], s_degrees[i], &t, &t_gram, &s, &s_grams,
-            &unsafe_sos_poly, &unsafe_sos_poly_gram);
-        if (search_options.lagrangian_tiny_coeff_tol > 0) {
-          RemoveTinyCoeff(prog_unsafe.get(),
-                          search_options.lagrangian_tiny_coeff_tol);
-        }
-        drake::log()->info("Search Lagrangian multiplier for unsafe region {}",
-                           i);
-        solvers::MathematicalProgramResult result_unsafe;
-        auto lagrangian_solver =
-            solvers::MakeSolver(search_options.lagrangian_step_solver);
-        lagrangian_solver->Solve(*prog_unsafe, std::nullopt,
-                                 search_options.lagrangian_step_solver_options,
-                                 &result_unsafe);
-        if (result_unsafe.is_success()) {
-          (*t_sol)[i] = result_unsafe.GetSolution(t);
-          if (search_options.lsol_tiny_coeff_tol > 0) {
-            (*t_sol)[i] = (*t_sol)[i].RemoveTermsWithSmallCoefficients(
-                search_options.lsol_tiny_coeff_tol);
-          }
-          (*s_sol)[i].resize(s.rows());
-          for (int j = 0; j < (*s_sol)[i].rows(); ++j) {
-            (*s_sol)[i](j) = result_unsafe.GetSolution(s(j));
-            if (search_options.lsol_tiny_coeff_tol > 0) {
-              (*s_sol)[i](j) = (*s_sol)[i](j).RemoveTermsWithSmallCoefficients(
-                  search_options.lsol_tiny_coeff_tol);
-            }
-          }
-        } else {
-          drake::log()->error(
-              "Cannot find Lagrangian multipler for unsafe region {}", i);
-          return;
-        }
-      }
-    }
-
-    {
-      // Maximize the inner ellipsoids.
-      drake::log()->info("Find maximal inner ellipsoids");
-      // For each inner ellipsoid, compute rho.
-      for (auto& ellipsoid : inner_ellipsoids) {
+    // First determine if the ellipsoid center is within the super-level set
+    // {x|h(x)>=0}, if yes, then find rho for the ellipsoid.
+    for (auto it = uncovered_ellipsoids.begin();
+         it != uncovered_ellipsoids.end();) {
+      symbolic::Environment env;
+      env.insert(x_, it->c);
+      if (h_sol->Evaluate(env) > 0) {
         double rho_sol;
         symbolic::Polynomial r_sol;
-        MaximizeInnerEllipsoidRho(x_, ellipsoid.c, ellipsoid.S, -(*h_sol),
-                                  ellipsoid.r_degree, ellipsoid.rho_max,
-                                  ellipsoid.rho,
+        MaximizeInnerEllipsoidRho(x_, it->c, it->S, -(*h_sol), it->r_degree,
+                                  it->rho_max, it->rho_min,
                                   search_options.lagrangian_step_solver,
                                   search_options.lagrangian_step_solver_options,
-                                  ellipsoid.rho_tol, &rho_sol, &r_sol);
+                                  it->rho_tol, &rho_sol, &r_sol);
+        inner_ellipsoids.emplace_back(it->c, it->S, rho_sol, rho_sol,
+                                      it->rho_max, it->rho_tol, it->r_degree);
         drake::log()->info("rho {}", rho_sol);
-        ellipsoid.rho = rho_sol;
-        ellipsoid.rho_min = rho_sol;
-      }
-      // First determine if the ellipsoid center is within the super-level set
-      // {x|h(x)>=0}, if yes, then find rho for the ellipsoid.
-      for (auto it = uncovered_ellipsoids.begin();
-           it != uncovered_ellipsoids.end();) {
-        symbolic::Environment env;
-        env.insert(x_, it->c);
-        if (h_sol->Evaluate(env) > 0) {
-          double rho_sol;
-          symbolic::Polynomial r_sol;
-          MaximizeInnerEllipsoidRho(
-              x_, it->c, it->S, -(*h_sol), it->r_degree, it->rho_max,
-              it->rho_min, search_options.lagrangian_step_solver,
-              search_options.lagrangian_step_solver_options, it->rho_tol,
-              &rho_sol, &r_sol);
-          inner_ellipsoids.emplace_back(it->c, it->S, rho_sol, rho_sol,
-                                        it->rho_max, it->rho_tol, it->r_degree);
-          drake::log()->info("rho {}", rho_sol);
-          it = uncovered_ellipsoids.erase(it);
-        } else {
-          ++it;
-        }
+        it = uncovered_ellipsoids.erase(it);
+      } else {
+        ++it;
       }
     }
 
@@ -411,7 +326,8 @@ void ControlBarrier::Search(
       VectorX<symbolic::Variable> d;
       this->AddBarrierProgramCost(prog_barrier.get(), h, inner_ellipsoids, &r,
                                   &d);
-      // To prevent scaling h arbitrarily to infinity, we constraint h(x_anchor)
+      // To prevent scaling h arbitrarily to infinity, we constraint
+      // h(x_anchor)
       // <= h_init(x_anchor).
       {
         Eigen::MatrixXd h_monomial_vals;
@@ -455,6 +371,103 @@ void ControlBarrier::Search(
     }
     iter_count++;
   }
+}
+
+bool ControlBarrier::SearchLagrangian(
+    const symbolic::Polynomial& h, double deriv_eps, int lambda0_degree,
+    const std::vector<int>& l_degrees, const std::vector<int>& t_degree,
+    const std::vector<std::vector<int>>& s_degrees,
+    const ControlBarrier::SearchOptions& search_options,
+    symbolic::Polynomial* lambda0_sol, VectorX<symbolic::Polynomial>* l_sol,
+    std::vector<symbolic::Polynomial>* t_sol,
+    std::vector<VectorX<symbolic::Polynomial>>* s_sol) const {
+  {
+    symbolic::Polynomial lambda0;
+    MatrixX<symbolic::Variable> lambda0_gram;
+    VectorX<symbolic::Polynomial> l;
+    std::vector<MatrixX<symbolic::Variable>> l_grams;
+    symbolic::Polynomial hdot_sos;
+    VectorX<symbolic::Monomial> hdot_monomials;
+    MatrixX<symbolic::Variable> hdot_gram;
+    auto prog_lagrangian = this->ConstructLagrangianProgram(
+        h, deriv_eps, lambda0_degree, l_degrees, &lambda0, &lambda0_gram, &l,
+        &l_grams, &hdot_sos, &hdot_monomials, &hdot_gram);
+    if (search_options.lagrangian_tiny_coeff_tol > 0) {
+      RemoveTinyCoeff(prog_lagrangian.get(),
+                      search_options.lagrangian_tiny_coeff_tol);
+    }
+    auto lagrangian_solver =
+        solvers::MakeSolver(search_options.lagrangian_step_solver);
+    solvers::MathematicalProgramResult result_lagrangian;
+    drake::log()->info("search Lagrangian");
+    lagrangian_solver->Solve(*prog_lagrangian, std::nullopt,
+                             search_options.lagrangian_step_solver_options,
+                             &result_lagrangian);
+    if (result_lagrangian.is_success()) {
+      *lambda0_sol = result_lagrangian.GetSolution(lambda0);
+      l_sol->resize(l.rows());
+      for (int i = 0; i < l_sol->rows(); ++i) {
+        (*l_sol)(i) = result_lagrangian.GetSolution(l(i));
+        if (search_options.lsol_tiny_coeff_tol > 0) {
+          (*l_sol)(i) = (*l_sol)(i).RemoveTermsWithSmallCoefficients(
+              search_options.lsol_tiny_coeff_tol);
+        }
+      }
+    } else {
+      drake::log()->error("Failed to find Lagrangian");
+      return false;
+    }
+  }
+
+  {
+    // Find Lagrangian multiplier for each unsafe region.
+    t_sol->resize(unsafe_regions_.size());
+    s_sol->resize(unsafe_regions_.size());
+    for (int i = 0; i < static_cast<int>(unsafe_regions_.size()); ++i) {
+      symbolic::Polynomial t;
+      VectorX<symbolic::Polynomial> s;
+      MatrixX<symbolic::Variable> t_gram;
+      std::vector<MatrixX<symbolic::Variable>> s_grams;
+      symbolic::Polynomial unsafe_sos_poly;
+      MatrixX<symbolic::Variable> unsafe_sos_poly_gram;
+
+      auto prog_unsafe = this->ConstructUnsafeRegionProgram(
+          h, i, t_degree[i], s_degrees[i], &t, &t_gram, &s, &s_grams,
+          &unsafe_sos_poly, &unsafe_sos_poly_gram);
+      if (search_options.lagrangian_tiny_coeff_tol > 0) {
+        RemoveTinyCoeff(prog_unsafe.get(),
+                        search_options.lagrangian_tiny_coeff_tol);
+      }
+      drake::log()->info("Search Lagrangian multiplier for unsafe region {}",
+                         i);
+      solvers::MathematicalProgramResult result_unsafe;
+      auto lagrangian_solver =
+          solvers::MakeSolver(search_options.lagrangian_step_solver);
+      lagrangian_solver->Solve(*prog_unsafe, std::nullopt,
+                               search_options.lagrangian_step_solver_options,
+                               &result_unsafe);
+      if (result_unsafe.is_success()) {
+        (*t_sol)[i] = result_unsafe.GetSolution(t);
+        if (search_options.lsol_tiny_coeff_tol > 0) {
+          (*t_sol)[i] = (*t_sol)[i].RemoveTermsWithSmallCoefficients(
+              search_options.lsol_tiny_coeff_tol);
+        }
+        (*s_sol)[i].resize(s.rows());
+        for (int j = 0; j < (*s_sol)[i].rows(); ++j) {
+          (*s_sol)[i](j) = result_unsafe.GetSolution(s(j));
+          if (search_options.lsol_tiny_coeff_tol > 0) {
+            (*s_sol)[i](j) = (*s_sol)[i](j).RemoveTermsWithSmallCoefficients(
+                search_options.lsol_tiny_coeff_tol);
+          }
+        }
+      } else {
+        drake::log()->error(
+            "Cannot find Lagrangian multipler for unsafe region {}", i);
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 ControlBarrierBoxInputBound::ControlBarrierBoxInputBound(

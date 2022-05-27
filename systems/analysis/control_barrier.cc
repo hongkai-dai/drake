@@ -266,9 +266,12 @@ void ControlBarrier::Search(
   std::list<ControlBarrier::Ellipsoid> uncovered_ellipsoids{ellipsoids.begin(),
                                                             ellipsoids.end()};
   while (iter_count < search_options.bilinear_iterations) {
-    SearchLagrangian(*h_sol, deriv_eps, lambda0_degree, l_degrees, t_degree,
-                     s_degrees, search_options, lambda0_sol, l_sol, t_sol,
-                     s_sol);
+    const bool found_lagrangian = SearchLagrangian(
+        *h_sol, deriv_eps, lambda0_degree, l_degrees, t_degree, s_degrees,
+        search_options, lambda0_sol, l_sol, t_sol, s_sol);
+    if (!found_lagrangian) {
+      return;
+    }
 
     // Maximize the inner ellipsoids.
     drake::log()->info("Find maximal inner ellipsoids");
@@ -352,7 +355,7 @@ void ControlBarrier::Search(
           *h_sol = h_sol->RemoveTermsWithSmallCoefficients(
               search_options.hsol_tiny_coeff_tol);
         }
-        drake::log()->debug("d: {}", result_barrier.GetSolution(d).transpose());
+        drake::log()->info("d: {}", result_barrier.GetSolution(d).transpose());
         s_sol->resize(s.size());
         for (int i = 0; i < static_cast<int>(unsafe_regions_.size()); ++i) {
           (*s_sol)[i].resize(s[i].rows());

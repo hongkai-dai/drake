@@ -163,29 +163,33 @@ void Simulate(const Vector6<symbolic::Variable>& x,
   u_vertices << 1, 1, -1, -1,
                 1, -1, 1, -1;
   // clang-format on
-  ControlLyapunov dut(x, f, G, u_vertices);
+  VectorX<symbolic::Polynomial> state_constraints(0);
+  ControlLyapunov dut(x, f, G, u_vertices, state_constraints);
   const double deriv_eps = 0.2;
   *deriv_eps_sol = deriv_eps;
   {
     const symbolic::Polynomial lambda0{};
     const int d_degree = 2;
     const std::vector<int> l_degrees = {2, 2, 2, 2};
+    const std::vector<int> p_degrees = {};
     VectorX<symbolic::Polynomial> l;
     std::vector<MatrixX<symbolic::Variable>> l_grams;
+    VectorX<symbolic::Polynomial> p;
     symbolic::Variable rho;
     symbolic::Polynomial vdot_sos;
     VectorX<symbolic::Monomial> vdot_monomials;
     MatrixX<symbolic::Variable> vdot_gram;
     auto prog = dut.ConstructLagrangianProgram(
-        V_init, lambda0, d_degree, l_degrees, *deriv_eps_sol, &l, &l_grams,
-        &rho, &vdot_sos, &vdot_monomials, &vdot_gram);
+        V_init, lambda0, d_degree, l_degrees, p_degrees, *deriv_eps_sol, &l,
+        &l_grams, &p, &rho, &vdot_sos, &vdot_monomials, &vdot_gram);
     const auto result = solvers::Solve(*prog);
     DRAKE_DEMAND(result.is_success());
     std::cout << V_init << " <= " << result.GetSolution(rho) << "\n";
   }
   {
     const int lambda0_degree = 2;
-    std::vector<int> l_degrees = {2, 2, 2, 2};
+    const std::vector<int> l_degrees = {2, 2, 2, 2};
+    const std::vector<int> p_degrees = {};
     const int V_degree = 2;
     const Vector6d x_star = Vector6d::Zero();
     const Matrix6<double> S = Matrix6<double>::Identity();
@@ -204,10 +208,11 @@ void Simulate(const Vector6<symbolic::Variable>& x,
     VectorX<symbolic::Polynomial> l;
     symbolic::Polynomial r;
     double rho_sol;
+    VectorX<symbolic::Polynomial> p_sol;
 
-    dut.Search(V_init, lambda0_degree, l_degrees, V_degree, deriv_eps, x_star,
-               S, V_degree - 2, search_options, rho_bisection_option, V_sol,
-               &lambda0, &l, &r, &rho_sol);
+    dut.Search(V_init, lambda0_degree, l_degrees, V_degree, p_degrees,
+               deriv_eps, x_star, S, V_degree - 2, search_options,
+               rho_bisection_option, V_sol, &lambda0, &l, &r, &p_sol, &rho_sol);
   }
 }
 

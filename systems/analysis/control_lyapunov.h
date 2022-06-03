@@ -49,15 +49,21 @@ class ControlLyapunov {
    * @param G The dynamics of the system is ẋ = f(x) + G(x)u
    * @param u_vertices An nᵤ * K matrix. u_vertices.col(i) is the i'th vertex
    * of the polytope as the bounds on the control action.
+   * @param state_constraints The additional equality constraints on the system
+   * state x. For example if the state contains the quaternion z, then we have
+   * the unit length constraint on quaternion zᵀz−1 = 0
    */
-  ControlLyapunov(const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
-                  const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
-                  const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
-                  const Eigen::Ref<const Eigen::MatrixXd>& u_vertices);
+  ControlLyapunov(
+      const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+      const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
+      const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
+      const Eigen::Ref<const Eigen::MatrixXd>& u_vertices,
+      const Eigen::Ref<const VectorX<symbolic::Polynomial>>& state_constraints);
 
   /**
    * A helper function to add the constraint
-   * (1+λ₀(x))xᵀx(V−1) − ∑ᵢ lᵢ(x)*(∂V/∂x*f(x)+ε*V + ∂V/∂x*G(x)*uᵢ) is sos.
+   * (1+λ₀(x))xᵀx(V−1) − ∑ᵢ lᵢ(x)*(∂V/∂x*f(x)+ε*V + ∂V/∂x*G(x)*uᵢ)-p(x)ᵀc(x) is
+   * sos. where c(x) is state_constraint, p(x) is its Lagrangian multipliers.
    * @param[out] monomials The monomial basis of this sos constraint.
    * @param[out] gram The Gram matrix of this sos constraint.
    */
@@ -66,24 +72,29 @@ class ControlLyapunov {
       const symbolic::Polynomial& lambda0,
       const VectorX<symbolic::Polynomial>& l, const symbolic::Polynomial& V,
       const Eigen::MatrixXd& u_vertices, double deriv_eps,
-      symbolic::Polynomial* vdot_poly, VectorX<symbolic::Monomial>* monomials,
+      const VectorX<symbolic::Polynomial>& p, symbolic::Polynomial* vdot_poly,
+      VectorX<symbolic::Monomial>* monomials,
       MatrixX<symbolic::Variable>* gram) const;
 
   /**
    * Given the control Lyapunov function V, constructs an optimization program
    * to search for the Lagrangians.
-   *
-   *    find λ₀(x), l(x)
-   *    s.t (1+λ₀(x))xᵀx(V−1) − ∑ᵢlᵢ(x)*(∂V/∂x*f(x)+ε*V+∂V/∂x*G(x)*sᵢ) is sos
-   *        λ₀(x), l(x) is sos
+   * <pre>
+   * find λ₀(x), l(x), p(x)
+   * s.t (1+λ₀(x))xᵀx(V−1) − ∑ᵢlᵢ(x)*(∂V/∂x*f(x)+ε*V+∂V/∂x*G(x)*sᵢ)
+   *             - p(x)ᵀc(x) is sos
+   *      λ₀(x), l(x) is sos
+   * </pre>
+   * where c(x) is the state equality constraints (like unit quaternion
+   * constraint).
    */
   std::unique_ptr<solvers::MathematicalProgram> ConstructLagrangianProgram(
       const symbolic::Polynomial& V, double deriv_eps, int lambda0_degree,
-      const std::vector<int>& l_degrees, symbolic::Polynomial* lambda0,
-      MatrixX<symbolic::Variable>* lambda0_gram,
+      const std::vector<int>& l_degrees, const std::vector<int>& p_degrees,
+      symbolic::Polynomial* lambda0, MatrixX<symbolic::Variable>* lambda0_gram,
       VectorX<symbolic::Polynomial>* l,
       std::vector<MatrixX<symbolic::Variable>>* l_grams,
-      symbolic::Polynomial* vdot_sos,
+      VectorX<symbolic::Polynomial>* p, symbolic::Polynomial* vdot_sos,
       VectorX<symbolic::Monomial>* vdot_monomials,
       MatrixX<symbolic::Variable>* vdot_gram) const;
 
@@ -91,30 +102,38 @@ class ControlLyapunov {
    * Given λ₀(x) and V(x), constructs the following optimization problem
    * <pre>
    * max ρ
-   * s.t (1+λ₀(x))(xᵀx)ᵈ(V(x) − ρ) − ∑ᵢ lᵢ(x)(∂V/∂x*f(x) + ε*V+∂V/∂xG(x)uⁱ) is
-   * sos. lᵢ(x) is sos.
+   * s.t (1+λ₀(x))(xᵀx)ᵈ(V(x) − ρ) − ∑ᵢ lᵢ(x)(∂V/∂x*f(x) + ε*V+∂V/∂xG(x)uⁱ)
+   *              - p(x)ᵀc(x)is sos.
+   * lᵢ(x) is sos.
    * </pre>
-   * The decision variables are ρ, l(x)
+   * The decision variables are ρ, l(x), p(x)
    */
   std::unique_ptr<solvers::MathematicalProgram> ConstructLagrangianProgram(
       const symbolic::Polynomial& V, const symbolic::Polynomial& lambda0,
-      int d_degree, const std::vector<int>& l_degrees, double deriv_eps,
+      int d_degree, const std::vector<int>& l_degrees,
+      const std::vector<int>& p_degrees, double deriv_eps,
       VectorX<symbolic::Polynomial>* l,
       std::vector<MatrixX<symbolic::Variable>>* l_grams,
-      symbolic::Variable* rho, symbolic::Polynomial* vdot_sos,
+      VectorX<symbolic::Polynomial>* p, symbolic::Variable* rho,
+      symbolic::Polynomial* vdot_sos,
       VectorX<symbolic::Monomial>* vdot_monomials,
       MatrixX<symbolic::Variable>* vdot_gram) const;
 
   /**
    * Given λ₀(x) and l(x), construct a methematical program
-   *    find V(x)
-   *    s.t V(x) is sos
-   *        (1+λ₀(x))xᵀx(V−1) − ∑ᵢlᵢ(x)*(∂V/∂x*f(x)+ε*V+∂V/∂x*G(x)*sᵢ) is sos
+   * <pre>
+   * find V(x), p(x)
+   * s.t V(x) is sos
+   *     (1+λ₀(x))xᵀx(V−1) − ∑ᵢlᵢ(x)*(∂V/∂x*f(x)+ε*V+∂V/∂x*G(x)*sᵢ)
+   *           - p(x)ᵀc(x) is sos
+   * </pre>
    */
   std::unique_ptr<solvers::MathematicalProgram> ConstructLyapunovProgram(
       const symbolic::Polynomial& lambda0,
-      const VectorX<symbolic::Polynomial>& l, int V_degree, double deriv_eps,
-      symbolic::Polynomial* V, MatrixX<symbolic::Expression>* V_gram) const;
+      const VectorX<symbolic::Polynomial>& l, int V_degree,
+      const std::vector<int>& p_degrees, double deriv_eps,
+      symbolic::Polynomial* V, MatrixX<symbolic::Expression>* V_gram,
+      VectorX<symbolic::Polynomial>* p) const;
 
   struct SearchOptions {
     solvers::SolverId lyap_step_solver{solvers::MosekSolver::id()};
@@ -158,14 +177,15 @@ class ControlLyapunov {
    * Lyapunov function (CLF).
    */
   void Search(const symbolic::Polynomial& V_init, int lambda0_degree,
-              const std::vector<int>& l_degrees, int V_degree, double deriv_eps,
+              const std::vector<int>& l_degrees, int V_degree,
+              const std::vector<int>& p_degrees, double deriv_eps,
               const Eigen::Ref<const Eigen::VectorXd>& x_star,
               const Eigen::Ref<const Eigen::MatrixXd>& S, int r_degree,
               const SearchOptions& search_options,
               const RhoBisectionOption& rho_bisection_option,
               symbolic::Polynomial* V, symbolic::Polynomial* lambda0,
               VectorX<symbolic::Polynomial>* l, symbolic::Polynomial* r,
-              double* rho) const;
+              VectorX<symbolic::Polynomial>* p, double* rho) const;
 
   [[nodiscard]] const VectorX<symbolic::Variable>& x() const { return x_; }
 
@@ -184,6 +204,7 @@ class ControlLyapunov {
   VectorX<symbolic::Polynomial> f_;
   MatrixX<symbolic::Polynomial> G_;
   Eigen::MatrixXd u_vertices_;
+  VectorX<symbolic::Polynomial> state_constraints_;
 };
 
 /**

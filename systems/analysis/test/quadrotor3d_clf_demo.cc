@@ -161,13 +161,15 @@ struct Quadrotor {
   const Eigen::Matrix<double, 4, 16> u_vertices =
       math::CalculateReflectedGrayCodes<4>().cast<double>().transpose() * 2 -
       Eigen::Matrix<double, 4, 16>::Ones();
-  std::cout << u_vertices.transpose() << "\n";
 
-  ControlLyapunov dut(x, f, G, u_vertices);
+  VectorX<symbolic::Polynomial> state_constraints(0);
+
+  ControlLyapunov dut(x, f, G, u_vertices, state_constraints);
   const double deriv_eps = 0.2;
   *deriv_eps_sol = deriv_eps;
   const int lambda0_degree = 2;
   const std::vector<int> l_degrees(16, 2);
+  const std::vector<int> p_degrees = {};
   const int V_degree = 2;
   const Eigen::Matrix<double, 12, 1> x_star =
       Eigen::Matrix<double, 12, 1>::Zero();
@@ -188,12 +190,13 @@ struct Quadrotor {
   ControlLyapunov::RhoBisectionOption rho_bisection_option(0.01, 3, 0.01);
   symbolic::Polynomial lambda0;
   VectorX<symbolic::Polynomial> l;
+  VectorX<symbolic::Polynomial> p_sol;
   symbolic::Polynomial r;
   double rho_sol;
 
-  dut.Search(V_init, lambda0_degree, l_degrees, V_degree, deriv_eps, x_star, S,
-             V_degree - 2, search_options, rho_bisection_option, V_sol,
-             &lambda0, &l, &r, &rho_sol);
+  dut.Search(V_init, lambda0_degree, l_degrees, V_degree, p_degrees, deriv_eps,
+             x_star, S, V_degree - 2, search_options, rho_bisection_option,
+             V_sol, &lambda0, &l, &r, &p_sol, &rho_sol);
 }
 
 [[maybe_unused]] void search_w_box_bounds(

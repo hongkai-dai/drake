@@ -39,6 +39,21 @@ struct Pendulum {
         (mass * length * length));
   }
 
+  // The trigonometric dynamics, x = (sinθ - sin θ_des, cosθ, - cosθ_des, θdot).
+  void trig_dynamics(const Vector3<symbolic::Variable>& x, double theta_des,
+                     Vector3<symbolic::Polynomial>* f,
+                     Vector3<symbolic::Polynomial>* G) const {
+    const double sin_theta_des = std::sin(theta_des);
+    const double cos_theta_des = std::cos(theta_des);
+    (*f)(0) = symbolic::Polynomial((x(1) + cos_theta_des) * x(2));
+    (*f)(1) = symbolic::Polynomial((-x(0) - sin_theta_des) * x(2));
+    (*f)(2) = symbolic::Polynomial(-gravity / length * (x(0) + sin_theta_des) -
+                                   damping * x(2) / (mass * length * length));
+    (*G)(0) = symbolic::Polynomial();
+    (*G)(1) = symbolic::Polynomial();
+    (*G)(2) = symbolic::Polynomial(1 / (mass * length * length));
+  }
+
   void dynamics_gradient(double theta, double u_bound, Eigen::Matrix2d* A,
                          Eigen::Vector2d* B) const {
     *A << 0, 1,
@@ -171,6 +186,44 @@ void Simulate(const Vector2<symbolic::Variable>& x,
       clf_logger->FindLog(simulator.get_context()).data().rightCols<1>());
 }
 
+[[maybe_unused]] void SearchTrigPoly(const Vector3<symbolic::Variable>& x,
+                                     const Vector3<symbolic::Polynomial>& f,
+                                     const Vector3<symbolic::Polynomial>& G,
+                                     double u_bound,
+                                     symbolic::Polynomial* V_sol,
+                                     double* deriv_eps_sol) {
+  const Eigen::RowVector2d u_vertices(u_bound, -u_bound);
+  const double theta_des = M_PI;
+  const Vector1<symbolic::Polynomial> state_constraints(
+      symbolic::Polynomial(x(0) * x(0) + (x(1) - 1) * (x(1) - 1) - 1));
+  const ControlLyapunov dut(x, f, G, u_vertices, state_constraints);
+  const int lambda0_degree = 2;
+  const std::vector<int> l_degrees{4, 4};
+  const std::vector<int> p_degrees{4};
+  const int V_degree = 2;
+  const Eigen::Vector2d x_star(0, 0);
+  const Eigen::Matrix2d S = Eigen::Matrix2d::Identity();
+
+  ControlLyapunov::SearchOptions search_options;
+  search_options.backoff_scale = 0.02;
+  // There are tiny coefficients coming from numerical roundoff error.
+  search_options.lyap_tiny_coeff_tol = 1E-10;
+  const double rho_min = 0.01;
+  const double rho_max = 15;
+  const double rho_bisection_tol = 0.01;
+  const ControlLyapunov::RhoBisectionOption rho_bisection_option(
+      rho_min, rho_max, rho_bisection_tol);
+  symbolic::Polynomial lambda0;
+  VectorX<symbolic::Polynomial> l;
+  symbolic::Polynomial r;
+  VectorX<symbolic::Polynomial> p;
+  double rho;
+  *deriv_eps_sol = 0.5;
+  dut.Search(V_init, lambda0_degree, l_degrees, V_degree, p_degrees,
+             *deriv_eps_sol, x_star, S, V_degree - 2, search_options,
+             rho_bisection_option, V_sol, &lambda0, &l, &r, &p, &rho);
+}
+
 [[maybe_unused]] void Search(const symbolic::Polynomial& V_init,
                              const Vector2<symbolic::Variable>& x,
                              const Vector2<symbolic::Polynomial>& f,
@@ -178,21 +231,24 @@ void Simulate(const Vector2<symbolic::Variable>& x,
                              symbolic::Polynomial* V_sol,
                              double* deriv_eps_sol) {
   const Eigen::RowVector2d u_vertices(1, -1);
-  const ControlLyapunov dut(x, f, G, u_vertices);
+  const VectorX<symbolic::Polynomial> state_constraints;
+  const ControlLyapunov dut(x, f, G, u_vertices, state_constraints);
   {
     const symbolic::Polynomial lambda0{};
     const int d_degree = 2;
     const std::vector<int> l_degrees{2, 2};
+    const std::vector<int> p_degrees{};
     *deriv_eps_sol = 0.5;
     VectorX<symbolic::Polynomial> l;
     std::vector<MatrixX<symbolic::Variable>> l_grams;
+    VectorX<symbolic::Polynomial> p;
     symbolic::Variable rho;
     symbolic::Polynomial vdot_sos;
     VectorX<symbolic::Monomial> vdot_monomials;
     MatrixX<symbolic::Variable> vdot_gram;
     auto prog = dut.ConstructLagrangianProgram(
-        V_init, lambda0, d_degree, l_degrees, *deriv_eps_sol, &l, &l_grams,
-        &rho, &vdot_sos, &vdot_monomials, &vdot_gram);
+        V_init, lambda0, d_degree, l_degrees, p_degrees, *deriv_eps_sol, &l,
+        &l_grams, &p, &rho, &vdot_sos, &vdot_monomials, &vdot_gram);
     const auto result = solvers::Solve(*prog);
     DRAKE_DEMAND(result.is_success());
     std::cout << V_init << " <= " << result.GetSolution(rho) << "\n";
@@ -200,6 +256,7 @@ void Simulate(const Vector2<symbolic::Variable>& x,
   {
     const int lambda0_degree = 2;
     const std::vector<int> l_degrees{2, 2};
+    const std::vector<int> p_degrees{};
     const int V_degree = 2;
     const Eigen::Vector2d x_star(0, 0);
     const Eigen::Matrix2d S = Eigen::Matrix2d::Identity();
@@ -216,11 +273,12 @@ void Simulate(const Vector2<symbolic::Variable>& x,
     symbolic::Polynomial lambda0;
     VectorX<symbolic::Polynomial> l;
     symbolic::Polynomial r;
+    VectorX<symbolic::Polynomial> p;
     double rho;
     *deriv_eps_sol = 0.5;
-    dut.Search(V_init, lambda0_degree, l_degrees, V_degree, *deriv_eps_sol,
-               x_star, S, V_degree - 2, search_options, rho_bisection_option,
-               V_sol, &lambda0, &l, &r, &rho);
+    dut.Search(V_init, lambda0_degree, l_degrees, V_degree, p_degrees,
+               *deriv_eps_sol, x_star, S, V_degree - 2, search_options,
+               rho_bisection_option, V_sol, &lambda0, &l, &r, &p, &rho);
   }
 }
 

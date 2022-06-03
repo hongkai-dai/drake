@@ -208,6 +208,20 @@ void MaximizeInnerEllipsoidRho(
   *rho_sol = rho_min;
 }
 
+void GetPolynomialSolutions(const solvers::MathematicalProgramResult& result,
+                            const VectorX<symbolic::Polynomial>& p,
+                            double zero_coeff_tol,
+                            VectorX<symbolic::Polynomial>* p_sol) {
+  p_sol->resize(p.rows());
+  for (int i = 0; i < p_sol->rows(); ++i) {
+    (*p_sol)(i) = result.GetSolution(p(i));
+    if (zero_coeff_tol > 0) {
+      (*p_sol)(i) =
+          (*p_sol)(i).RemoveTermsWithSmallCoefficients(zero_coeff_tol);
+    }
+  }
+}
+
 namespace internal {
 template <typename RhoType>
 symbolic::Polynomial EllipsoidPolynomial(

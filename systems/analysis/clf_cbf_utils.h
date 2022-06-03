@@ -80,6 +80,11 @@ void MaximizeInnerEllipsoidRho(
     const std::optional<solvers::SolverOptions>& solver_options, double rho_tol,
     double* rho_sol, symbolic::Polynomial* r_sol);
 
+void GetPolynomialSolutions(const solvers::MathematicalProgramResult& result,
+                            const VectorX<symbolic::Polynomial>& p,
+                            double zero_coeff_tol,
+                            VectorX<symbolic::Polynomial>* p_sol);
+
 namespace internal {
 /** The ellipsoid polynomial (x−x*)ᵀS(x−x*)−ρ
  */

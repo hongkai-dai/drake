@@ -786,20 +786,23 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunov) {
   bool symmetric_dynamics = true;
   InitializeWithLQR(symmetric_dynamics, &V, &f, &G);
   V *= 0.1;
-  ControlLyapunov dut(x_, f, G, u_vertices_);
+  VectorX<symbolic::Polynomial> state_constraints(0);
+  ControlLyapunov dut(x_, f, G, u_vertices_, state_constraints);
   const int lambda0_degree = 0;
   const std::vector<int> l_degrees = {2, 2, 2, 2};
+  const std::vector<int> p_degrees = {};
   const double deriv_eps = 0.01;
   symbolic::Polynomial lambda0;
   MatrixX<symbolic::Variable> lambda0_gram;
   VectorX<symbolic::Polynomial> l;
   std::vector<MatrixX<symbolic::Variable>> l_grams;
+  VectorX<symbolic::Polynomial> p;
   symbolic::Polynomial vdot_sos;
   VectorX<symbolic::Monomial> vdot_monomials;
   MatrixX<symbolic::Variable> vdot_gram;
   auto prog_lagrangian = dut.ConstructLagrangianProgram(
-      V, deriv_eps, lambda0_degree, l_degrees, &lambda0, &lambda0_gram, &l,
-      &l_grams, &vdot_sos, &vdot_monomials, &vdot_gram);
+      V, deriv_eps, lambda0_degree, l_degrees, p_degrees, &lambda0,
+      &lambda0_gram, &l, &l_grams, &p, &vdot_sos, &vdot_monomials, &vdot_gram);
   solvers::SolverOptions solver_options;
   // solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
   const auto result_lagrangian =
@@ -831,6 +834,9 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunov) {
     vdot_sos_expected -= l_sol(i) * (dVdx_times_f + deriv_eps * V +
                                      dVdx.dot(G * u_vertices_.col(i)));
   }
+  VectorX<symbolic::Polynomial> p_sol;
+  GetPolynomialSolutions(result_lagrangian, p, 0, &p_sol);
+  vdot_sos_expected -= p_sol.dot(state_constraints);
   EXPECT_PRED3(symbolic::test::PolynomialEqual,
                result_lagrangian.GetSolution(vdot_sos), vdot_sos_expected,
                1E-5);
@@ -846,7 +852,7 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunov) {
   MatrixX<symbolic::Expression> V_gram;
   const int V_degree = V.TotalDegree();
   auto prog_lyapunov = dut.ConstructLyapunovProgram(
-      lambda0_sol, l_sol, V_degree, deriv_eps, &V_new, &V_gram);
+      lambda0_sol, l_sol, V_degree, p_degrees, deriv_eps, &V_new, &V_gram, &p);
   for (const auto& binding : prog_lyapunov->linear_equality_constraints()) {
     binding.evaluator()->RemoveTinyCoefficient(1E-12);
   }
@@ -884,9 +890,9 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunov) {
   ControlLyapunov::RhoBisectionOption rho_bisection_option(rho_min, rho_max,
                                                            rho_tol);
   symbolic::Polynomial r_sol;
-  dut.Search(V_init, lambda0_degree, l_degrees, V_degree, deriv_eps, x_star, S,
-             r_degree, search_options, rho_bisection_option, &V_sol,
-             &lambda0_sol, &l_sol, &r_sol, &rho_sol);
+  dut.Search(V_init, lambda0_degree, l_degrees, V_degree, p_degrees, deriv_eps,
+             x_star, S, r_degree, search_options, rho_bisection_option, &V_sol,
+             &lambda0_sol, &l_sol, &r_sol, &p_sol, &rho_sol);
 }
 
 TEST_F(SimpleLinearSystemTest, ControlLyapunovConstructLagrangianProgram) {
@@ -897,20 +903,23 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovConstructLagrangianProgram) {
   bool symmetric_dynamics = true;
   InitializeWithLQR(symmetric_dynamics, &V, &f, &G);
   V *= 0.1;
-  ControlLyapunov dut(x_, f, G, u_vertices_);
+  VectorX<symbolic::Polynomial> state_constraints(0);
+  ControlLyapunov dut(x_, f, G, u_vertices_, state_constraints);
   const symbolic::Polynomial lambda0(1);
   const int d_degree = 1;
   const std::vector<int> l_degrees{2, 2, 2, 2};
+  const std::vector<int> p_degrees{};
   const double deriv_eps = 0.01;
   VectorX<symbolic::Polynomial> l;
   std::vector<MatrixX<symbolic::Variable>> l_grams;
+  VectorX<symbolic::Polynomial> p;
   symbolic::Variable rho;
   symbolic::Polynomial vdot_sos;
   VectorX<symbolic::Monomial> vdot_monomials;
   MatrixX<symbolic::Variable> vdot_gram;
   auto prog = dut.ConstructLagrangianProgram(
-      V, lambda0, d_degree, l_degrees, deriv_eps, &l, &l_grams, &rho, &vdot_sos,
-      &vdot_monomials, &vdot_gram);
+      V, lambda0, d_degree, l_degrees, p_degrees, deriv_eps, &l, &l_grams, &p,
+      &rho, &vdot_sos, &vdot_monomials, &vdot_gram);
   const auto result = solvers::Solve(*prog);
   ASSERT_TRUE(result.is_success());
   const auto vdot_gram_sol = result.GetSolution(vdot_gram);
@@ -930,6 +939,9 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovConstructLagrangianProgram) {
     vdot_sos_expected -= l_sol * (dVdx.dot(f) + deriv_eps * V +
                                   dVdx_times_G.dot(u_vertices_.col(i)));
   }
+  VectorX<symbolic::Polynomial> p_sol;
+  GetPolynomialSolutions(result, p, 0, &p_sol);
+  vdot_sos_expected -= p_sol.dot(state_constraints);
   EXPECT_PRED3(symbolic::test::PolynomialEqual, vdot_sos_expected.Expand(),
                result.GetSolution(vdot_sos).Expand(), 1E-5);
   EXPECT_GT(rho_sol, 1);

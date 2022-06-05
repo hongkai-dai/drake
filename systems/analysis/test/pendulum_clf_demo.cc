@@ -3,70 +3,21 @@
 #include <limits>
 
 #include "drake/common/drake_copyable.h"
+#include "drake/examples/pendulum/pendulum_plant.h"
+#include "drake/math/autodiff_gradient.h"
 #include "drake/solvers/solve.h"
 #include "drake/systems/analysis/control_lyapunov.h"
 #include "drake/systems/analysis/simulator.h"
+#include "drake/systems/analysis/test/pendulum.h"
 #include "drake/systems/controllers/linear_quadratic_regulator.h"
 #include "drake/systems/framework/diagram_builder.h"
+#include "drake/systems/primitives/linear_system.h"
 #include "drake/systems/primitives/vector_log_sink.h"
 
 namespace drake {
 namespace systems {
 namespace analysis {
 const double kInf = std::numeric_limits<double>::infinity();
-
-struct Pendulum {
-  double compute_thetaddot(double theta, double theta_dot, double u) const {
-    const double theta_ddot =
-        (u - mass * gravity * length * std::sin(theta) - damping * theta_dot) /
-        (mass * length * length);
-    return theta_ddot;
-  }
-
-  void control_affine_dynamics(const Vector2<symbolic::Variable>& x,
-                               double theta_des, double u_bound,
-                               Vector2<symbolic::Polynomial>* f,
-                               Vector2<symbolic::Polynomial>* G) const {
-    (*G)(0) = symbolic::Polynomial();
-    (*G)(1) = symbolic::Polynomial(u_bound / (mass * length * length));
-    (*f)(0) = symbolic::Polynomial(x(1));
-    (*f)(1) = symbolic::Polynomial(
-        (-mass * gravity * length *
-             (std::sin(theta_des) + std::cos(theta_des) * x(0) -
-              std::sin(theta_des) / 2 * pow(x(0), 2) -
-              std::cos(theta_des) / 6 * pow(x(0), 3)) -
-         damping * x(1)) /
-        (mass * length * length));
-  }
-
-  // The trigonometric dynamics, x = (sinθ - sin θ_des, cosθ, - cosθ_des, θdot).
-  void trig_dynamics(const Vector3<symbolic::Variable>& x, double theta_des,
-                     Vector3<symbolic::Polynomial>* f,
-                     Vector3<symbolic::Polynomial>* G) const {
-    const double sin_theta_des = std::sin(theta_des);
-    const double cos_theta_des = std::cos(theta_des);
-    (*f)(0) = symbolic::Polynomial((x(1) + cos_theta_des) * x(2));
-    (*f)(1) = symbolic::Polynomial((-x(0) - sin_theta_des) * x(2));
-    (*f)(2) = symbolic::Polynomial(-gravity / length * (x(0) + sin_theta_des) -
-                                   damping * x(2) / (mass * length * length));
-    (*G)(0) = symbolic::Polynomial();
-    (*G)(1) = symbolic::Polynomial();
-    (*G)(2) = symbolic::Polynomial(1 / (mass * length * length));
-  }
-
-  void dynamics_gradient(double theta, double u_bound, Eigen::Matrix2d* A,
-                         Eigen::Vector2d* B) const {
-    *A << 0, 1,
-        -mass * gravity * length * std::cos(theta) / (mass * length * length),
-        -damping / (mass * length * length);
-    *B << 0, u_bound / (mass * length * length);
-  }
-
-  double mass{1};
-  double gravity{9.81};
-  double length{1};
-  double damping{0.1};
-};
 
 class ControlledPendulum final : public LeafSystem<double> {
  public:
@@ -87,7 +38,7 @@ class ControlledPendulum final : public LeafSystem<double> {
         this->DeclareVectorOutputPort("clf", 1, &ControlledPendulum::CalcClf)
             .get_index();
     const RowVector2<symbolic::Polynomial> dVdx = clf_.Jacobian(x_);
-    pendulum_.control_affine_dynamics(x_, x_des_(0), u_bound_, &f_, &G_);
+    pendulum_.ControlAffineDynamics(x_, x_des_(0), u_bound_, &f_, &G_);
     dVdx_times_f_ = dVdx.dot(f_);
     dVdx_times_G_ = dVdx.dot(G_);
   }
@@ -128,7 +79,7 @@ class ControlledPendulum final : public LeafSystem<double> {
     auto& derivative_vector = derivatives->get_mutable_vector();
     derivative_vector.SetAtIndex(0, x_val(1));
     derivative_vector.SetAtIndex(
-        1, pendulum_.compute_thetaddot(x_val(0), x_val(1), u_val));
+        1, pendulum_.ComputeThetaddot(x_val(0), x_val(1), u_val));
   }
 
   void CalcClf(const Context<double>& context,
@@ -186,29 +137,41 @@ void Simulate(const Vector2<symbolic::Variable>& x,
       clf_logger->FindLog(simulator.get_context()).data().rightCols<1>());
 }
 
-[[maybe_unused]] void SearchTrigPoly(const Vector3<symbolic::Variable>& x,
-                                     const Vector3<symbolic::Polynomial>& f,
-                                     const Vector3<symbolic::Polynomial>& G,
-                                     double u_bound,
-                                     symbolic::Polynomial* V_sol,
-                                     double* deriv_eps_sol) {
-  const Eigen::RowVector2d u_vertices(u_bound, -u_bound);
+[[maybe_unused]] void SearchWTrigPoly() {
+  const double u_bound = 25;
+  const Vector3<symbolic::Variable> x(symbolic::Variable("x0"),
+                                      symbolic::Variable("x1"),
+                                      symbolic::Variable("x2"));
+  examples::pendulum::PendulumPlant<double> pendulum;
   const double theta_des = M_PI;
-  const Vector1<symbolic::Polynomial> state_constraints(
-      symbolic::Polynomial(x(0) * x(0) + (x(1) - 1) * (x(1) - 1) - 1));
+  Vector3<symbolic::Polynomial> f;
+  Vector3<symbolic::Polynomial> G;
+  TrigPolyDynamics(pendulum, x, theta_des, &f, &G);
+  for (int i = 0; i < 3; ++i) {
+    f(i) = f(i).RemoveTermsWithSmallCoefficients(1e-10);
+    G(i) = G(i).RemoveTermsWithSmallCoefficients(1e-10);
+  }
+  const Eigen::RowVector2d u_vertices(u_bound, -u_bound);
+  const double sin_theta_des = std::sin(theta_des);
+  const double cos_theta_des = std::cos(theta_des);
+  Vector1<symbolic::Polynomial> state_constraints(symbolic::Polynomial(
+      (x(0) + sin_theta_des) * (x(0) + sin_theta_des) +
+      (x(1) + cos_theta_des) * (x(1) + cos_theta_des) - 1));
+  state_constraints(0) =
+      state_constraints(0).RemoveTermsWithSmallCoefficients(1E-8);
   const ControlLyapunov dut(x, f, G, u_vertices, state_constraints);
   const int lambda0_degree = 2;
   const std::vector<int> l_degrees{4, 4};
-  const std::vector<int> p_degrees{4};
+  const std::vector<int> p_degrees{5};
   const int V_degree = 2;
-  const Eigen::Vector2d x_star(0, 0);
-  const Eigen::Matrix2d S = Eigen::Matrix2d::Identity();
+  const Eigen::Vector3d x_star(0, 0, 0);
+  const Eigen::Matrix3d S = Eigen::Matrix3d::Identity();
 
   ControlLyapunov::SearchOptions search_options;
   search_options.backoff_scale = 0.02;
   // There are tiny coefficients coming from numerical roundoff error.
   search_options.lyap_tiny_coeff_tol = 1E-10;
-  const double rho_min = 0.01;
+  const double rho_min = 0.001;
   const double rho_max = 15;
   const double rho_bisection_tol = 0.01;
   const ControlLyapunov::RhoBisectionOption rho_bisection_option(
@@ -218,27 +181,65 @@ void Simulate(const Vector2<symbolic::Variable>& x,
   symbolic::Polynomial r;
   VectorX<symbolic::Polynomial> p;
   double rho;
-  *deriv_eps_sol = 0.5;
-  dut.Search(V_init, lambda0_degree, l_degrees, V_degree, p_degrees,
-             *deriv_eps_sol, x_star, S, V_degree - 2, search_options,
-             rho_bisection_option, V_sol, &lambda0, &l, &r, &p, &rho);
+  const double deriv_eps = 0.0;
+  // Compute V_init from constrained LQR.
+  const Eigen::Matrix3d Q = Eigen::Matrix3d::Identity();
+  const Vector1d R(1);
+  const auto lqr_result = TrigDynamicsLQR(pendulum, theta_des, Q, R);
+  symbolic::Polynomial V_init(
+      x.cast<symbolic::Expression>().dot(lqr_result.S * x));
+  V_init = V_init.RemoveTermsWithSmallCoefficients(1e-6);
+  {
+    std::vector<MatrixX<symbolic::Variable>> l_grams;
+    symbolic::Variable rho_var;
+    symbolic::Polynomial vdot_sos;
+    VectorX<symbolic::Monomial> vdot_monomials;
+    MatrixX<symbolic::Variable> vdot_gram;
+    auto prog = dut.ConstructLagrangianProgram(
+        V_init, symbolic::Polynomial(), 2, l_degrees, p_degrees, deriv_eps, &l,
+        &l_grams, &p, &rho_var, &vdot_sos, &vdot_monomials, &vdot_gram);
+    const auto result = solvers::Solve(*prog);
+    DRAKE_DEMAND(result.is_success());
+    std::cout << "rho: " << result.GetSolution(rho_var) << "\n";
+  }
+
+  symbolic::Polynomial V_sol;
+  dut.Search(V_init, lambda0_degree, l_degrees, V_degree, p_degrees, deriv_eps,
+             x_star, S, V_degree - 2, search_options, rho_bisection_option,
+             &V_sol, &lambda0, &l, &r, &p, &rho);
 }
 
-[[maybe_unused]] void Search(const symbolic::Polynomial& V_init,
-                             const Vector2<symbolic::Variable>& x,
-                             const Vector2<symbolic::Polynomial>& f,
-                             const Vector2<symbolic::Polynomial>& G,
-                             symbolic::Polynomial* V_sol,
-                             double* deriv_eps_sol) {
-  const Eigen::RowVector2d u_vertices(1, -1);
-  const VectorX<symbolic::Polynomial> state_constraints;
-  const ControlLyapunov dut(x, f, G, u_vertices, state_constraints);
+[[maybe_unused]] void Search() {
+  examples::pendulum::PendulumPlant<double> pendulum;
+  const Vector2<symbolic::Variable> x(symbolic::Variable("x0"),
+                                      symbolic::Variable("x1"));
+  const double theta_des = M_PI;
+  Vector2<symbolic::Polynomial> f;
+  Vector2<symbolic::Polynomial> G;
+  ControlAffineDynamics(pendulum, x, theta_des, &f, &G);
+  const double u_bound = 25;
+  const Eigen::RowVector2d u_vertices(-u_bound, u_bound);
+  VectorX<symbolic::Polynomial> state_constraints(0);
+  ControlLyapunov dut(x, f, G, u_vertices, state_constraints);
+
+  auto context = pendulum.CreateDefaultContext();
+  context->SetContinuousState(Eigen::Vector2d(theta_des, 0));
+  pendulum.get_input_port(0).FixValue(context.get(), Vector1d(0));
+  const Eigen::Matrix2d Q = Eigen::Matrix2d::Identity();
+  const Vector1d R(0.01);
+  const auto linear_system = Linearize(pendulum, *context);
+  const auto lqr_result = controllers::LinearQuadraticRegulator(
+      linear_system->A(), linear_system->B(), Q, R);
+  symbolic::Polynomial V_init(
+      x.cast<symbolic::Expression>().dot(lqr_result.S * x));
+  V_init = V_init.RemoveTermsWithSmallCoefficients(1E-8);
+  std::cout << "V_init: " << V_init << "\n";
+  const double deriv_eps = 0.5;
   {
     const symbolic::Polynomial lambda0{};
     const int d_degree = 2;
     const std::vector<int> l_degrees{2, 2};
     const std::vector<int> p_degrees{};
-    *deriv_eps_sol = 0.5;
     VectorX<symbolic::Polynomial> l;
     std::vector<MatrixX<symbolic::Variable>> l_grams;
     VectorX<symbolic::Polynomial> p;
@@ -247,7 +248,7 @@ void Simulate(const Vector2<symbolic::Variable>& x,
     VectorX<symbolic::Monomial> vdot_monomials;
     MatrixX<symbolic::Variable> vdot_gram;
     auto prog = dut.ConstructLagrangianProgram(
-        V_init, lambda0, d_degree, l_degrees, p_degrees, *deriv_eps_sol, &l,
+        V_init, lambda0, d_degree, l_degrees, p_degrees, deriv_eps, &l,
         &l_grams, &p, &rho, &vdot_sos, &vdot_monomials, &vdot_gram);
     const auto result = solvers::Solve(*prog);
     DRAKE_DEMAND(result.is_success());
@@ -270,15 +271,15 @@ void Simulate(const Vector2<symbolic::Variable>& x,
     const double rho_bisection_tol = 0.01;
     const ControlLyapunov::RhoBisectionOption rho_bisection_option(
         rho_min, rho_max, rho_bisection_tol);
+    symbolic::Polynomial V_sol;
     symbolic::Polynomial lambda0;
     VectorX<symbolic::Polynomial> l;
     symbolic::Polynomial r;
     VectorX<symbolic::Polynomial> p;
     double rho;
-    *deriv_eps_sol = 0.5;
     dut.Search(V_init, lambda0_degree, l_degrees, V_degree, p_degrees,
-               *deriv_eps_sol, x_star, S, V_degree - 2, search_options,
-               rho_bisection_option, V_sol, &lambda0, &l, &r, &p, &rho);
+               deriv_eps, x_star, S, V_degree - 2, search_options,
+               rho_bisection_option, &V_sol, &lambda0, &l, &r, &p, &rho);
   }
 }
 
@@ -336,7 +337,7 @@ void Simulate(const Vector2<symbolic::Variable>& x,
   *deriv_eps_sol = clf_result.deriv_eps;
 }
 
-int DoMain() {
+[[maybe_unused]] void SearchWTaylorDynamics() {
   const Vector2<symbolic::Variable> x(symbolic::Variable("x0"),
                                       symbolic::Variable("x1"));
 
@@ -348,10 +349,10 @@ int DoMain() {
   Eigen::Vector2d B;
   const double theta_des = M_PI;
   const Vector2<double> x_des(theta_des, 0);
-  pendulum.dynamics_gradient(theta_des, u_bound, &A, &B);
+  pendulum.DynamicsGradient(theta_des, u_bound, &A, &B);
   const auto lqr_result = controllers::LinearQuadraticRegulator(
       A, B, Eigen::Matrix2d::Identity(), Vector1<double>::Identity());
-  pendulum.control_affine_dynamics(x, M_PI, u_bound, &f, &G);
+  pendulum.ControlAffineDynamics(x, M_PI, u_bound, &f, &G);
   for (int i = 0; i < 2; ++i) {
     f(i) = f(i).RemoveTermsWithSmallCoefficients(1E-6);
     G(i, 0) = G(i, 0).RemoveTermsWithSmallCoefficients(1E-6);
@@ -360,12 +361,17 @@ int DoMain() {
 
   symbolic::Polynomial V_sol;
   double deriv_eps_sol;
-  Search(V_init, x, f, G, &V_sol, &deriv_eps_sol);
-  // SearchWBoxBounds(V_init, x, f, G, &V_sol, &deriv_eps_sol);
+  SearchWBoxBounds(V_init, x, f, G, &V_sol, &deriv_eps_sol);
 
   std::cout << "clf: " << V_sol << "\n";
   Simulate(x, x_des, V_sol, u_bound, deriv_eps_sol,
            Eigen::Vector2d(M_PI + M_PI * 0.6, 0), 10);
+}
+
+int DoMain() {
+  // Search();
+  // SearchWTaylorDynamics();
+  SearchWTrigPoly();
   return 0;
 }
 

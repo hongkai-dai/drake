@@ -861,8 +861,8 @@ drake_cc_binary(
         ":control_lyapunov",
         ":simulator",
         ":simulator_config_functions",
+        ":pendulum",
         "//solvers:solve",
-        "//systems/controllers:linear_quadratic_regulator",
         "//systems/primitives:vector_log_sink",
     ],
 )
@@ -876,6 +876,29 @@ drake_cc_binary(
         "//solvers:solve",
         "//systems/controllers:linear_quadratic_regulator",
         "//systems/primitives:vector_log_sink",
+    ],
+)
+
+drake_cc_library(
+    name = "pendulum",
+    srcs = ["test/pendulum.cc"],
+    hdrs = ["test/pendulum.h"],
+    deps = [
+        "//common:essential",
+        "//common:symbolic",
+        "//examples/pendulum:pendulum_plant",
+        "//systems/controllers:linear_quadratic_regulator",
+    ],
+)
+
+drake_cc_googletest(
+    name = "pendulum_test",
+    deps = [
+        ":pendulum",
+        "//common/test_utilities:eigen_matrix_compare",
+        "//solvers:mathematical_program",
+        "//solvers:solve",
+        "//systems/analysis:simulator",
     ],
 )
 

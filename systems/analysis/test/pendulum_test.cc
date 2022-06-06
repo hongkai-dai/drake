@@ -2,13 +2,15 @@
 
 #include <vector>
 
-#include "solvers/_virtual_includes/_mathematical_program_headers_cc_impl/drake/solvers/mathematical_program.h"
 #include <eigen3/Eigen/src/Core/Matrix.h>
 #include <gtest/gtest.h>
 
 #include "drake/common/test_utilities/eigen_matrix_compare.h"
+#include "drake/solvers/common_solver_option.h"
+#include "drake/solvers/csdp_solver.h"
 #include "drake/solvers/mathematical_program.h"
 #include "drake/solvers/solve.h"
+#include "drake/systems/analysis/clf_cbf_utils.h"
 #include "drake/systems/analysis/simulator.h"
 #include "drake/systems/controllers/linear_quadratic_regulator.h"
 #include "drake/systems/framework/diagram_builder.h"
@@ -192,11 +194,46 @@ GTEST_TEST(PendulumROA, TestTrigLQR) {
   const Vector1d R(1);
   const double theta_des = M_PI;
   examples::pendulum::PendulumPlant<double> pendulum;
-  Eigen::Matrix3d A;
-  Eigen::Vector3d B;
-  const auto lqr_result = TrigDynamicsLQR(pendulum, theta_des, Q, R, &A, &B);
+
   solvers::MathematicalProgram prog;
   auto x = prog.NewIndeterminates<3>("x");
+  // Find a candidate V_init by using the LQR controller gain and form a
+  // closed-loop system on the trigonometric dynamics.
+  const auto lqr_result = TrigDynamicsLQR(pendulum, theta_des, Q, R);
+  symbolic::Polynomial V_init;
+  {
+    auto context = pendulum.CreateDefaultContext();
+    context->SetContinuousState(Eigen::Vector2d(theta_des, 0));
+    pendulum.get_input_port().FixValue(
+        context.get(), Vector1d(EquilibriumTorque(pendulum, theta_des)));
+    auto linearized_pendulum = Linearize(pendulum, *context);
+    // Now take many samples around (theta_des, 0).
+    const Eigen::VectorXd theta_samples =
+        Eigen::VectorXd::LinSpaced(-0.2 + theta_des, 0.2 + theta_des, 10);
+    const Eigen::VectorXd thetadot_samples =
+        Eigen::VectorXd::LinSpaced(-0.3, 0.3, 10);
+    Eigen::Matrix3Xd x_val(3, theta_samples.cols() * thetadot_samples.cols());
+    Eigen::Matrix3Xd xdot_val(3, x_val.cols());
+    int x_count = 0;
+    for (int i = 0; i < theta_samples.rows(); ++i) {
+      for (int j = 0; j < thetadot_samples.rows(); ++j) {
+        x_val.col(x_count) =
+            ToTrigState(theta_samples(i), thetadot_samples(j), theta_des);
+        const double u = -lqr_result.K.row(0).dot(x_val.col(x_count)) +
+                         EquilibriumTorque(pendulum, theta_des);
+        xdot_val.col(x_count) = TrigDynamics<double>(
+            pendulum, x_val.col(x_count), theta_des, Vector1d(u));
+        x_count++;
+      }
+    }
+    const int V_init_degree = 2;
+    MatrixX<symbolic::Expression> V_init_gram;
+    auto prog_V_init = FindCandidateLyapunov(x, V_init_degree, x_val, xdot_val,
+                                             &V_init, &V_init_gram);
+    const auto result_init = solvers::Solve(*prog_V_init);
+    ASSERT_TRUE(result_init.is_success());
+    V_init = result_init.GetSolution(V_init);
+  }
   Vector3<symbolic::Polynomial> f;
   Vector3<symbolic::Polynomial> G;
   TrigPolyDynamics(pendulum, x, theta_des, &f, &G);
@@ -207,34 +244,28 @@ GTEST_TEST(PendulumROA, TestTrigLQR) {
   for (int i = 0; i < 3; ++i) {
     xdot(i) = xdot(i).RemoveTermsWithSmallCoefficients(1E-6);
   }
-  std::cout << "xdot\n" << xdot << "\n";
 
   // Construct a program
   // max ρ
   // s.t (xᵀx)ᵈ(V(x)−ρ) − l(x)V̇(x) − p(x)c(x) is sos
   //     l(x) is sos
   const int d = 2;
-  symbolic::Polynomial V(x.cast<symbolic::Expression>().dot(lqr_result.S * x));
+  symbolic::Polynomial V = V_init;
   V = V.RemoveTermsWithSmallCoefficients(1E-7);
   const symbolic::Polynomial Vdot = V.Jacobian(x).dot(xdot);
   std::cout << "V: " << V << "\n";
   std::cout << "Vdot: " << Vdot << "\n";
 
-  Vector3<symbolic::Polynomial> xdot_linearized;
-  const Eigen::Matrix3d A_minus_BK = A - B * lqr_result.K;
-  for (int i = 0; i < 3; ++i) {
-    xdot_linearized(i) = symbolic::Polynomial(A_minus_BK.row(i).dot(x));
+  {
+    // Print V and Vdot at sampled value. If I use V as x.dot(S * x) where S is
+    // from the linearized trigonometric dynamics, then the corresponding Vdot
+    // (using trigonometric nonlinear dynamics) is often positive.
+    symbolic::Environment env;
+    double theta = 0.1;
+    env.insert(x, ToTrigState(theta, 0.2, theta_des));
+    std::cout << "V_val: " << V.Evaluate(env) << "\n";
+    std::cout << "Vdot_val: " << Vdot.Evaluate(env) << "\n";
   }
-  const symbolic::Polynomial Vdot_linear = V.Jacobian(x).dot(xdot_linearized);
-  symbolic::Environment env;
-  double theta = 0.1;
-  env.insert(x, Eigen::Vector3d(std::sin(theta) - std::sin(theta_des),
-                                std::cos(theta) - std::cos(theta_des), 0.2));
-  std::cout << "V_val: " << V.Evaluate(env) << "\n";
-  std::cout << "Vdot_val: " << Vdot.Evaluate(env) << "\n";
-  std::cout << "Vdot_linearized_val: " << Vdot_linear.Evaluate(env) << "\n";
-  std::cout << "xdot: " << xdot << "\n";
-  std::cout << "xdot_linearized: " << xdot_linearized << "\n";
   const int l_degree = 2;
   symbolic::Polynomial l;
   const symbolic::Variables x_set(x);
@@ -253,10 +284,16 @@ GTEST_TEST(PendulumROA, TestTrigLQR) {
   prog.AddSosConstraint(x_squared_d * (V - symbolic::Polynomial(rho, x_set)) -
                         l * Vdot - p * c);
   prog.AddLinearCost(-rho);
-  const auto result = solvers::Solve(prog);
+  solvers::SolverOptions solver_options;
+  // solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
+  // For some reason Mosek doesn't work well, it runs into Unknown error.
+  solvers::CsdpSolver csdp_solver;
+  const auto result = csdp_solver.Solve(prog, std::nullopt, solver_options);
+  std::cout << result.get_solution_result() << "\n";
   ASSERT_TRUE(result.is_success());
   const double rho_sol = result.GetSolution(rho);
   std::cout << "rho_sol: " << rho_sol << "\n";
+  EXPECT_GT(rho_sol, 0.001);
 }
 }  // namespace analysis
 }  // namespace systems

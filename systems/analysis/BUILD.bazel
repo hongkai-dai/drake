@@ -862,6 +862,7 @@ drake_cc_binary(
         ":simulator",
         ":simulator_config_functions",
         ":pendulum",
+        "//solvers:scs_solver",
         "//solvers:solve",
         "//systems/primitives:vector_log_sink",
     ],
@@ -894,8 +895,10 @@ drake_cc_library(
 drake_cc_googletest(
     name = "pendulum_test",
     deps = [
+        ":clf_cbf_utils",
         ":pendulum",
         "//common/test_utilities:eigen_matrix_compare",
+        "//solvers:csdp_solver",
         "//solvers:mathematical_program",
         "//solvers:solve",
         "//systems/analysis:simulator",
@@ -986,7 +989,9 @@ drake_cc_googletest(
     deps = [
         ":clf_cbf_utils",
         "//common/test_utilities:symbolic_test_util",
+        "//math:matrix_util",
         "//solvers:mosek_solver",
+        "//solvers:solve",
     ],
 )
 

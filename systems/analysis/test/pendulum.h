@@ -17,6 +17,16 @@ void ControlAffineDynamics(
     const Vector2<symbolic::Variable>& x, double theta_des,
     Vector2<symbolic::Polynomial>* f, Vector2<symbolic::Polynomial>* G);
 
+template <typename T>
+Vector3<T> ToTrigState(const T& theta, const T& thetadot, double theta_des) {
+  const double sin_theta_des = std::sin(theta_des);
+  const double cos_theta_des = std::cos(theta_des);
+  using std::cos;
+  using std::sin;
+  return Vector3<T>(sin(theta) - sin_theta_des, cos(theta) - cos_theta_des,
+                    thetadot);
+}
+
 /**
  * The state is x = (sin(theta) - sin(theta_des), cos(theta) - cos(theta_des),
  * thetadot)

@@ -222,6 +222,110 @@ void GetPolynomialSolutions(const solvers::MathematicalProgramResult& result,
   }
 }
 
+VectorX<symbolic::Monomial> ComputeMonomialBasisNoConstant(
+    const symbolic::Variables& vars, int degree,
+    symbolic::internal::DegreeType degree_type) {
+  const auto m = symbolic::internal::ComputeMonomialBasis<Eigen::Dynamic>(
+      vars, degree, degree_type);
+  VectorX<symbolic::Monomial> ret(m.rows());
+  int index = 0;
+  for (int i = 0; i < m.rows(); ++i) {
+    if (m(i).total_degree() > 0) {
+      ret(index) = m(i);
+      index++;
+    }
+  }
+  ret.conservativeResize(index);
+  return ret;
+}
+
+// Create a new sos polynomial p(x) which satisfies p(0)=0
+void NewSosPolynomialPassOrigin(solvers::MathematicalProgram* prog,
+                                const symbolic::Variables& indeterminates,
+                                int degree,
+                                symbolic::internal::DegreeType degree_type,
+                                symbolic::Polynomial* p,
+                                VectorX<symbolic::Monomial>* monomial_basis,
+                                MatrixX<symbolic::Expression>* gram) {
+  switch (degree_type) {
+    case symbolic::internal::DegreeType::kAny: {
+      *monomial_basis = ComputeMonomialBasisNoConstant(
+          indeterminates, degree / 2, symbolic::internal::DegreeType::kAny);
+      MatrixX<symbolic::Variable> gram_var;
+      std::tie(*p, gram_var) = prog->NewSosPolynomial(
+          *monomial_basis,
+          solvers::MathematicalProgram::NonnegativePolynomial::kSos);
+      *gram = gram_var.cast<symbolic::Expression>();
+      break;
+    }
+    case symbolic::internal::DegreeType::kEven: {
+      symbolic::Polynomial p_even, p_odd;
+      const VectorX<symbolic::Monomial> monomial_basis_even =
+          ComputeMonomialBasisNoConstant(indeterminates, degree / 2,
+                                         symbolic::internal::DegreeType::kEven);
+      const VectorX<symbolic::Monomial> monomial_basis_odd =
+          ComputeMonomialBasisNoConstant(indeterminates, degree / 2,
+                                         symbolic::internal::DegreeType::kOdd);
+      MatrixX<symbolic::Expression> gram_even, gram_odd;
+      std::tie(p_even, gram_even) = prog->NewSosPolynomial(monomial_basis_even);
+      std::tie(p_odd, gram_odd) = prog->NewSosPolynomial(monomial_basis_odd);
+      monomial_basis->resize(monomial_basis_even.rows() +
+                             monomial_basis_odd.rows());
+      *monomial_basis << monomial_basis_even, monomial_basis_odd;
+      gram->resize(monomial_basis->rows(), monomial_basis->rows());
+      gram->topLeftCorner(gram_even.rows(), gram_even.cols()) = gram_even;
+      gram->bottomRightCorner(gram_odd.rows(), gram_odd.cols()) = gram_odd;
+      *p = p_even + p_odd;
+      break;
+    }
+    default: {
+      throw std::runtime_error("sos polynomial cannot be odd order.");
+    }
+  }
+}
+
+std::unique_ptr<solvers::MathematicalProgram> FindCandidateLyapunov(
+    const Eigen::Ref<const VectorX<symbolic::Variable>>& x, int V_degree,
+    const Eigen::Ref<const Eigen::MatrixXd>& x_val,
+    const Eigen::Ref<const Eigen::MatrixXd>& xdot_val, symbolic::Polynomial* V,
+    MatrixX<symbolic::Expression>* V_gram) {
+  auto prog = std::make_unique<solvers::MathematicalProgram>();
+  prog->AddIndeterminates(x);
+  const symbolic::Variables x_set(x);
+  DRAKE_DEMAND(x_val.rows() == x.rows());
+  DRAKE_DEMAND(xdot_val.rows() == x.rows());
+  DRAKE_DEMAND(xdot_val.cols() == x_val.cols());
+  VectorX<symbolic::Monomial> V_monomials;
+  NewSosPolynomialPassOrigin(prog.get(), x_set, V_degree,
+                             symbolic::internal::DegreeType::kAny, V,
+                             &V_monomials, V_gram);
+  // Now add the constraint V(xⁱ)<=1
+  const int num_samples = x_val.cols();
+  Eigen::MatrixXd V_monomials_vals(V_monomials.rows(), num_samples);
+  for (int i = 0; i < V_monomials.rows(); ++i) {
+    V_monomials_vals.row(i) = V_monomials(i).Evaluate(x, x_val).transpose();
+  }
+  for (int i = 0; i < num_samples; ++i) {
+    prog->AddLinearConstraint((*V_gram * (V_monomials_vals.col(i) *
+                                          V_monomials_vals.col(i).transpose()))
+                                  .trace(),
+                              -kInf, 1);
+  }
+  // Now add the constraint Vdot(xⁱ) <= 0
+  const RowVectorX<symbolic::Polynomial> dVdx = V->Jacobian(x);
+  symbolic::Expression cost;
+  for (int i = 0; i < num_samples; ++i) {
+    symbolic::Environment env;
+    env.insert(x, x_val.col(i));
+    const symbolic::Expression dVdx_i =
+        (dVdx.dot(xdot_val.col(i))).ToExpression().EvaluatePartial(env);
+    cost += dVdx_i;
+    prog->AddLinearConstraint(dVdx_i, -kInf, 0);
+  }
+  prog->AddLinearCost(cost);
+  return prog;
+}
+
 namespace internal {
 template <typename RhoType>
 symbolic::Polynomial EllipsoidPolynomial(

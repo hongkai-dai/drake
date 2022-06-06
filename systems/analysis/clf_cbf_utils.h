@@ -85,6 +85,46 @@ void GetPolynomialSolutions(const solvers::MathematicalProgramResult& result,
                             double zero_coeff_tol,
                             VectorX<symbolic::Polynomial>* p_sol);
 
+/**
+ * Compute the monomial basis for a given set of variables up to a certain
+ * degree, but remove the constant term 1 from the basis.
+ */
+VectorX<symbolic::Monomial> ComputeMonomialBasisNoConstant(
+    const symbolic::Variables& vars, int degree,
+    symbolic::internal::DegreeType degree_type);
+
+/**
+ * Creates a new sos polynomial p(x) which satisfies p(0) = 0
+ */
+void NewSosPolynomialPassOrigin(solvers::MathematicalProgram* prog,
+                                const symbolic::Variables& indeterminates,
+                                int degree,
+                                symbolic::internal::DegreeType degree_type,
+                                symbolic::Polynomial* p,
+                                VectorX<symbolic::Monomial>* monomial_basis,
+                                MatrixX<symbolic::Expression>* gram);
+
+/**
+ * Constructs a program to find Lyapunov candidate V that satisfy the following
+ * constraints
+ * <pre>
+ * min ∑ᵢVdot(xⁱ)
+ * s.t V is sos
+ *     V(0) = 0
+ *     Vdot(xⁱ) <= 0
+ *     V(xⁱ) <= 1
+ * </pre>
+ * @param x The indeterminates
+ * @param V_degree The total degree of V
+ * @param x_vals The sampled value of x, x_vals.col(i) is xⁱ
+ * @param xdot_vals xdot_vals.col(i) is the dynamics derivative at xⁱ
+ */
+std::unique_ptr<solvers::MathematicalProgram> FindCandidateLyapunov(
+    const Eigen::Ref<const VectorX<symbolic::Variable>>& x, int V_degree,
+    const Eigen::Ref<const Eigen::MatrixXd>& x_val,
+    const Eigen::Ref<const Eigen::MatrixXd>& xdot_val, symbolic::Polynomial* V,
+    MatrixX<symbolic::Expression>* V_gram);
+
 namespace internal {
 /** The ellipsoid polynomial (x−x*)ᵀS(x−x*)−ρ
  */

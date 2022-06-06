@@ -27,8 +27,7 @@ symbolic::Polynomial NewFreePolynomialNoConstant(
     const symbolic::Variables& indeterminates, int degree,
     const std::string& coeff_name, symbolic::internal::DegreeType degree_type) {
   const VectorX<symbolic::Monomial> m =
-      internal::ComputeMonomialBasisNoConstant(indeterminates, degree,
-                                               degree_type);
+      ComputeMonomialBasisNoConstant(indeterminates, degree, degree_type);
   const VectorX<symbolic::Variable> coeffs =
       prog->NewContinuousVariables(m.size(), coeff_name);
   symbolic::Polynomial::MapType poly_map;
@@ -71,52 +70,6 @@ double SmallestCoeff(const solvers::Binding<C>& binding) {
     }
   }
   return ret;
-}
-
-// Create a new sos polynomial p(x) which satisfies p(0)=0
-void NewSosPolynomialPassOrigin(solvers::MathematicalProgram* prog,
-                                const symbolic::Variables& indeterminates,
-                                int degree,
-                                symbolic::internal::DegreeType degree_type,
-                                symbolic::Polynomial* p,
-                                VectorX<symbolic::Monomial>* monomial_basis,
-                                MatrixX<symbolic::Expression>* gram) {
-  switch (degree_type) {
-    case symbolic::internal::DegreeType::kAny: {
-      *monomial_basis = internal::ComputeMonomialBasisNoConstant(
-          indeterminates, degree / 2, symbolic::internal::DegreeType::kAny);
-      MatrixX<symbolic::Variable> gram_var;
-      std::tie(*p, gram_var) = prog->NewSosPolynomial(
-          *monomial_basis,
-          solvers::MathematicalProgram::NonnegativePolynomial::kSos);
-      *gram = gram_var.cast<symbolic::Expression>();
-      break;
-    }
-    case symbolic::internal::DegreeType::kEven: {
-      symbolic::Polynomial p_even, p_odd;
-      const VectorX<symbolic::Monomial> monomial_basis_even =
-          internal::ComputeMonomialBasisNoConstant(
-              indeterminates, degree / 2,
-              symbolic::internal::DegreeType::kEven);
-      const VectorX<symbolic::Monomial> monomial_basis_odd =
-          internal::ComputeMonomialBasisNoConstant(
-              indeterminates, degree / 2, symbolic::internal::DegreeType::kOdd);
-      MatrixX<symbolic::Expression> gram_even, gram_odd;
-      std::tie(p_even, gram_even) = prog->NewSosPolynomial(monomial_basis_even);
-      std::tie(p_odd, gram_odd) = prog->NewSosPolynomial(monomial_basis_odd);
-      monomial_basis->resize(monomial_basis_even.rows() +
-                             monomial_basis_odd.rows());
-      *monomial_basis << monomial_basis_even, monomial_basis_odd;
-      gram->resize(monomial_basis->rows(), monomial_basis->rows());
-      gram->topLeftCorner(gram_even.rows(), gram_even.cols()) = gram_even;
-      gram->bottomRightCorner(gram_odd.rows(), gram_odd.cols()) = gram_odd;
-      *p = p_even + p_odd;
-      break;
-    }
-    default: {
-      throw std::runtime_error("sos polynomial cannot be odd order.");
-    }
-  }
 }
 
 // add the constraint that the ellipsoid is within the sub-level set {x |
@@ -187,6 +140,11 @@ void ControlLyapunov::AddControlLyapunovConstraint(
   std::tie(*gram, *monomials) = prog->AddSosConstraint(
       *vdot_poly, solvers::MathematicalProgram::NonnegativePolynomial::kSos,
       "Vd");
+  for (int i = 0; i < monomials->rows(); ++i) {
+    if ((*monomials)(i).total_degree() == 0) {
+      throw std::runtime_error("degree should not be 0");
+    }
+  }
 }
 
 std::unique_ptr<solvers::MathematicalProgram>
@@ -614,9 +572,9 @@ SearchLagrangianGivenVBoxInputBound::SearchLagrangianGivenVBoxInputBound(
       DRAKE_DEMAND(lagrangian_degrees_[i][j][2] % 2 == 0);
 
       const VectorX<symbolic::Monomial> l_monomial_basis =
-          internal::ComputeMonomialBasisNoConstant(
-              x_set_, lagrangian_degrees_[i][j][2] / 2,
-              symbolic::internal::DegreeType::kAny);
+          ComputeMonomialBasisNoConstant(x_set_,
+                                         lagrangian_degrees_[i][j][2] / 2,
+                                         symbolic::internal::DegreeType::kAny);
       std::tie(l_[i][j][2], lagrangian_grams_[i][j][2]) =
           progs_[i][j]->NewSosPolynomial(l_monomial_basis);
     }
@@ -1027,9 +985,9 @@ ControlLyapunovBoxInputBound::ConstructLagrangianAndBProgram(
       // k == 2, l_[i][j][2] doesn't have 1 in its monomial basis.
       DRAKE_DEMAND(lagrangian_degrees[i][j][2] % 2 == 0);
       const VectorX<symbolic::Monomial> l_monomial_basis =
-          internal::ComputeMonomialBasisNoConstant(
-              x_set_, lagrangian_degrees[i][j][2] / 2,
-              symbolic::internal::DegreeType::kAny);
+          ComputeMonomialBasisNoConstant(x_set_,
+                                         lagrangian_degrees[i][j][2] / 2,
+                                         symbolic::internal::DegreeType::kAny);
       std::tie((*lagrangians)[i][j][2], (*lagrangian_grams)[i][j][2]) =
           prog->NewSosPolynomial(l_monomial_basis);
     }
@@ -1080,8 +1038,8 @@ ControlLyapunovBoxInputBound::ConstructLyapunovProgram(
   DRAKE_DEMAND(V_degree >= 0 && V_degree % 2 == 0);
   if (positivity_eps_ == 0 && !symmetric_dynamics) {
     const VectorX<symbolic::Monomial> V_monomial =
-        internal::ComputeMonomialBasisNoConstant(
-            x_set_, V_degree / 2, symbolic::internal::DegreeType::kAny);
+        ComputeMonomialBasisNoConstant(x_set_, V_degree / 2,
+                                       symbolic::internal::DegreeType::kAny);
     std::tie(*V, *positivity_constraint_gram) =
         prog->NewSosPolynomial(V_monomial);
     *positivity_constraint_monomial = V_monomial;
@@ -1127,23 +1085,6 @@ ControlLyapunovBoxInputBound::ConstructLyapunovProgram(
 }
 
 namespace internal {
-VectorX<symbolic::Monomial> ComputeMonomialBasisNoConstant(
-    const symbolic::Variables& vars, int degree,
-    symbolic::internal::DegreeType degree_type) {
-  const auto m = symbolic::internal::ComputeMonomialBasis<Eigen::Dynamic>(
-      vars, degree, degree_type);
-  VectorX<symbolic::Monomial> ret(m.rows());
-  int index = 0;
-  for (int i = 0; i < m.rows(); ++i) {
-    if (m(i).total_degree() > 0) {
-      ret(index) = m(i);
-      index++;
-    }
-  }
-  ret.conservativeResize(index);
-  return ret;
-}
-
 bool IsDynamicsSymmetric(
     const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
     const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G) {

@@ -655,13 +655,6 @@ class ControlLyapunovBoxInputBound {
 };
 
 namespace internal {
-/**
- * Compute the monomial basis for a given set of variables up to a certain
- * degree, but remove the constant term 1 from the basis.
- */
-VectorX<symbolic::Monomial> ComputeMonomialBasisNoConstant(
-    const symbolic::Variables& vars, int degree,
-    symbolic::internal::DegreeType degree_type);
 
 /**
  * Returns if the dynamics is symmetric, namely f(x) = -f(-x) and G(x) = G(-x),

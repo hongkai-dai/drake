@@ -334,10 +334,9 @@ TEST_F(SimpleLinearSystemTest, SearchLagrangianAndBGivenVBoxInputBound) {
           EXPECT_TRUE((es_solver.eigenvalues().array() >= -psd_tol).all());
           VectorX<symbolic::Monomial> lagrangian_monomial_basis;
           if (k == 2) {
-            lagrangian_monomial_basis =
-                internal::ComputeMonomialBasisNoConstant(
-                    x_set_, lagrangian_degrees[i][j][k] / 2,
-                    symbolic::internal::DegreeType::kAny);
+            lagrangian_monomial_basis = ComputeMonomialBasisNoConstant(
+                x_set_, lagrangian_degrees[i][j][k] / 2,
+                symbolic::internal::DegreeType::kAny);
           } else {
             lagrangian_monomial_basis = symbolic::MonomialBasis(
                 x_set_, lagrangian_degrees[i][j][k] / 2);

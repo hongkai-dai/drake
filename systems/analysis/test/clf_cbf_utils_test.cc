@@ -3,7 +3,9 @@
 #include <gtest/gtest.h>
 
 #include "drake/common/test_utilities/symbolic_test_util.h"
+#include "drake/math/matrix_util.h"
 #include "drake/solvers/mosek_solver.h"
+#include "drake/solvers/solve.h"
 
 namespace drake {
 namespace systems {
@@ -204,6 +206,51 @@ GTEST_TEST(MaximizeInnerEllipsoidRho, Test2) {
       EXPECT_GE(sos_cond.Evaluate(env), 0.);
     }
   }
+}
+
+GTEST_TEST(FindCandidateLyapunov, Test) {
+  // Find the candidate Lyapunov for a stable linear system xdot = A*x
+  Eigen::Matrix2d A;
+  A << -1, 2, 0, -3;
+  const Vector2<symbolic::Variable> x(symbolic::Variable("x0"),
+                                      symbolic::Variable("x1"));
+  Eigen::Matrix<double, 2, 5> x_val;
+  // clang-format off
+  x_val << 0.2, 1, -2, 0.5, 1,
+           0.3, -0.5, 1.2, -0.4, 2;
+  // clang-format on
+  const Eigen::Matrix<double, 2, 5> xdot_val = A * x_val;
+
+  symbolic::Polynomial V;
+  MatrixX<symbolic::Expression> V_gram;
+  const int V_degree = 2;
+  auto prog = FindCandidateLyapunov(x, V_degree, x_val, xdot_val, &V, &V_gram);
+  const auto result = solvers::Solve(*prog);
+  ASSERT_TRUE(result.is_success());
+  EXPECT_EQ(V_gram.rows(), 2);
+  const auto V_sol = result.GetSolution(V);
+  Eigen::Matrix2d V_gram_sol;
+  for (int i = 0; i < V_gram.rows(); ++i) {
+    for (int j = 0; j < V_gram.cols(); ++j) {
+      const symbolic::Expression V_gram_ij = result.GetSolution(V_gram(i, j));
+      V_gram_sol(i, j) = symbolic::get_constant_value(V_gram_ij);
+    }
+  }
+  EXPECT_TRUE(math::IsPositiveDefinite(V_gram_sol));
+  EXPECT_TRUE((V_sol.EvaluateIndeterminates(x, x_val).array() >= 0).all());
+  const RowVector2<symbolic::Polynomial> dVdx = V_sol.Jacobian(x);
+  double cost_expected = 0;
+  for (int i = 0; i < x_val.cols(); ++i) {
+    symbolic::Environment env;
+    env.insert(x, x_val.col(i));
+    Eigen::RowVector2d dVdx_val;
+    for (int j = 0; j < x.rows(); ++j) {
+      dVdx_val(j) = dVdx(j).EvaluateIndeterminates(x, x_val.col(i))(0);
+    }
+    EXPECT_LE(dVdx_val.dot(xdot_val.col(i)), 0);
+    cost_expected += dVdx_val.dot(xdot_val.col(i));
+  }
+  EXPECT_NEAR(result.get_optimal_cost(), cost_expected, 1E-5);
 }
 
 }  // namespace analysis

@@ -5,7 +5,10 @@
 #include "drake/common/drake_copyable.h"
 #include "drake/examples/pendulum/pendulum_plant.h"
 #include "drake/math/autodiff_gradient.h"
+#include "drake/solvers/common_solver_option.h"
+#include "drake/solvers/scs_solver.h"
 #include "drake/solvers/solve.h"
+#include "drake/systems/analysis/clf_cbf_utils.h"
 #include "drake/systems/analysis/control_lyapunov.h"
 #include "drake/systems/analysis/simulator.h"
 #include "drake/systems/analysis/test/pendulum.h"
@@ -148,15 +151,16 @@ void Simulate(const Vector2<symbolic::Variable>& x,
   Vector3<symbolic::Polynomial> G;
   TrigPolyDynamics(pendulum, x, theta_des, &f, &G);
   for (int i = 0; i < 3; ++i) {
-    f(i) = f(i).RemoveTermsWithSmallCoefficients(1e-10);
-    G(i) = G(i).RemoveTermsWithSmallCoefficients(1e-10);
+    f(i) = f(i).RemoveTermsWithSmallCoefficients(1e-8);
+    G(i) = G(i).RemoveTermsWithSmallCoefficients(1e-8);
   }
   const Eigen::RowVector2d u_vertices(u_bound, -u_bound);
-  const double sin_theta_des = std::sin(theta_des);
-  const double cos_theta_des = std::cos(theta_des);
+  const double sin_theta_des = theta_des == M_PI ? 0 : std::sin(theta_des);
+  const double cos_theta_des = theta_des == M_PI ? -1 : std::cos(theta_des);
   Vector1<symbolic::Polynomial> state_constraints(symbolic::Polynomial(
       (x(0) + sin_theta_des) * (x(0) + sin_theta_des) +
       (x(1) + cos_theta_des) * (x(1) + cos_theta_des) - 1));
+  state_constraints(0) = state_constraints(0).Expand();
   state_constraints(0) =
       state_constraints(0).RemoveTermsWithSmallCoefficients(1E-8);
   const ControlLyapunov dut(x, f, G, u_vertices, state_constraints);
@@ -168,10 +172,15 @@ void Simulate(const Vector2<symbolic::Variable>& x,
   const Eigen::Matrix3d S = Eigen::Matrix3d::Identity();
 
   ControlLyapunov::SearchOptions search_options;
-  search_options.backoff_scale = 0.02;
+  search_options.lyap_step_solver = solvers::ScsSolver::id();
+  search_options.lyap_step_solver_options = solvers::SolverOptions();
+  // search_options.lyap_step_solver_options->SetOption(
+  //    solvers::CommonSolverOption::kPrintToConsole, 1);
+  search_options.backoff_scale = 0.03;
+  search_options.lsol_tiny_coeff_tol = 1E-5;
   // There are tiny coefficients coming from numerical roundoff error.
-  search_options.lyap_tiny_coeff_tol = 1E-10;
-  const double rho_min = 0.001;
+  search_options.lyap_tiny_coeff_tol = 1E-8;
+  const double rho_min = 0.01;
   const double rho_max = 15;
   const double rho_bisection_tol = 0.01;
   const ControlLyapunov::RhoBisectionOption rho_bisection_option(
@@ -182,13 +191,42 @@ void Simulate(const Vector2<symbolic::Variable>& x,
   VectorX<symbolic::Polynomial> p;
   double rho;
   const double deriv_eps = 0.0;
-  // Compute V_init from constrained LQR.
+  // Compute V_init from LQR controller.
   const Eigen::Matrix3d Q = Eigen::Matrix3d::Identity();
   const Vector1d R(1);
   const auto lqr_result = TrigDynamicsLQR(pendulum, theta_des, Q, R);
-  symbolic::Polynomial V_init(
-      x.cast<symbolic::Expression>().dot(lqr_result.S * x));
+  symbolic::Polynomial V_init;
+  {
+    // Now take many samples around (theta_des, 0).
+    const Eigen::VectorXd theta_samples =
+        Eigen::VectorXd::LinSpaced(-0.2 + theta_des, 0.2 + theta_des, 10);
+    const Eigen::VectorXd thetadot_samples =
+        Eigen::VectorXd::LinSpaced(-0.3, 0.3, 10);
+    Eigen::Matrix3Xd x_val(3, theta_samples.cols() * thetadot_samples.cols());
+    Eigen::Matrix3Xd xdot_val(3, x_val.cols());
+    int x_count = 0;
+    for (int i = 0; i < theta_samples.rows(); ++i) {
+      for (int j = 0; j < thetadot_samples.rows(); ++j) {
+        x_val.col(x_count) =
+            ToTrigState(theta_samples(i), thetadot_samples(j), theta_des);
+        const double u = -lqr_result.K.row(0).dot(x_val.col(x_count)) +
+                         EquilibriumTorque(pendulum, theta_des);
+        xdot_val.col(x_count) = TrigDynamics<double>(
+            pendulum, x_val.col(x_count), theta_des, Vector1d(u));
+        x_count++;
+      }
+    }
+    const int V_init_degree = 2;
+    MatrixX<symbolic::Expression> V_init_gram;
+    auto prog_V_init = FindCandidateLyapunov(x, V_init_degree, x_val, xdot_val,
+                                             &V_init, &V_init_gram);
+    const auto result_init = solvers::Solve(*prog_V_init);
+    DRAKE_DEMAND(result_init.is_success());
+    V_init = result_init.GetSolution(V_init);
+  }
+
   V_init = V_init.RemoveTermsWithSmallCoefficients(1e-6);
+  // First maximize rho such that V(x)<=rho defines a valid ROA.
   {
     std::vector<MatrixX<symbolic::Variable>> l_grams;
     symbolic::Variable rho_var;
@@ -200,13 +238,17 @@ void Simulate(const Vector2<symbolic::Variable>& x,
         &l_grams, &p, &rho_var, &vdot_sos, &vdot_monomials, &vdot_gram);
     const auto result = solvers::Solve(*prog);
     DRAKE_DEMAND(result.is_success());
-    std::cout << "rho: " << result.GetSolution(rho_var) << "\n";
+    std::cout << fmt::format("V_init(x) <= {}\n", result.GetSolution(rho_var));
   }
 
   symbolic::Polynomial V_sol;
   dut.Search(V_init, lambda0_degree, l_degrees, V_degree, p_degrees, deriv_eps,
              x_star, S, V_degree - 2, search_options, rho_bisection_option,
              &V_sol, &lambda0, &l, &r, &p, &rho);
+  // Check if theta = 0, thetadot = 0 is in the verified ROA.
+  std::cout << fmt::format("V at (theta, thetadot)=(0, 0) = {}\n",
+                           V_sol.EvaluateIndeterminates(
+                               x, ToTrigState<double>(0., 0, theta_des))(0));
 }
 
 [[maybe_unused]] void Search() {

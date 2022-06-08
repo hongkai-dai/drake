@@ -4,6 +4,7 @@
 
 #include "drake/common/drake_copyable.h"
 #include "drake/examples/pendulum/pendulum_plant.h"
+#include "drake/geometry/meshcat_visualizer.h"
 #include "drake/math/autodiff_gradient.h"
 #include "drake/solvers/common_solver_option.h"
 #include "drake/solvers/scs_solver.h"
@@ -14,6 +15,8 @@
 #include "drake/systems/analysis/test/pendulum.h"
 #include "drake/systems/controllers/linear_quadratic_regulator.h"
 #include "drake/systems/framework/diagram_builder.h"
+#include "drake/systems/primitives/adder.h"
+#include "drake/systems/primitives/constant_vector_source.h"
 #include "drake/systems/primitives/linear_system.h"
 #include "drake/systems/primitives/vector_log_sink.h"
 
@@ -22,106 +25,43 @@ namespace systems {
 namespace analysis {
 const double kInf = std::numeric_limits<double>::infinity();
 
-class ControlledPendulum final : public LeafSystem<double> {
- public:
-  DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(ControlledPendulum)
-
-  ControlledPendulum(symbolic::Polynomial clf, Vector2<symbolic::Variable> x,
-                     Eigen::Vector2d x_des, double u_bound, double deriv_eps)
-      : LeafSystem<double>(),
-        clf_{std::move(clf)},
-        x_{std::move(x)},
-        x_des_{std::move(x_des)},
-        u_bound_{u_bound},
-        deriv_eps_{deriv_eps} {
-    auto state_index = this->DeclareContinuousState(2);
-    state_output_index_ =
-        this->DeclareStateOutputPort("state", state_index).get_index();
-    clf_output_index_ =
-        this->DeclareVectorOutputPort("clf", 1, &ControlledPendulum::CalcClf)
-            .get_index();
-    const RowVector2<symbolic::Polynomial> dVdx = clf_.Jacobian(x_);
-    pendulum_.ControlAffineDynamics(x_, x_des_(0), u_bound_, &f_, &G_);
-    dVdx_times_f_ = dVdx.dot(f_);
-    dVdx_times_G_ = dVdx.dot(G_);
-  }
-
-  ~ControlledPendulum() final{};
-
-  const OutputPortIndex& state_output_index() const {
-    return state_output_index_;
-  }
-
-  const OutputPortIndex& clf_output_index() const { return clf_output_index_; }
-
- private:
-  virtual void DoCalcTimeDerivatives(
-      const systems::Context<double>& context,
-      systems::ContinuousState<double>* derivatives) const final {
-    solvers::MathematicalProgram prog;
-    auto u = prog.NewContinuousVariables<1>();
-    prog.AddBoundingBoxConstraint(-1, 1, u(0));
-    prog.AddQuadraticCost(Eigen::Matrix<double, 1, 1>::Constant(1),
-                          Eigen::Matrix<double, 1, 1>::Zero(), u);
-    const Vector2<double> x_val =
-        context.get_continuous_state_vector().CopyToVector();
-    const Vector2<double> x_bar_val = x_val - x_des_;
-
-    symbolic::Environment env;
-    env.insert(x_, x_bar_val);
-    const double dVdx_times_f_val = dVdx_times_f_.Evaluate(env);
-    const double dVdx_times_G_val = dVdx_times_G_.Evaluate(env);
-    const double V_val = clf_.Evaluate(env);
-    // dVdx * G * u + dVdx * f <= -eps * V
-    prog.AddLinearConstraint(
-        Eigen::Matrix<double, 1, 1>::Constant(dVdx_times_G_val), -kInf,
-        -deriv_eps_ * V_val - dVdx_times_f_val, u);
-    const auto result = solvers::Solve(prog);
-    DRAKE_DEMAND(result.is_success());
-    const double u_val = result.GetSolution(u(0)) * u_bound_;
-    auto& derivative_vector = derivatives->get_mutable_vector();
-    derivative_vector.SetAtIndex(0, x_val(1));
-    derivative_vector.SetAtIndex(
-        1, pendulum_.ComputeThetaddot(x_val(0), x_val(1), u_val));
-  }
-
-  void CalcClf(const Context<double>& context,
-               BasicVector<double>* output) const {
-    const Vector2<double> x_val =
-        context.get_continuous_state_vector().CopyToVector();
-    const Vector2<double> x_bar_val = x_val - x_des_;
-
-    symbolic::Environment env;
-    env.insert(x_, x_bar_val);
-    Eigen::VectorBlock<VectorX<double>> clf_vec = output->get_mutable_value();
-    clf_vec(0) = clf_.Evaluate(env);
-  }
-
-  symbolic::Polynomial clf_;
-  Vector2<symbolic::Variable> x_;
-  Eigen::Vector2d x_des_;
-  double u_bound_;
-  double deriv_eps_;
-  Pendulum pendulum_;
-  Vector2<symbolic::Polynomial> f_;
-  Vector2<symbolic::Polynomial> G_;
-  symbolic::Polynomial dVdx_times_f_;
-  symbolic::Polynomial dVdx_times_G_;
-  OutputPortIndex state_output_index_;
-  OutputPortIndex clf_output_index_;
-};
-
-void Simulate(const Vector2<symbolic::Variable>& x,
-              const Eigen::Vector2d& x_des, const symbolic::Polynomial& clf,
-              double u_bound, double deriv_eps, const Eigen::Vector2d& x0,
-              double duration) {
+void Simulate(const Vector2<symbolic::Variable>& x, double theta_des,
+              const symbolic::Polynomial& clf, double u_bound, double deriv_eps,
+              const Eigen::Vector2d& x0, double duration) {
   systems::DiagramBuilder<double> builder;
-  auto system =
-      builder.AddSystem<ControlledPendulum>(clf, x, x_des, u_bound, deriv_eps);
-  auto state_logger = LogVectorOutput(
-      system->get_output_port(system->state_output_index()), &builder);
+  auto pendulum =
+      builder.AddSystem<examples::pendulum::PendulumPlant<double>>();
+  const Eigen::Vector2d Au(1, -1);
+  const Eigen::Vector2d bu(u_bound, u_bound);
+  const Vector1d u_star(0);
+  const Vector1d Ru(1);
+
+  Vector2<symbolic::Polynomial> f;
+  Vector2<symbolic::Polynomial> G;
+  ControlAffineDynamics(*pendulum, x, theta_des, &f, &G);
+
+  auto clf_controller = builder.AddSystem<ClfController>(
+      x, f, G, clf, deriv_eps, Au, bu, u_star, Ru);
+  auto state_logger =
+      LogVectorOutput(pendulum->get_state_output_port(), &builder);
   auto clf_logger = LogVectorOutput(
-      system->get_output_port(system->clf_output_index()), &builder);
+      clf_controller->get_output_port(clf_controller->clf_output_index()),
+      &builder);
+  // Shift the state by (-theta_des, 0) as the input to the clf controller.
+  auto state_shifter = builder.AddSystem<ConstantVectorSource<double>>(
+      Eigen::Vector2d(-theta_des, 0));
+  const int nx = pendulum->num_continuous_states();
+  auto state_adder = builder.AddSystem<Adder<double>>(2, nx);
+  builder.Connect(pendulum->get_state_output_port(),
+                  state_adder->get_input_port(0));
+  builder.Connect(state_shifter->get_output_port(),
+                  state_adder->get_input_port(1));
+  builder.Connect(
+      state_adder->get_output_port(),
+      clf_controller->get_input_port(clf_controller->x_input_index()));
+  builder.Connect(
+      clf_controller->get_output_port(clf_controller->control_output_index()),
+      pendulum->get_input_port());
   auto diagram = builder.Build();
   auto context = diagram->CreateDefaultContext();
 
@@ -140,8 +80,52 @@ void Simulate(const Vector2<symbolic::Variable>& x,
       clf_logger->FindLog(simulator.get_context()).data().rightCols<1>());
 }
 
+void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
+                     const symbolic::Polynomial& clf, double u_bound,
+                     double deriv_eps, double theta0, double thetadot0,
+                     double duration) {
+  systems::DiagramBuilder<double> builder;
+  auto pendulum =
+      builder.AddSystem<examples::pendulum::PendulumPlant<double>>();
+
+  Vector3<symbolic::Polynomial> f;
+  Vector3<symbolic::Polynomial> G;
+  TrigPolyDynamics(*pendulum, x, theta_des, &f, &G);
+  Vector1d u_star(0);
+  auto clf_controller = builder.AddSystem<ClfController>(
+      x, f, G, clf, deriv_eps, Eigen::Vector2d(1, -1),
+      Eigen::Vector2d(u_bound, u_bound), u_star, Vector1d::Ones());
+
+  auto state_converter = builder.AddSystem<TrigStateConverter>(theta_des);
+
+  builder.Connect(pendulum->get_state_output_port(),
+                  state_converter->get_input_port());
+  builder.Connect(
+      state_converter->get_output_port(),
+      clf_controller->get_input_port(clf_controller->x_input_index()));
+  builder.Connect(
+      clf_controller->get_output_port(clf_controller->control_output_index()),
+      pendulum->get_input_port());
+
+  auto diagram = builder.Build();
+  auto context = diagram->CreateDefaultContext();
+
+  Simulator<double> simulator(*diagram);
+  simulator.get_mutable_context().SetContinuousState(
+      Eigen::Vector2d(theta0, thetadot0));
+
+  simulator.AdvanceTo(duration);
+  std::cout << "Final state: "
+            << simulator.get_context()
+                   .get_continuous_state()
+                   .get_vector()
+                   .CopyToVector()
+                   .transpose()
+            << "\n";
+}
+
 [[maybe_unused]] void SearchWTrigPoly() {
-  const double u_bound = 25;
+  const double u_bound = 30;
   const Vector3<symbolic::Variable> x(symbolic::Variable("x0"),
                                       symbolic::Variable("x1"),
                                       symbolic::Variable("x2"));
@@ -166,31 +150,17 @@ void Simulate(const Vector2<symbolic::Variable>& x,
   const ControlLyapunov dut(x, f, G, u_vertices, state_constraints);
   const int lambda0_degree = 2;
   const std::vector<int> l_degrees{4, 4};
-  const std::vector<int> p_degrees{5};
+  const std::vector<int> p_degrees{6};
   const int V_degree = 2;
   const Eigen::Vector3d x_star(0, 0, 0);
   const Eigen::Matrix3d S = Eigen::Matrix3d::Identity();
 
-  ControlLyapunov::SearchOptions search_options;
-  search_options.lyap_step_solver = solvers::ScsSolver::id();
-  search_options.lyap_step_solver_options = solvers::SolverOptions();
-  // search_options.lyap_step_solver_options->SetOption(
-  //    solvers::CommonSolverOption::kPrintToConsole, 1);
-  search_options.backoff_scale = 0.03;
-  search_options.lsol_tiny_coeff_tol = 1E-5;
-  // There are tiny coefficients coming from numerical roundoff error.
-  search_options.lyap_tiny_coeff_tol = 1E-8;
-  const double rho_min = 0.01;
-  const double rho_max = 15;
-  const double rho_bisection_tol = 0.01;
-  const ControlLyapunov::RhoBisectionOption rho_bisection_option(
-      rho_min, rho_max, rho_bisection_tol);
   symbolic::Polynomial lambda0;
   VectorX<symbolic::Polynomial> l;
   symbolic::Polynomial r;
   VectorX<symbolic::Polynomial> p;
   double rho;
-  const double deriv_eps = 0.0;
+  const double deriv_eps = 0.2;
   // Compute V_init from LQR controller.
   const Eigen::Matrix3d Q = Eigen::Matrix3d::Identity();
   const Vector1d R(1);
@@ -199,10 +169,10 @@ void Simulate(const Vector2<symbolic::Variable>& x,
   {
     // Now take many samples around (theta_des, 0).
     const Eigen::VectorXd theta_samples =
-        Eigen::VectorXd::LinSpaced(-0.2 + theta_des, 0.2 + theta_des, 10);
+        Eigen::VectorXd::LinSpaced(10, -0.2 + theta_des, 0.2 + theta_des);
     const Eigen::VectorXd thetadot_samples =
-        Eigen::VectorXd::LinSpaced(-0.3, 0.3, 10);
-    Eigen::Matrix3Xd x_val(3, theta_samples.cols() * thetadot_samples.cols());
+        Eigen::VectorXd::LinSpaced(10, -0.3, 0.3);
+    Eigen::Matrix3Xd x_val(3, theta_samples.rows() * thetadot_samples.rows());
     Eigen::Matrix3Xd xdot_val(3, x_val.cols());
     int x_count = 0;
     for (int i = 0; i < theta_samples.rows(); ++i) {
@@ -239,19 +209,40 @@ void Simulate(const Vector2<symbolic::Variable>& x,
     const auto result = solvers::Solve(*prog);
     DRAKE_DEMAND(result.is_success());
     std::cout << fmt::format("V_init(x) <= {}\n", result.GetSolution(rho_var));
+    V_init = V_init / result.GetSolution(rho_var);
   }
 
+  ControlLyapunov::SearchOptions search_options;
+  search_options.bilinear_iterations = 20;
+  //search_options.lyap_step_solver = solvers::CsdpSolver::id();
+  search_options.lyap_step_solver_options = solvers::SolverOptions();
+  //search_options.lyap_step_solver_options->SetOption(
+  //    solvers::CommonSolverOption::kPrintToConsole, 1);
+  search_options.backoff_scale = 0.02;
+  search_options.lsol_tiny_coeff_tol = 1E-5;
+  // There are tiny coefficients coming from numerical roundoff error.
+  search_options.lyap_tiny_coeff_tol = 1E-7;
+  const double rho_min = 0.01;
+  const double rho_max = 15;
+  const double rho_bisection_tol = 0.01;
+  const ControlLyapunov::RhoBisectionOption rho_bisection_option(
+      rho_min, rho_max, rho_bisection_tol);
   symbolic::Polynomial V_sol;
   dut.Search(V_init, lambda0_degree, l_degrees, V_degree, p_degrees, deriv_eps,
              x_star, S, V_degree - 2, search_options, rho_bisection_option,
              &V_sol, &lambda0, &l, &r, &p, &rho);
-  // Check if theta = 0, thetadot = 0 is in the verified ROA.
-  std::cout << fmt::format("V at (theta, thetadot)=(0, 0) = {}\n",
-                           V_sol.EvaluateIndeterminates(
-                               x, ToTrigState<double>(0., 0, theta_des))(0));
+  const double theta0 = 0.5;
+  const double thetadot0 = 0.0;
+  std::cout << fmt::format(
+      "V at (theta, thetadot)=({}, {}) = {}\n", theta0, thetadot0,
+      V_sol.EvaluateIndeterminates(
+          x, ToTrigState<double>(theta0, thetadot0, theta_des))(0));
+
+  SimulateTrigClf(x, theta_des, V_sol, u_bound, deriv_eps, theta0, thetadot0,
+                  30);
 }
 
-[[maybe_unused]] void Search() {
+[[maybe_unused]] void SearchWTaylorDynamics() {
   examples::pendulum::PendulumPlant<double> pendulum;
   const Vector2<symbolic::Variable> x(symbolic::Variable("x0"),
                                       symbolic::Variable("x1"));
@@ -322,6 +313,8 @@ void Simulate(const Vector2<symbolic::Variable>& x,
     dut.Search(V_init, lambda0_degree, l_degrees, V_degree, p_degrees,
                deriv_eps, x_star, S, V_degree - 2, search_options,
                rho_bisection_option, &V_sol, &lambda0, &l, &r, &p, &rho);
+    Simulate(x, theta_des, V_sol, u_bound, deriv_eps,
+             Eigen::Vector2d(M_PI + 0.6 * M_PI, 0), 10);
   }
 }
 
@@ -379,39 +372,8 @@ void Simulate(const Vector2<symbolic::Variable>& x,
   *deriv_eps_sol = clf_result.deriv_eps;
 }
 
-[[maybe_unused]] void SearchWTaylorDynamics() {
-  const Vector2<symbolic::Variable> x(symbolic::Variable("x0"),
-                                      symbolic::Variable("x1"));
-
-  const Pendulum pendulum;
-  Vector2<symbolic::Polynomial> f;
-  Vector2<symbolic::Polynomial> G;
-  const double u_bound = 25;
-  Eigen::Matrix2d A;
-  Eigen::Vector2d B;
-  const double theta_des = M_PI;
-  const Vector2<double> x_des(theta_des, 0);
-  pendulum.DynamicsGradient(theta_des, u_bound, &A, &B);
-  const auto lqr_result = controllers::LinearQuadraticRegulator(
-      A, B, Eigen::Matrix2d::Identity(), Vector1<double>::Identity());
-  pendulum.ControlAffineDynamics(x, M_PI, u_bound, &f, &G);
-  for (int i = 0; i < 2; ++i) {
-    f(i) = f(i).RemoveTermsWithSmallCoefficients(1E-6);
-    G(i, 0) = G(i, 0).RemoveTermsWithSmallCoefficients(1E-6);
-  }
-  symbolic::Polynomial V_init(x.dot(lqr_result.S * x));
-
-  symbolic::Polynomial V_sol;
-  double deriv_eps_sol;
-  SearchWBoxBounds(V_init, x, f, G, &V_sol, &deriv_eps_sol);
-
-  std::cout << "clf: " << V_sol << "\n";
-  Simulate(x, x_des, V_sol, u_bound, deriv_eps_sol,
-           Eigen::Vector2d(M_PI + M_PI * 0.6, 0), 10);
-}
 
 int DoMain() {
-  // Search();
   // SearchWTaylorDynamics();
   SearchWTrigPoly();
   return 0;

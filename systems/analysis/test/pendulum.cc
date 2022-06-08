@@ -2,6 +2,7 @@
 
 #include "drake/math/autodiff_gradient.h"
 #include "drake/systems/controllers/linear_quadratic_regulator.h"
+#include "drake/systems/framework/leaf_system.h"
 
 namespace drake {
 namespace systems {
@@ -80,38 +81,23 @@ double EquilibriumTorque(
   return u_des;
 }
 
-double Pendulum::ComputeThetaddot(double theta, double theta_dot,
-                                  double u) const {
-  const double theta_ddot = (u - mass_ * gravity_ * length_ * std::sin(theta) -
-                             damping_ * theta_dot) /
-                            (mass_ * length_ * length_);
-  return theta_ddot;
+TrigStateConverter::TrigStateConverter(double theta_des)
+    : LeafSystem<double>(),
+      sin_theta_des(std::sin(theta_des)),
+      cos_theta_des(std::cos(theta_des)) {
+  this->DeclareVectorInputPort("theta_thetadot", 2);
+  this->DeclareVectorOutputPort("x", 3, &TrigStateConverter::Convert);
 }
 
-void Pendulum::ControlAffineDynamics(const Vector2<symbolic::Variable>& x,
-                                     double theta_des, double u_bound,
-                                     Vector2<symbolic::Polynomial>* f,
-                                     Vector2<symbolic::Polynomial>* G) const {
-  (*G)(0) = symbolic::Polynomial();
-  (*G)(1) = symbolic::Polynomial(u_bound / (mass_ * length_ * length_));
-  (*f)(0) = symbolic::Polynomial(x(1));
-  (*f)(1) = symbolic::Polynomial(
-      (-mass_ * gravity_ * length_ *
-           (std::sin(theta_des) + std::cos(theta_des) * x(0) -
-            std::sin(theta_des) / 2 * pow(x(0), 2) -
-            std::cos(theta_des) / 6 * pow(x(0), 3)) -
-       damping_ * x(1)) /
-      (mass_ * length_ * length_));
+void TrigStateConverter::Convert(const Context<double>& context,
+                                 BasicVector<double>* x) const {
+  const Eigen::Vector2d theta_thetadot = this->get_input_port().Eval(context);
+  const double theta = theta_thetadot(0);
+  x->get_mutable_value() =
+      Eigen::Vector3d(std::sin(theta) - sin_theta_des,
+                      std::cos(theta) - cos_theta_des, theta_thetadot(1));
 }
 
-void Pendulum::DynamicsGradient(double theta, double u_bound,
-                                Eigen::Matrix2d* A, Eigen::Vector2d* B) const {
-  *A << 0, 1,
-      -mass_ * gravity_ * length_ * std::cos(theta) /
-          (mass_ * length_ * length_),
-      -damping_ / (mass_ * length_ * length_);
-  *B << 0, u_bound / (mass_ * length_ * length_);
-}
 }  // namespace analysis
 }  // namespace systems
 }  // namespace drake

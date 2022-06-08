@@ -7,6 +7,7 @@
 #include "drake/solvers/choose_best_solver.h"
 #include "drake/solvers/mathematical_program.h"
 #include "drake/solvers/mathematical_program_result.h"
+#include "drake/solvers/solve.h"
 #include "drake/solvers/sos_basis_generator.h"
 #include "drake/systems/analysis/clf_cbf_utils.h"
 
@@ -136,6 +137,9 @@ void ControlLyapunov::AddControlLyapunovConstraint(
   if (state_constraints_.rows() > 0) {
     *vdot_poly -= p.dot(state_constraints_);
   }
+  // TODO(hongkai.dai): remove this line when CsdpSolver ignores empty
+  // constraint.
+  *vdot_poly = vdot_poly->RemoveTermsWithSmallCoefficients(1E-7);
   // We know this sos polynomial should not contain 1 in its monomial basis.
   std::tie(*gram, *monomials) = prog->AddSosConstraint(
       *vdot_poly, solvers::MathematicalProgram::NonnegativePolynomial::kSos,
@@ -283,9 +287,9 @@ void ControlLyapunov::Search(
     {
       MaximizeInnerEllipsoidRho(
           x_, x_star, S, *V_sol - 1, r_degree, rho_bisection_option.rho_max,
-          rho_bisection_option.rho_min, search_options.lyap_step_solver,
-          search_options.lyap_step_solver_options, rho_bisection_option.rho_tol,
-          rho_sol, r_sol);
+          rho_bisection_option.rho_min, search_options.ellipsoid_step_solver,
+          search_options.ellipsoid_step_solver_options,
+          rho_bisection_option.rho_tol, rho_sol, r_sol);
       drake::log()->info("iter {}, rho={}", iter_count, *rho_sol);
       if (*rho_sol - rho_prev < search_options.rho_converge_tol) {
         return;
@@ -316,6 +320,8 @@ void ControlLyapunov::Search(
                   search_options.lagrangian_step_solver_options,
                   &result_lagrangian);
       if (result_lagrangian.is_success()) {
+        // internal::PrintPsdConstraintStat(*prog_lagrangian,
+        // result_lagrangian);
         *lambda0_sol = result_lagrangian.GetSolution(lambda0);
         if (search_options.lsol_tiny_coeff_tol > 0) {
           *lambda0_sol = lambda0_sol->RemoveTermsWithSmallCoefficients(
@@ -1084,6 +1090,92 @@ ControlLyapunovBoxInputBound::ConstructLyapunovProgram(
   return prog;
 }
 
+ClfController::ClfController(
+    const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+    const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
+    const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
+    symbolic::Polynomial V, double deriv_eps,
+    const Eigen::Ref<const Eigen::MatrixXd>& Au,
+    const Eigen::Ref<const Eigen::VectorXd>& bu,
+    const std::optional<Eigen::VectorXd>& u_star,
+    const Eigen::Ref<const Eigen::MatrixXd>& Ru)
+    : LeafSystem<double>(),
+      x_{x},
+      f_{f},
+      G_{G},
+      V_{std::move(V)},
+      deriv_eps_{deriv_eps},
+      Au_{Au},
+      bu_{bu},
+      u_star_{u_star},
+      Ru_{Ru} {
+  const int nx = f_.rows();
+  const int nu = G_.cols();
+  DRAKE_DEMAND(x_.rows() == nx);
+  DRAKE_DEMAND(Au_.cols() == nu);
+  DRAKE_DEMAND(Au_.rows() == bu_.rows());
+  if (u_star_.has_value()) {
+    DRAKE_DEMAND(u_star_->rows() == nu);
+  }
+  DRAKE_DEMAND(Ru_.rows() == nu && Ru_.cols() == nu);
+  const RowVectorX<symbolic::Polynomial> dVdx = V_.Jacobian(x_);
+  dVdx_times_f_ = dVdx.dot(f_);
+  dVdx_times_G_ = dVdx * G_;
+
+  x_input_index_ = this->DeclareVectorInputPort("x", nx).get_index();
+
+  control_output_index_ =
+      this->DeclareVectorOutputPort("control", nu, &ClfController::CalcControl)
+          .get_index();
+
+  clf_output_index_ =
+      this->DeclareVectorOutputPort("clf", 1, &ClfController::CalcClf)
+          .get_index();
+}
+
+void ClfController::CalcClf(const Context<double>& context,
+                            BasicVector<double>* output) const {
+  const Eigen::VectorXd x_val =
+      this->get_input_port(x_input_index_).Eval(context);
+  symbolic::Environment env;
+  env.insert(x_, x_val);
+  Eigen::VectorBlock<VectorX<double>> clf_vec = output->get_mutable_value();
+  clf_vec(0) = V_.Evaluate(env);
+}
+
+void ClfController::CalcControl(const Context<double>& context,
+                                BasicVector<double>* output) const {
+  const Eigen::VectorXd x_val =
+      this->get_input_port(x_input_index_).Eval(context);
+  symbolic::Environment env;
+  env.insert(x_, x_val);
+
+  solvers::MathematicalProgram prog;
+  const int nu = G_.cols();
+  auto u = prog.NewContinuousVariables(nu, "u");
+  prog.AddLinearConstraint(Au_, Eigen::VectorXd::Constant(bu_.rows(), -kInf),
+                           bu_, u);
+  prog.AddQuadraticErrorCost(Ru_, *u_star_, u);
+
+  const double dVdx_times_f_val = dVdx_times_f_.Evaluate(env);
+  Eigen::RowVectorXd dVdx_times_G_val(nu);
+  for (int i = 0; i < nu; ++i) {
+    dVdx_times_G_val(i) = dVdx_times_G_(i).Evaluate(env);
+  }
+  const double V_val = V_.Evaluate(env);
+  // dVdx * G * u + dVdx * f <= -eps * V
+  prog.AddLinearConstraint(dVdx_times_G_val, -kInf,
+                           -deriv_eps_ * V_val - dVdx_times_f_val, u);
+  const auto result = solvers::Solve(prog);
+  if (!result.is_success()) {
+    drake::log()->error("ClfController fails at t={} with x={}",
+                        context.get_time(), x_val.transpose());
+    DRAKE_DEMAND(result.is_success());
+  }
+  const Eigen::VectorXd u_val = result.GetSolution(u);
+  output->get_mutable_value() = u_val;
+}
+
 namespace internal {
 bool IsDynamicsSymmetric(
     const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
@@ -1150,19 +1242,24 @@ symbolic::Polynomial NewFreePolynomialNoConstantOrLinear(
         result.GetSolution(psd_constraint.variables()).data(),
         psd_constraint.evaluator()->matrix_rows(),
         psd_constraint.evaluator()->matrix_rows());
-    const Eigen::MatrixXd psd_dual =
-        math::ToSymmetricMatrixFromLowerTriangularColumns(
-            result.GetDualSolution(psd_constraint));
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(psd_sol);
-    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_dual(psd_dual);
     drake::log()->info(
-        "rows: {}, min eigen: {}, cond number: {}\n, dual min "
-        "eigen: {}, cond number {}, maxCoeff {}\n",
-        psd_sol.rows(), es.eigenvalues().minCoeff(),
-        es.eigenvalues().maxCoeff() / es.eigenvalues().minCoeff(),
-        es_dual.eigenvalues().minCoeff(),
-        es_dual.eigenvalues().maxCoeff() / es_dual.eigenvalues().minCoeff(),
-        psd_dual.array().abs().maxCoeff());
+        "rows: {}, min eigen: {}, cond number: {}", psd_sol.rows(),
+        es.eigenvalues().minCoeff(),
+        es.eigenvalues().maxCoeff() / es.eigenvalues().minCoeff());
+    const bool dual_result_enabled =
+        result.get_solver_id() == solvers::MosekSolver::id();
+    if (dual_result_enabled) {
+      const Eigen::MatrixXd psd_dual =
+          math::ToSymmetricMatrixFromLowerTriangularColumns(
+              result.GetDualSolution(psd_constraint));
+      Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_dual(psd_dual);
+      drake::log()->info(
+          "dual min eigen: {}, cond number {}, maxCoeff {}",
+          es_dual.eigenvalues().minCoeff(),
+          es_dual.eigenvalues().maxCoeff() / es_dual.eigenvalues().minCoeff(),
+          psd_dual.array().abs().maxCoeff());
+    }
   }
 }
 }  // namespace internal

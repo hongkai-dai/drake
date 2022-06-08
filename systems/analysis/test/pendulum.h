@@ -1,5 +1,6 @@
 #pragma once
 
+#include "drake/common/drake_copyable.h"
 #include "drake/common/symbolic.h"
 #include "drake/examples/pendulum/pendulum_plant.h"
 #include "drake/systems/controllers/linear_quadratic_regulator.h"
@@ -72,35 +73,21 @@ double EquilibriumTorque(
     const examples::pendulum::PendulumPlant<double>& pendulum,
     double theta_des);
 
-class Pendulum {
+/**
+ * Convert (theta, thetadot) to (sin(theta)-sin(theta_des),
+ * cos(theta)-cos(theta_des), thetadot)
+ */
+class TrigStateConverter : public LeafSystem<double> {
  public:
-  Pendulum() {}
+  DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(TrigStateConverter)
 
-  double ComputeThetaddot(double theta, double theta_dot, double u) const;
+  TrigStateConverter(double theta_des);
 
-  // This function normalizes the control input to be within [-1, 1].
-  void ControlAffineDynamics(const Vector2<symbolic::Variable>& x,
-                             double theta_des, double u_bound,
-                             Vector2<symbolic::Polynomial>* f,
-                             Vector2<symbolic::Polynomial>* G) const;
-
-  // This assumes normalized control input -1 <= u <= 1
-  void DynamicsGradient(double theta, double u_bound, Eigen::Matrix2d* A,
-                        Eigen::Vector2d* B) const;
-
-  double mass() const { return mass_; }
-
-  double gravity() const { return gravity_; }
-
-  double length() const { return length_; }
-
-  double damping() const { return damping_; }
+  void Convert(const Context<double>& context, BasicVector<double>* x) const;
 
  private:
-  double mass_{1};
-  double gravity_{9.81};
-  double length_{1};
-  double damping_{0.1};
+  double sin_theta_des;
+  double cos_theta_des;
 };
 }  // namespace analysis
 }  // namespace systems

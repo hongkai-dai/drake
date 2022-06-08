@@ -5,6 +5,7 @@
 #include "drake/solvers/mathematical_program.h"
 #include "drake/solvers/mathematical_program_result.h"
 #include "drake/solvers/mosek_solver.h"
+#include "drake/systems/framework/leaf_system.h"
 
 namespace drake {
 namespace systems {
@@ -137,6 +138,7 @@ class ControlLyapunov {
 
   struct SearchOptions {
     solvers::SolverId lyap_step_solver{solvers::MosekSolver::id()};
+    solvers::SolverId ellipsoid_step_solver{solvers::MosekSolver::id()};
     solvers::SolverId lagrangian_step_solver{solvers::MosekSolver::id()};
     int bilinear_iterations{10};
     // Stop when the improvement on rho is below this tolerance.
@@ -146,6 +148,8 @@ class ControlLyapunov {
     std::optional<solvers::SolverOptions> lagrangian_step_solver_options{
         std::nullopt};
     std::optional<solvers::SolverOptions> lyap_step_solver_options{
+        std::nullopt};
+    std::optional<solvers::SolverOptions> ellipsoid_step_solver_options{
         std::nullopt};
     // Small coefficient in the constraints can cause numerical issues. We will
     // set the coefficient of linear constraints smaller than these tolerance to
@@ -652,6 +656,64 @@ class ControlLyapunovBoxInputBound {
   double positivity_eps_;
   int nx_;
   int nu_;
+};
+
+/**
+ * Computes the control action through the QP
+ * min (u−u*)ᵀRᵤ(u−u*)
+ * s.t ∂V/∂x*(f(x)+G(x)u)≤ −εV
+ *     Aᵤ*u ≤ bᵤ
+ */
+class ClfController : public LeafSystem<double> {
+ public:
+  DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(ClfController)
+
+  /**
+   * @param u_star If u_star=nullptr, then we use u in the previous step as u*
+   */
+  ClfController(const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+                const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
+                const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
+                symbolic::Polynomial V, double deriv_eps,
+                const Eigen::Ref<const Eigen::MatrixXd>& Au,
+                const Eigen::Ref<const Eigen::VectorXd>& bu,
+                const std::optional<Eigen::VectorXd>& u_star,
+                const Eigen::Ref<const Eigen::MatrixXd>& Ru);
+
+  ~ClfController() {}
+
+  const OutputPortIndex& control_output_index() const {
+    return control_output_index_;
+  }
+
+  const OutputPortIndex& clf_output_index() const { return clf_output_index_; }
+
+  const InputPortIndex& x_input_index() const { return x_input_index_; }
+
+  void CalcControl(const Context<double>& context,
+                   BasicVector<double>* output) const;
+
+  /**
+   * Compute CLF V(x).
+   */
+  void CalcClf(const Context<double>& context,
+               BasicVector<double>* output) const;
+
+ private:
+  VectorX<symbolic::Variable> x_;
+  VectorX<symbolic::Polynomial> f_;
+  MatrixX<symbolic::Polynomial> G_;
+  symbolic::Polynomial V_;
+  double deriv_eps_;
+  Eigen::MatrixXd Au_;
+  Eigen::VectorXd bu_;
+  mutable std::optional<Eigen::VectorXd> u_star_;
+  Eigen::MatrixXd Ru_;
+  symbolic::Polynomial dVdx_times_f_;
+  RowVectorX<symbolic::Polynomial> dVdx_times_G_;
+  OutputPortIndex control_output_index_;
+  OutputPortIndex clf_output_index_;
+  InputPortIndex x_input_index_;
 };
 
 namespace internal {

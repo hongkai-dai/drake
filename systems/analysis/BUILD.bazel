@@ -132,11 +132,13 @@ drake_cc_library(
         ":clf_cbf_utils",
         "//math:matrix_util",
         "//solvers:choose_best_solver",
+        "//solvers:csdp_solver",
         "//solvers:mathematical_program",
         "//solvers:mathematical_program_result",
         "//solvers:mosek_solver",
-        "//solvers:csdp_solver",
+        "//solvers:solve",
         "//solvers:sos_basis_generator",
+        "//systems/framework:leaf_system",
     ],
 )
 
@@ -862,8 +864,11 @@ drake_cc_binary(
         ":simulator",
         ":simulator_config_functions",
         ":pendulum",
+        "//geometry:meshcat_visualizer",
         "//solvers:scs_solver",
         "//solvers:solve",
+        "//systems/primitives:adder",
+        "//systems/primitives:constant_vector_source",
         "//systems/primitives:vector_log_sink",
     ],
 )
@@ -889,6 +894,7 @@ drake_cc_library(
         "//common:symbolic",
         "//examples/pendulum:pendulum_plant",
         "//systems/controllers:linear_quadratic_regulator",
+        "//systems/framework:leaf_system",
     ],
 )
 

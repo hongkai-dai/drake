@@ -133,7 +133,7 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
   simulator.get_mutable_context().SetContinuousState(
       Eigen::Vector2d(theta0, thetadot0));
   diagram->Publish(simulator.get_context());
-  std::cout << "Press to continue\n";
+  std::cout << "Refresh meshcat brower and press to continue\n";
   std::cin.get();
 
   simulator.AdvanceTo(duration);
@@ -169,24 +169,6 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
   state_constraints(0) = state_constraints(0).Expand();
   state_constraints(0) =
       state_constraints(0).RemoveTermsWithSmallCoefficients(1E-8);
-  const ControlLyapunov dut(x, f, G, u_vertices, state_constraints);
-  const int lambda0_degree = 2;
-  const std::vector<int> l_degrees{4, 4};
-  const std::vector<int> p_degrees{6};
-  const int V_degree = 2;
-  const Eigen::Vector3d x_star(0, -1.0, 0);
-  const Eigen::Matrix3d S = Eigen::Matrix3d::Identity();
-
-  symbolic::Polynomial lambda0;
-  VectorX<symbolic::Polynomial> l;
-  symbolic::Polynomial r;
-  VectorX<symbolic::Polynomial> p;
-  double rho;
-  const double deriv_eps = 0.15;
-  // Compute V_init from LQR controller.
-  const Eigen::Matrix3d Q = Eigen::Matrix3d::Identity();
-  const Vector1d R(1);
-  const auto lqr_result = TrigDynamicsLQR(pendulum, theta_des, Q, R);
   symbolic::Polynomial V_init;
   {
     // Now take many samples around (theta_des, 0).
@@ -197,6 +179,10 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
     Eigen::Matrix3Xd x_val(3, theta_samples.rows() * thetadot_samples.rows());
     Eigen::Matrix3Xd xdot_val(3, x_val.cols());
     int x_count = 0;
+    // Compute control action from LQR controller.
+    const Eigen::Matrix3d Q = Eigen::Matrix3d::Identity();
+    const Vector1d R(1);
+    const auto lqr_result = TrigDynamicsLQR(pendulum, theta_des, Q, R);
     for (int i = 0; i < theta_samples.rows(); ++i) {
       for (int j = 0; j < thetadot_samples.rows(); ++j) {
         x_val.col(x_count) =
@@ -216,6 +202,20 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
     DRAKE_DEMAND(result_init.is_success());
     V_init = result_init.GetSolution(V_init);
   }
+  const ControlLyapunov dut(x, f, G, u_vertices, state_constraints);
+  const int lambda0_degree = 2;
+  const std::vector<int> l_degrees{4, 4};
+  const std::vector<int> p_degrees{8};
+  const int V_degree = 4;
+  const Eigen::Vector3d x_star(0, -0.0, 0);
+  const Eigen::Matrix3d S = Eigen::Matrix3d::Identity();
+
+  symbolic::Polynomial lambda0;
+  VectorX<symbolic::Polynomial> l;
+  symbolic::Polynomial r;
+  VectorX<symbolic::Polynomial> p;
+  double rho;
+  const double deriv_eps = 0.25;
 
   V_init = V_init.RemoveTermsWithSmallCoefficients(1e-6);
   // First maximize rho such that V(x)<=rho defines a valid ROA.
@@ -256,7 +256,7 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
              ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S, V_degree - 2,
              search_options, rho_bisection_option, &V_sol, &lambda0, &l, &r, &p,
              &rho, &ellipsoid_c_lagrangian_sol);
-  const double theta0 = 0.2;
+  const double theta0 = 0.02;
   const double thetadot0 = 0.0;
   std::cout << fmt::format(
       "V at (theta, thetadot)=({}, {}) = {}\n", theta0, thetadot0,

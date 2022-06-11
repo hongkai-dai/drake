@@ -864,6 +864,7 @@ drake_cc_binary(
         ":simulator",
         ":simulator_config_functions",
         ":pendulum",
+        "//examples/pendulum:pendulum_geometry",
         "//geometry:meshcat_visualizer",
         "//solvers:scs_solver",
         "//solvers:solve",

@@ -190,6 +190,7 @@ void Simulate(const Vector6<symbolic::Variable>& x,
     const int lambda0_degree = 2;
     const std::vector<int> l_degrees = {2, 2, 2, 2};
     const std::vector<int> p_degrees = {};
+    const std::vector<int> ellipsoid_c_lagrangian_degrees = {};
     const int V_degree = 2;
     const Vector6d x_star = Vector6d::Zero();
     const Matrix6<double> S = Matrix6<double>::Identity();
@@ -209,10 +210,12 @@ void Simulate(const Vector6<symbolic::Variable>& x,
     symbolic::Polynomial r;
     double rho_sol;
     VectorX<symbolic::Polynomial> p_sol;
+    VectorX<symbolic::Polynomial> ellipsoid_c_lagrangian_sol;
 
     dut.Search(V_init, lambda0_degree, l_degrees, V_degree, p_degrees,
-               deriv_eps, x_star, S, V_degree - 2, search_options,
-               rho_bisection_option, V_sol, &lambda0, &l, &r, &p_sol, &rho_sol);
+               ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S,
+               V_degree - 2, search_options, rho_bisection_option, V_sol,
+               &lambda0, &l, &r, &p_sol, &rho_sol, &ellipsoid_c_lagrangian_sol);
   }
 }
 

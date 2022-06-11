@@ -179,17 +179,22 @@ class ControlLyapunov {
   /**
    * Use bilinear alternation to grow the region-of-attraction of the control
    * Lyapunov function (CLF).
+   * @param ellipsoid_c_lagrangian_degrees. The degrees of the Lagrangian
+   * multiplier for state_constraints(x) = 0 when searching for the maximal
+   * ellipsoid contained in the sub-level set { x | V(x) <= 1}
    */
   void Search(const symbolic::Polynomial& V_init, int lambda0_degree,
               const std::vector<int>& l_degrees, int V_degree,
-              const std::vector<int>& p_degrees, double deriv_eps,
-              const Eigen::Ref<const Eigen::VectorXd>& x_star,
+              const std::vector<int>& p_degrees,
+              const std::vector<int>& ellipsoid_c_lagrangian_degrees,
+              double deriv_eps, const Eigen::Ref<const Eigen::VectorXd>& x_star,
               const Eigen::Ref<const Eigen::MatrixXd>& S, int r_degree,
               const SearchOptions& search_options,
               const RhoBisectionOption& rho_bisection_option,
               symbolic::Polynomial* V, symbolic::Polynomial* lambda0,
               VectorX<symbolic::Polynomial>* l, symbolic::Polynomial* r,
-              VectorX<symbolic::Polynomial>* p, double* rho) const;
+              VectorX<symbolic::Polynomial>* p, double* rho,
+              VectorX<symbolic::Polynomial>* ellipsoid_c_lagrangian_sol) const;
 
   [[nodiscard]] const VectorX<symbolic::Variable>& x() const { return x_; }
 

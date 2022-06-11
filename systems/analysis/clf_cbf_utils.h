@@ -71,15 +71,27 @@ void MaximizeInnerEllipsoidRho(
  *     max ρ
  *     s.t -f(x) - r(x)*(ρ-(x-x*)ᵀS(x-x*)) is sos
  *         r(x) is sos.
+ *
+ * Optionally we can specify that we only care about the containment in the
+ * algebraic set {x | c(x) = 0}. Namely the intersection of the ellipsoid and
+ * the algebraic set {x | c(x) = 0} is contained inside the sub-level set {x |
+ * f(x) <= 0}., and we solve the following problem on the variable r(x), t(x)
+ * through bisecting ρ
+ *
+ *     max ρ
+ *     s.t -f(x) - r(x)*(ρ-(x-x*)ᵀS(x-x*)) -t(x)ᵀ*c(x) is sos
+ *         r(x) is sos.
  */
 void MaximizeInnerEllipsoidRho(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
     const Eigen::Ref<const Eigen::VectorXd>& x_star,
     const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& f,
-    int r_degree, double rho_max, double rho_min,
-    const solvers::SolverId& solver_id,
+    const std::optional<VectorX<symbolic::Polynomial>>& c, int r_degree,
+    const std::optional<std::vector<int>>& c_lagrangian_degrees, double rho_max,
+    double rho_min, const solvers::SolverId& solver_id,
     const std::optional<solvers::SolverOptions>& solver_options, double rho_tol,
-    double* rho_sol, symbolic::Polynomial* r_sol);
+    double* rho_sol, symbolic::Polynomial* r_sol,
+    VectorX<symbolic::Polynomial>* c_lagrangian_sol);
 
 void GetPolynomialSolutions(const solvers::MathematicalProgramResult& result,
                             const VectorX<symbolic::Polynomial>& p,

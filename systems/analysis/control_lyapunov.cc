@@ -154,9 +154,6 @@ void ControlLyapunov::AddControlLyapunovConstraint(
   if (state_constraints_.rows() > 0) {
     *vdot_poly -= p.dot(state_constraints_);
   }
-  // TODO(hongkai.dai): remove this line when CsdpSolver ignores empty
-  // constraint.
-  *vdot_poly = vdot_poly->RemoveTermsWithSmallCoefficients(1E-7);
   // We know this sos polynomial should not contain 1 in its monomial basis.
   std::tie(*gram, *monomials) = prog->AddSosConstraint(
       *vdot_poly, solvers::MathematicalProgram::NonnegativePolynomial::kSos,

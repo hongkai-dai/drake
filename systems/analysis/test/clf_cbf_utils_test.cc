@@ -186,24 +186,52 @@ GTEST_TEST(MaximizeInnerEllipsoidRho, Test2) {
   {
     // Test the bisection approach
     const int r_degree = 2;
-    const double rho_max = 1;
+    const double rho_max = 4;
     const double rho_min = 0.2;
     const double rho_tol = 0.1;
-    double rho_sol;
+    double rho_sol_wo_c;
     symbolic::Polynomial r_sol;
-    MaximizeInnerEllipsoidRho(x, x_star, S, V - 1, r_degree, rho_max, rho_min,
+    VectorX<symbolic::Polynomial> c_lagrangian_sol;
+    MaximizeInnerEllipsoidRho(x, x_star, S, V - 1, std::nullopt, r_degree,
+                              std::nullopt, rho_max, rho_min,
                               solvers::MosekSolver::id(), std::nullopt, rho_tol,
-                              &rho_sol, &r_sol);
-    CheckEllipsoidInSublevelSet(x, x_star, S, rho_sol, V - 1);
+                              &rho_sol_wo_c, &r_sol, &c_lagrangian_sol);
+    CheckEllipsoidInSublevelSet(x, x_star, S, rho_sol_wo_c, V - 1);
     // Check if r_sol is sos.
     Eigen::Matrix2Xd x_check = Eigen::Matrix2Xd::Random(2, 100);
     const symbolic::Polynomial sos_cond =
-        1 - V + r_sol * internal::EllipsoidPolynomial(x, x_star, S, rho_sol);
+        1 - V +
+        r_sol * internal::EllipsoidPolynomial(x, x_star, S, rho_sol_wo_c);
     for (int i = 0; i < x_check.cols(); ++i) {
       symbolic::Environment env;
       env.insert(x, x_check.col(i));
       EXPECT_GE(r_sol.Evaluate(env), 0.);
       EXPECT_GE(sos_cond.Evaluate(env), 0.);
+    }
+
+    // Consider the algrbraic set x(0) + x(1) == 1
+    const Vector1<symbolic::Polynomial> c(
+        symbolic::Polynomial(x(0) + x(1) - 1));
+    const std::vector<int> c_lagrangian_degrees{{3}};
+    double rho_sol_w_c;
+    MaximizeInnerEllipsoidRho(x, x_star, S, V - 1, c, r_degree,
+                              c_lagrangian_degrees, rho_max, rho_min,
+                              solvers::MosekSolver::id(), std::nullopt, rho_tol,
+                              &rho_sol_w_c, &r_sol, &c_lagrangian_sol);
+    EXPECT_GT(rho_sol_w_c, rho_sol_wo_c);
+    // Now sample many points on the plane x(0) + x(1) == 1, if they are within
+    // the ellipsoid, then they should satisfy V(x) <= 1.
+    const Eigen::VectorXd x0_samples = Eigen::VectorXd::LinSpaced(500, -10, 10);
+    Eigen::Matrix2Xd x_samples(2, x0_samples.rows());
+    x_samples.row(0) = x0_samples.transpose();
+    x_samples.row(1) =
+        Eigen::RowVectorXd::Ones(x0_samples.rows()) - x_samples.row(0);
+    const Eigen::VectorXd V_samples = V.EvaluateIndeterminates(x, x_samples);
+    for (int i = 0; i < x0_samples.rows(); ++i) {
+      const Eigen::Vector2d x_sample = x_samples.col(i);
+      if ((x_sample - x_star).dot(S * (x_sample - x_star)) <= rho_sol_w_c) {
+        EXPECT_LE(V_samples(i), 1);
+      }
     }
   }
 }

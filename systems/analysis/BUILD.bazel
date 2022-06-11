@@ -785,6 +785,7 @@ drake_cc_binary(
         ":control_lyapunov",
         ":simulator",
         ":pendulum",
+        "//examples/pendulum:pendulum_geometry",
         "//geometry:meshcat_visualizer",
         "//solvers:scs_solver",
         "//solvers:solve",

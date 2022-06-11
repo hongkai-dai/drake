@@ -3,6 +3,7 @@
 #include <limits>
 
 #include "drake/common/drake_copyable.h"
+#include "drake/examples/pendulum/pendulum_geometry.h"
 #include "drake/examples/pendulum/pendulum_plant.h"
 #include "drake/geometry/meshcat_visualizer.h"
 #include "drake/math/autodiff_gradient.h"
@@ -31,6 +32,15 @@ void Simulate(const Vector2<symbolic::Variable>& x, double theta_des,
   systems::DiagramBuilder<double> builder;
   auto pendulum =
       builder.AddSystem<examples::pendulum::PendulumPlant<double>>();
+  auto scene_graph = builder.AddSystem<geometry::SceneGraph<double>>();
+  examples::pendulum::PendulumGeometry::AddToBuilder(
+      &builder, pendulum->get_state_output_port(), scene_graph);
+  auto meshcat = std::make_shared<geometry::Meshcat>();
+  geometry::MeshcatVisualizerParams meshcat_params{};
+  meshcat_params.role = geometry::Role::kIllustration;
+  auto visualizer = &geometry::MeshcatVisualizer<double>::AddToBuilder(
+      &builder, *scene_graph, meshcat, meshcat_params);
+  unused(visualizer);
   const Eigen::Vector2d Au(1, -1);
   const Eigen::Vector2d bu(u_bound, u_bound);
   const Vector1d u_star(0);
@@ -87,6 +97,15 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
   systems::DiagramBuilder<double> builder;
   auto pendulum =
       builder.AddSystem<examples::pendulum::PendulumPlant<double>>();
+  auto scene_graph = builder.AddSystem<geometry::SceneGraph<double>>();
+  examples::pendulum::PendulumGeometry::AddToBuilder(
+      &builder, pendulum->get_state_output_port(), scene_graph);
+  auto meshcat = std::make_shared<geometry::Meshcat>();
+  geometry::MeshcatVisualizerParams meshcat_params{};
+  meshcat_params.role = geometry::Role::kIllustration;
+  auto visualizer = &geometry::MeshcatVisualizer<double>::AddToBuilder(
+      &builder, *scene_graph, meshcat, meshcat_params);
+  unused(visualizer);
 
   Vector3<symbolic::Polynomial> f;
   Vector3<symbolic::Polynomial> G;
@@ -113,6 +132,9 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
   Simulator<double> simulator(*diagram);
   simulator.get_mutable_context().SetContinuousState(
       Eigen::Vector2d(theta0, thetadot0));
+  diagram->Publish(simulator.get_context());
+  std::cout << "Press to continue\n";
+  std::cin.get();
 
   simulator.AdvanceTo(duration);
   std::cout << "Final state: "
@@ -152,7 +174,7 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
   const std::vector<int> l_degrees{4, 4};
   const std::vector<int> p_degrees{6};
   const int V_degree = 2;
-  const Eigen::Vector3d x_star(0, 0, 0);
+  const Eigen::Vector3d x_star(0, -1.0, 0);
   const Eigen::Matrix3d S = Eigen::Matrix3d::Identity();
 
   symbolic::Polynomial lambda0;
@@ -160,7 +182,7 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
   symbolic::Polynomial r;
   VectorX<symbolic::Polynomial> p;
   double rho;
-  const double deriv_eps = 0.2;
+  const double deriv_eps = 0.15;
   // Compute V_init from LQR controller.
   const Eigen::Matrix3d Q = Eigen::Matrix3d::Identity();
   const Vector1d R(1);
@@ -212,13 +234,14 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
     V_init = V_init / result.GetSolution(rho_var);
   }
 
+  const std::vector<int> ellipsoid_c_lagrangian_degrees{0};
   ControlLyapunov::SearchOptions search_options;
-  search_options.bilinear_iterations = 20;
-  //search_options.lyap_step_solver = solvers::CsdpSolver::id();
+  search_options.bilinear_iterations = 50;
+  // search_options.lyap_step_solver = solvers::CsdpSolver::id();
   search_options.lyap_step_solver_options = solvers::SolverOptions();
-  //search_options.lyap_step_solver_options->SetOption(
+  // search_options.lyap_step_solver_options->SetOption(
   //    solvers::CommonSolverOption::kPrintToConsole, 1);
-  search_options.backoff_scale = 0.02;
+  search_options.backoff_scale = 0.0;
   search_options.lsol_tiny_coeff_tol = 1E-5;
   // There are tiny coefficients coming from numerical roundoff error.
   search_options.lyap_tiny_coeff_tol = 1E-7;
@@ -228,10 +251,12 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
   const ControlLyapunov::RhoBisectionOption rho_bisection_option(
       rho_min, rho_max, rho_bisection_tol);
   symbolic::Polynomial V_sol;
-  dut.Search(V_init, lambda0_degree, l_degrees, V_degree, p_degrees, deriv_eps,
-             x_star, S, V_degree - 2, search_options, rho_bisection_option,
-             &V_sol, &lambda0, &l, &r, &p, &rho);
-  const double theta0 = 0.5;
+  VectorX<symbolic::Polynomial> ellipsoid_c_lagrangian_sol;
+  dut.Search(V_init, lambda0_degree, l_degrees, V_degree, p_degrees,
+             ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S, V_degree - 2,
+             search_options, rho_bisection_option, &V_sol, &lambda0, &l, &r, &p,
+             &rho, &ellipsoid_c_lagrangian_sol);
+  const double theta0 = 0.2;
   const double thetadot0 = 0.0;
   std::cout << fmt::format(
       "V at (theta, thetadot)=({}, {}) = {}\n", theta0, thetadot0,
@@ -291,6 +316,7 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
     const int lambda0_degree = 2;
     const std::vector<int> l_degrees{2, 2};
     const std::vector<int> p_degrees{};
+    const std::vector<int> ellipsoid_c_lagrangian_degrees{};
     const int V_degree = 2;
     const Eigen::Vector2d x_star(0, 0);
     const Eigen::Matrix2d S = Eigen::Matrix2d::Identity();
@@ -310,9 +336,11 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
     symbolic::Polynomial r;
     VectorX<symbolic::Polynomial> p;
     double rho;
+    VectorX<symbolic::Polynomial> ellipsoid_c_lagrangian_sol;
     dut.Search(V_init, lambda0_degree, l_degrees, V_degree, p_degrees,
-               deriv_eps, x_star, S, V_degree - 2, search_options,
-               rho_bisection_option, &V_sol, &lambda0, &l, &r, &p, &rho);
+               ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S,
+               V_degree - 2, search_options, rho_bisection_option, &V_sol,
+               &lambda0, &l, &r, &p, &rho, &ellipsoid_c_lagrangian_sol);
     Simulate(x, theta_des, V_sol, u_bound, deriv_eps,
              Eigen::Vector2d(M_PI + 0.6 * M_PI, 0), 10);
   }
@@ -371,7 +399,6 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
   *V_sol = clf_result.V;
   *deriv_eps_sol = clf_result.deriv_eps;
 }
-
 
 int DoMain() {
   // SearchWTaylorDynamics();

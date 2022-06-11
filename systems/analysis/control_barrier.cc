@@ -279,12 +279,14 @@ void ControlBarrier::Search(
     for (auto& ellipsoid : inner_ellipsoids) {
       double rho_sol;
       symbolic::Polynomial r_sol;
+      // TODO(hongkai.dai): include state constraints and their Lagrangian
+      // multipliers.
       MaximizeInnerEllipsoidRho(x_, ellipsoid.c, ellipsoid.S, -(*h_sol),
-                                ellipsoid.r_degree, ellipsoid.rho_max,
-                                ellipsoid.rho,
+                                std::nullopt, ellipsoid.r_degree, std::nullopt,
+                                ellipsoid.rho_max, ellipsoid.rho,
                                 search_options.lagrangian_step_solver,
                                 search_options.lagrangian_step_solver_options,
-                                ellipsoid.rho_tol, &rho_sol, &r_sol);
+                                ellipsoid.rho_tol, &rho_sol, &r_sol, nullptr);
       drake::log()->info("rho {}", rho_sol);
       ellipsoid.rho = rho_sol;
       ellipsoid.rho_min = rho_sol;
@@ -298,11 +300,14 @@ void ControlBarrier::Search(
       if (h_sol->Evaluate(env) > 0) {
         double rho_sol;
         symbolic::Polynomial r_sol;
-        MaximizeInnerEllipsoidRho(x_, it->c, it->S, -(*h_sol), it->r_degree,
-                                  it->rho_max, it->rho_min,
+        // TODO(hongkai.dai): include state constraints and their Lagrangian
+        // multipliers.
+        MaximizeInnerEllipsoidRho(x_, it->c, it->S, -(*h_sol), std::nullopt,
+                                  it->r_degree, std::nullopt, it->rho_max,
+                                  it->rho_min,
                                   search_options.lagrangian_step_solver,
                                   search_options.lagrangian_step_solver_options,
-                                  it->rho_tol, &rho_sol, &r_sol);
+                                  it->rho_tol, &rho_sol, &r_sol, nullptr);
         inner_ellipsoids.emplace_back(it->c, it->S, rho_sol, rho_sol,
                                       it->rho_max, it->rho_tol, it->r_degree);
         drake::log()->info("rho {}", rho_sol);

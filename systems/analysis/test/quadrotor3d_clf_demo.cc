@@ -170,6 +170,7 @@ struct Quadrotor {
   const int lambda0_degree = 2;
   const std::vector<int> l_degrees(16, 2);
   const std::vector<int> p_degrees = {};
+  const std::vector<int> ellipsoid_c_lagrangian_degrees = {};
   const int V_degree = 2;
   const Eigen::Matrix<double, 12, 1> x_star =
       Eigen::Matrix<double, 12, 1>::Zero();
@@ -193,10 +194,12 @@ struct Quadrotor {
   VectorX<symbolic::Polynomial> p_sol;
   symbolic::Polynomial r;
   double rho_sol;
+  VectorX<symbolic::Polynomial> ellipsoid_c_lagrangian_sol;
 
-  dut.Search(V_init, lambda0_degree, l_degrees, V_degree, p_degrees, deriv_eps,
-             x_star, S, V_degree - 2, search_options, rho_bisection_option,
-             V_sol, &lambda0, &l, &r, &p_sol, &rho_sol);
+  dut.Search(V_init, lambda0_degree, l_degrees, V_degree, p_degrees,
+             ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S, V_degree - 2,
+             search_options, rho_bisection_option, V_sol, &lambda0, &l, &r,
+             &p_sol, &rho_sol, &ellipsoid_c_lagrangian_sol);
 }
 
 [[maybe_unused]] void search_w_box_bounds(

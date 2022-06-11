@@ -162,27 +162,47 @@ void MaximizeInnerEllipsoidRho(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
     const Eigen::Ref<const Eigen::VectorXd>& x_star,
     const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& f,
-    int r_degree, double rho_max, double rho_min,
-    const solvers::SolverId& solver_id,
+    const std::optional<VectorX<symbolic::Polynomial>>& c, int r_degree,
+    const std::optional<std::vector<int>>& c_lagrangian_degrees, double rho_max,
+    double rho_min, const solvers::SolverId& solver_id,
     const std::optional<solvers::SolverOptions>& solver_options, double rho_tol,
-    double* rho_sol, symbolic::Polynomial* r_sol) {
+    double* rho_sol, symbolic::Polynomial* r_sol,
+    VectorX<symbolic::Polynomial>* c_lagrangian_sol) {
   DRAKE_DEMAND(rho_max > rho_min);
   DRAKE_DEMAND(rho_tol > 0);
   const symbolic::Polynomial ellipsoid_quadratic =
       internal::EllipsoidPolynomial(x, x_star, S, 0.);
-  auto is_feasible = [&x, &f, &r_degree, &solver_id, &solver_options,
-                      &ellipsoid_quadratic, r_sol](double rho) {
+  const symbolic::Variables x_set{x};
+  auto is_feasible = [&x, &x_set, &f, &c, &r_degree, &c_lagrangian_degrees,
+                      &solver_id, &solver_options, &ellipsoid_quadratic, r_sol,
+                      c_lagrangian_sol](double rho) {
     solvers::MathematicalProgram prog;
     prog.AddIndeterminates(x);
     symbolic::Polynomial r;
-    std::tie(r, std::ignore) =
-        prog.NewSosPolynomial(symbolic::Variables(x), r_degree);
-    prog.AddSosConstraint(-f - r * (rho - ellipsoid_quadratic));
+    std::tie(r, std::ignore) = prog.NewSosPolynomial(x_set, r_degree);
+    symbolic::Polynomial sos_condition = -f - r * (rho - ellipsoid_quadratic);
+    VectorX<symbolic::Polynomial> c_lagrangian(0);
+    if (c.has_value() && c->rows() > 0) {
+      c_lagrangian.resize(c->rows());
+      for (int i = 0; i < c->rows(); ++i) {
+        c_lagrangian(i) =
+            prog.NewFreePolynomial(x_set, c_lagrangian_degrees.value()[i]);
+      }
+      sos_condition -= c_lagrangian.dot(*c);
+    }
+    prog.AddSosConstraint(sos_condition);
     auto solver = solvers::MakeSolver(solver_id);
     solvers::MathematicalProgramResult result;
     solver->Solve(prog, std::nullopt, solver_options, &result);
     if (result.is_success()) {
       *r_sol = result.GetSolution(r);
+      if (c.has_value() && c->rows() > 0) {
+        GetPolynomialSolutions(result, c_lagrangian, 0, c_lagrangian_sol);
+      } else {
+        if (c_lagrangian_sol != nullptr) {
+          c_lagrangian_sol->resize(0);
+        }
+      }
       return true;
     } else {
       return false;

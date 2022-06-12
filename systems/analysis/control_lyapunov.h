@@ -196,6 +196,22 @@ class ControlLyapunov {
               VectorX<symbolic::Polynomial>* p, double* rho,
               VectorX<symbolic::Polynomial>* ellipsoid_c_lagrangian_sol) const;
 
+  /**
+   * Search the control Lyapunov V with the objective
+   * min ∑ᵢ V(xⁱ)
+   * or
+   * min maxᵢ V(xⁱ)
+   * where xⁱ is the i'th sampled state.
+   */
+  void Search(const symbolic::Polynomial& V_init, int lambda0_degree,
+              const std::vector<int>& l_degrees, int V_degree,
+              const std::vector<int>& p_degrees, double deriv_eps,
+              const Eigen::Ref<const Eigen::MatrixXd>& x_samples,
+              bool minimize_max, const SearchOptions& search_options,
+              symbolic::Polynomial* V, symbolic::Polynomial* lambda0,
+              VectorX<symbolic::Polynomial>* l,
+              VectorX<symbolic::Polynomial>* p) const;
+
   [[nodiscard]] const VectorX<symbolic::Variable>& x() const { return x_; }
 
   [[nodiscard]] const VectorX<symbolic::Polynomial>& f() const { return f_; }
@@ -207,6 +223,13 @@ class ControlLyapunov {
   }
 
  private:
+  void SearchLagrangian(const symbolic::Polynomial& V, int lambda0_degree,
+                        const std::vector<int>& l_degrees,
+                        const std::vector<int>& p_degrees, double deriv_eps,
+                        const SearchOptions& search_options,
+                        symbolic::Polynomial* lambda0,
+                        VectorX<symbolic::Polynomial>* l,
+                        VectorX<symbolic::Polynomial>* p) const;
   // The indeterminates as the state.
   VectorX<symbolic::Variable> x_;
   symbolic::Variables x_set_;

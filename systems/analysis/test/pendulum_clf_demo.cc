@@ -146,7 +146,7 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
             << "\n";
 }
 
-[[maybe_unused]] void SearchWTrigPoly() {
+[[maybe_unused]] void SearchWTrigPoly(bool max_ellipsoid) {
   const double u_bound = 30;
   const Vector3<symbolic::Variable> x(symbolic::Variable("x0"),
                                       symbolic::Variable("x1"),
@@ -207,9 +207,6 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
   const std::vector<int> l_degrees{4, 4};
   const std::vector<int> p_degrees{8};
   const int V_degree = 4;
-  const Eigen::Vector3d x_star(0, -0.0, 0);
-  const Eigen::Matrix3d S = Eigen::Matrix3d::Identity();
-
   symbolic::Polynomial lambda0;
   VectorX<symbolic::Polynomial> l;
   symbolic::Polynomial r;
@@ -234,29 +231,54 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
     V_init = V_init / result.GetSolution(rho_var);
   }
 
-  const std::vector<int> ellipsoid_c_lagrangian_degrees{0};
-  ControlLyapunov::SearchOptions search_options;
-  search_options.bilinear_iterations = 50;
-  // search_options.lyap_step_solver = solvers::CsdpSolver::id();
-  search_options.lyap_step_solver_options = solvers::SolverOptions();
-  // search_options.lyap_step_solver_options->SetOption(
-  //    solvers::CommonSolverOption::kPrintToConsole, 1);
-  search_options.backoff_scale = 0.0;
-  search_options.lsol_tiny_coeff_tol = 1E-5;
-  // There are tiny coefficients coming from numerical roundoff error.
-  search_options.lyap_tiny_coeff_tol = 1E-7;
-  const double rho_min = 0.01;
-  const double rho_max = 15;
-  const double rho_bisection_tol = 0.01;
-  const ControlLyapunov::RhoBisectionOption rho_bisection_option(
-      rho_min, rho_max, rho_bisection_tol);
   symbolic::Polynomial V_sol;
-  VectorX<symbolic::Polynomial> ellipsoid_c_lagrangian_sol;
-  dut.Search(V_init, lambda0_degree, l_degrees, V_degree, p_degrees,
-             ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S, V_degree - 2,
-             search_options, rho_bisection_option, &V_sol, &lambda0, &l, &r, &p,
-             &rho, &ellipsoid_c_lagrangian_sol);
-  const double theta0 = 0.02;
+  if (max_ellipsoid) {
+    const Eigen::Vector3d x_star(0, -0.0, 0);
+    const Eigen::Matrix3d S = Eigen::Matrix3d::Identity();
+    const std::vector<int> ellipsoid_c_lagrangian_degrees{0};
+    ControlLyapunov::SearchOptions search_options;
+    search_options.bilinear_iterations = 50;
+    // search_options.lyap_step_solver = solvers::CsdpSolver::id();
+    search_options.lyap_step_solver_options = solvers::SolverOptions();
+    // search_options.lyap_step_solver_options->SetOption(
+    //    solvers::CommonSolverOption::kPrintToConsole, 1);
+    search_options.backoff_scale = 0.0;
+    search_options.lsol_tiny_coeff_tol = 1E-5;
+    // There are tiny coefficients coming from numerical roundoff error.
+    search_options.lyap_tiny_coeff_tol = 1E-7;
+    const double rho_min = 0.01;
+    const double rho_max = 15;
+    const double rho_bisection_tol = 0.01;
+    const ControlLyapunov::RhoBisectionOption rho_bisection_option(
+        rho_min, rho_max, rho_bisection_tol);
+    VectorX<symbolic::Polynomial> ellipsoid_c_lagrangian_sol;
+    dut.Search(V_init, lambda0_degree, l_degrees, V_degree, p_degrees,
+               ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S,
+               V_degree - 2, search_options, rho_bisection_option, &V_sol,
+               &lambda0, &l, &r, &p, &rho, &ellipsoid_c_lagrangian_sol);
+  } else {
+    ControlLyapunov::SearchOptions search_options;
+    search_options.rho_converge_tol = 0.;
+    search_options.bilinear_iterations = 50;
+    // search_options.lyap_step_solver = solvers::CsdpSolver::id();
+    search_options.lyap_step_solver_options = solvers::SolverOptions();
+    // search_options.lyap_step_solver_options->SetOption(
+    //    solvers::CommonSolverOption::kPrintToConsole, 1);
+    search_options.backoff_scale = 0.0;
+    search_options.lsol_tiny_coeff_tol = 1E-5;
+    // There are tiny coefficients coming from numerical roundoff error.
+    search_options.lyap_tiny_coeff_tol = 1E-7;
+    Eigen::MatrixXd x_samples(3, 1);
+    x_samples.col(0) = ToTrigState<double>(0., 0, theta_des);
+
+    symbolic::Polynomial lambda0_sol;
+    VectorX<symbolic::Polynomial> l_sol;
+    VectorX<symbolic::Polynomial> p_sol;
+    dut.Search(V_init, lambda0_degree, l_degrees, V_degree, p_degrees,
+               deriv_eps, x_samples, true, search_options, &V_sol, &lambda0_sol,
+               &l_sol, &p_sol);
+  }
+  const double theta0 = 0.0;
   const double thetadot0 = 0.0;
   std::cout << fmt::format(
       "V at (theta, thetadot)=({}, {}) = {}\n", theta0, thetadot0,
@@ -402,7 +424,7 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
 
 int DoMain() {
   // SearchWTaylorDynamics();
-  SearchWTrigPoly();
+  SearchWTrigPoly(false);
   return 0;
 }
 

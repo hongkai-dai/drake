@@ -282,6 +282,48 @@ ControlLyapunov::ConstructLyapunovProgram(
                                      &vdot_monomials, &vdot_gram);
   return prog;
 }
+void ControlLyapunov::SearchLagrangian(
+    const symbolic::Polynomial& V, int lambda0_degree,
+    const std::vector<int>& l_degrees, const std::vector<int>& p_degrees,
+    double deriv_eps, const ControlLyapunov::SearchOptions& search_options,
+    symbolic::Polynomial* lambda0_sol, VectorX<symbolic::Polynomial>* l_sol,
+    VectorX<symbolic::Polynomial>* p_sol) const {
+  symbolic::Polynomial lambda0;
+  MatrixX<symbolic::Variable> lambda0_gram;
+  VectorX<symbolic::Polynomial> l;
+  std::vector<MatrixX<symbolic::Variable>> l_grams;
+  VectorX<symbolic::Polynomial> p;
+  symbolic::Polynomial vdot_sos;
+  VectorX<symbolic::Monomial> vdot_monomials;
+  MatrixX<symbolic::Variable> vdot_gram;
+  auto prog_lagrangian = this->ConstructLagrangianProgram(
+      V, deriv_eps, lambda0_degree, l_degrees, p_degrees, &lambda0,
+      &lambda0_gram, &l, &l_grams, &p, &vdot_sos, &vdot_monomials, &vdot_gram);
+  RemoveTinyCoeff(prog_lagrangian.get(),
+                  search_options.lagrangian_tiny_coeff_tol);
+  solvers::MathematicalProgramResult result_lagrangian;
+  drake::log()->info("Search Lagrangian");
+  solvers::MakeSolver(search_options.lagrangian_step_solver)
+      ->Solve(*prog_lagrangian, std::nullopt,
+              search_options.lagrangian_step_solver_options,
+              &result_lagrangian);
+  if (result_lagrangian.is_success()) {
+    // internal::PrintPsdConstraintStat(*prog_lagrangian,
+    // result_lagrangian);
+    *lambda0_sol = result_lagrangian.GetSolution(lambda0);
+    if (search_options.lsol_tiny_coeff_tol > 0) {
+      *lambda0_sol = lambda0_sol->RemoveTermsWithSmallCoefficients(
+          search_options.lsol_tiny_coeff_tol);
+    }
+    GetPolynomialSolutions(result_lagrangian, l,
+                           search_options.lsol_tiny_coeff_tol, l_sol);
+    GetPolynomialSolutions(result_lagrangian, p,
+                           search_options.lsol_tiny_coeff_tol, p_sol);
+  } else {
+    drake::log()->error("Faild to find Lagrangian.");
+    return;
+  }
+}
 
 void ControlLyapunov::Search(
     const symbolic::Polynomial& V_init, int lambda0_degree,
@@ -316,44 +358,8 @@ void ControlLyapunov::Search(
       }
     }
 
-    {
-      symbolic::Polynomial lambda0;
-      MatrixX<symbolic::Variable> lambda0_gram;
-      VectorX<symbolic::Polynomial> l;
-      std::vector<MatrixX<symbolic::Variable>> l_grams;
-      VectorX<symbolic::Polynomial> p;
-      symbolic::Polynomial vdot_sos;
-      VectorX<symbolic::Monomial> vdot_monomials;
-      MatrixX<symbolic::Variable> vdot_gram;
-      auto prog_lagrangian = this->ConstructLagrangianProgram(
-          *V_sol, deriv_eps, lambda0_degree, l_degrees, p_degrees, &lambda0,
-          &lambda0_gram, &l, &l_grams, &p, &vdot_sos, &vdot_monomials,
-          &vdot_gram);
-      RemoveTinyCoeff(prog_lagrangian.get(),
-                      search_options.lagrangian_tiny_coeff_tol);
-      solvers::MathematicalProgramResult result_lagrangian;
-      drake::log()->info("Search Lagrangian");
-      solvers::MakeSolver(search_options.lagrangian_step_solver)
-          ->Solve(*prog_lagrangian, std::nullopt,
-                  search_options.lagrangian_step_solver_options,
-                  &result_lagrangian);
-      if (result_lagrangian.is_success()) {
-        // internal::PrintPsdConstraintStat(*prog_lagrangian,
-        // result_lagrangian);
-        *lambda0_sol = result_lagrangian.GetSolution(lambda0);
-        if (search_options.lsol_tiny_coeff_tol > 0) {
-          *lambda0_sol = lambda0_sol->RemoveTermsWithSmallCoefficients(
-              search_options.lsol_tiny_coeff_tol);
-        }
-        GetPolynomialSolutions(result_lagrangian, l,
-                               search_options.lsol_tiny_coeff_tol, l_sol);
-        GetPolynomialSolutions(result_lagrangian, p,
-                               search_options.lsol_tiny_coeff_tol, p_sol);
-      } else {
-        drake::log()->error("Faild to find Lagrangian.");
-        return;
-      }
-    }
+    SearchLagrangian(*V_sol, lambda0_degree, l_degrees, p_degrees, deriv_eps,
+                     search_options, lambda0_sol, l_sol, p_sol);
 
     {
       // Solve the program to find new V given Lagrangians.
@@ -392,6 +398,95 @@ void ControlLyapunov::Search(
                                search_options.lsol_tiny_coeff_tol,
                                ellipsoid_c_lagrangian_sol);
         drake::log()->info("d = {}", result_lyapunov.GetSolution(d(0)));
+      } else {
+        drake::log()->error("Failed to find Lyapunov");
+        return;
+      }
+    }
+    iter_count++;
+  }
+}
+
+void ControlLyapunov::Search(
+    const symbolic::Polynomial& V_init, int lambda0_degree,
+    const std::vector<int>& l_degrees, int V_degree,
+    const std::vector<int>& p_degrees, double deriv_eps,
+    const Eigen::Ref<const Eigen::MatrixXd>& x_samples, bool minimize_max,
+    const SearchOptions& search_options, symbolic::Polynomial* V_sol,
+    symbolic::Polynomial* lambda0_sol, VectorX<symbolic::Polynomial>* l_sol,
+    VectorX<symbolic::Polynomial>* p_sol) const {
+  DRAKE_DEMAND(x_samples.rows() == x_.rows());
+  int iter_count = 0;
+  double prev_cost = kInf;
+  *V_sol = V_init;
+  while (iter_count < search_options.bilinear_iterations) {
+    drake::log()->info("Iteration {}", iter_count);
+    SearchLagrangian(*V_sol, lambda0_degree, l_degrees, p_degrees, deriv_eps,
+                     search_options, lambda0_sol, l_sol, p_sol);
+
+    {
+      // Given the Lagrangian, find V to minimize the cost.
+      MatrixX<symbolic::Expression> V_gram;
+      symbolic::Polynomial V_search;
+      VectorX<symbolic::Polynomial> p;
+      auto prog_lyapunov = this->ConstructLyapunovProgram(
+          *lambda0_sol, *l_sol, V_degree, p_degrees, deriv_eps, &V_search,
+          &V_gram, &p);
+      // Evaluate V at x_samples.
+      Eigen::MatrixXd A_coeff_samples;
+      VectorX<symbolic::Variable> decision_variables_samples;
+      Eigen::VectorXd b_samples;
+      V_search.EvaluateWithAffineCoefficients(x_, x_samples, &A_coeff_samples,
+                                              &decision_variables_samples,
+                                              &b_samples);
+      if (minimize_max) {
+        // Introduce a slack variable V_max_sample with the constraint
+        // V_max_sample >= A_coeff_samples * decision_variables_samples +
+        // b_samples.
+        const auto V_max_sample =
+            prog_lyapunov->NewContinuousVariables<1>("Vmax");
+        Eigen::MatrixXd A_V_max(A_coeff_samples.rows(),
+                                A_coeff_samples.cols() + 1);
+        A_V_max.leftCols(A_coeff_samples.cols()) = A_coeff_samples;
+        A_V_max.rightCols<1>() = -Eigen::VectorXd::Ones(A_V_max.rows());
+
+        prog_lyapunov->AddLinearConstraint(
+            A_V_max, Eigen::VectorXd::Constant(A_V_max.rows(), -kInf),
+            -b_samples, {decision_variables_samples, V_max_sample});
+        prog_lyapunov->AddLinearCost(Vector1d::Ones(), 0, V_max_sample);
+      } else {
+        prog_lyapunov->AddLinearCost(A_coeff_samples.colwise().sum(),
+                                     b_samples.sum(),
+                                     decision_variables_samples);
+      }
+      RemoveTinyCoeff(prog_lyapunov.get(), search_options.lyap_tiny_coeff_tol);
+      drake::log()->info("Search Lyapunov, Lyapunov program smallest coeff: {}",
+                         SmallestCoeff(*prog_lyapunov));
+      const auto result_lyapunov = SearchWithBackoff(
+          prog_lyapunov.get(), search_options.lyap_step_solver,
+          search_options.lyap_step_solver_options,
+          search_options.backoff_scale);
+      if (result_lyapunov.is_success()) {
+        *V_sol = result_lyapunov.GetSolution(V_search);
+        if (search_options.Vsol_tiny_coeff_tol > 0) {
+          *V_sol = V_sol->RemoveTermsWithSmallCoefficients(
+              search_options.Vsol_tiny_coeff_tol);
+        }
+        GetPolynomialSolutions(result_lyapunov, p,
+                               search_options.lsol_tiny_coeff_tol, p_sol);
+        double cost;
+        const Eigen::VectorXd V_samples =
+            V_sol->EvaluateIndeterminates(x_, x_samples);
+        if (minimize_max) {
+          cost = V_samples.maxCoeff();
+        } else {
+          cost = V_samples.sum();
+        }
+        drake::log()->info("Optimal cost = {}", cost);
+        if (prev_cost - cost < search_options.rho_converge_tol) {
+          return;
+        }
+        prev_cost = cost;
       } else {
         drake::log()->error("Failed to find Lyapunov");
         return;

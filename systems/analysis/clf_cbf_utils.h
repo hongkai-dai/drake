@@ -138,6 +138,17 @@ std::unique_ptr<solvers::MathematicalProgram> FindCandidateLyapunov(
     const Eigen::Ref<const Eigen::MatrixXd>& xdot_val, symbolic::Polynomial* V,
     MatrixX<symbolic::Expression>* V_gram);
 
+/**
+ * Each x[i] contains the coordinate along one dimension, returns the matrix
+ * such that each column of the matrix corresponds to one point in the meshgrid.
+ */
+Eigen::MatrixXd Meshgrid(const std::vector<Eigen::VectorXd>& x);
+
+void Save(const symbolic::Polynomial& p, const std::string& file_name);
+
+[[nodiscard]] symbolic::Polynomial Load(
+    const symbolic::Variables& indeterminates, const std::string& file_name);
+
 namespace internal {
 /** The ellipsoid polynomial (x−x*)ᵀS(x−x*)−ρ
  */

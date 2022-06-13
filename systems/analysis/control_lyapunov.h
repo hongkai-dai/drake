@@ -223,7 +223,7 @@ class ControlLyapunov {
   }
 
  private:
-  void SearchLagrangian(const symbolic::Polynomial& V, int lambda0_degree,
+  bool SearchLagrangian(const symbolic::Polynomial& V, int lambda0_degree,
                         const std::vector<int>& l_degrees,
                         const std::vector<int>& p_degrees, double deriv_eps,
                         const SearchOptions& search_options,
@@ -247,13 +247,14 @@ class VdotCalculator {
   VdotCalculator(const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
                  const symbolic::Polynomial& V,
                  const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
-                 const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G);
+                 const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
+                 const Eigen::Ref<const Eigen::MatrixXd>& u_vertices);
 
   symbolic::Polynomial Calc(const Eigen::Ref<const Eigen::VectorXd>& u) const;
 
   /**
    * Compute min ∂V/∂x*f(x)+∂V/∂x * G(x)*u
-   *             -1 <= u <= 1
+   *             u in ConvexHull(u_vertices)
    * for each x.
    * @param x_vals A batch of x values. x_vals.col(i) is the i'th sample value
    * of x.
@@ -263,6 +264,7 @@ class VdotCalculator {
 
  private:
   VectorX<symbolic::Variable> x_;
+  Eigen::MatrixXd u_vertices_;
   symbolic::Polynomial dVdx_times_f_;
   RowVectorX<symbolic::Polynomial> dVdx_times_G_;
 };

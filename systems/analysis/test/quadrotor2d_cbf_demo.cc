@@ -22,23 +22,20 @@ namespace analysis {
 const double kInf = std::numeric_limits<double>::infinity();
 
 int DoMain() {
-  Quadrotor quadrotor;
+  QuadrotorPlant<double> quadrotor;
 
   // Synthesize an LQR controller.
-  const Vector6d x_des = Vector6d::Zero();
-  const double thrust_equilibrium = quadrotor.mass * quadrotor.gravity / 2;
-  const Eigen::Vector2d u_des = quadrotor.NormalizeU(
-      Eigen::Vector2d(thrust_equilibrium, thrust_equilibrium));
-  const auto x_des_ad = math::InitializeAutoDiff(x_des);
-  Vector6<AutoDiffXd> f_des;
-  Eigen::Matrix<AutoDiffXd, 6, 2> G_des;
-  quadrotor.ControlAffineDynamics<AutoDiffXd>(x_des_ad, &f_des, &G_des);
-  const auto xdot_des = f_des + G_des * u_des;
+  const double thrust_equilibrium = EquilibriumThrust(quadrotor);
+  const Eigen::Vector2d u_des(thrust_equilibrium, thrust_equilibrium);
+  auto context = quadrotor.CreateDefaultContext();
+  context->SetContinuousState(Vector6d::Zero());
+  quadrotor.get_input_port().FixValue(context.get(), u_des);
+  auto linearized_quadrotor = Linearize(quadrotor, *context);
   Vector6d lqr_Q_diag;
   lqr_Q_diag << 1, 1, 1, 10, 10, 10;
   const Eigen::Matrix<double, 6, 6> lqr_Q = lqr_Q_diag.asDiagonal();
   const auto lqr_result = controllers::LinearQuadraticRegulator(
-      math::ExtractGradient(xdot_des), math::ExtractValue(G_des), lqr_Q,
+      linearized_quadrotor->A(), linearized_quadrotor->B(), lqr_Q,
       Eigen::Matrix2d::Identity() * 10);
 
   Vector6<symbolic::Variable> x;
@@ -48,7 +45,7 @@ int DoMain() {
 
   Vector6<symbolic::Polynomial> f;
   Eigen::Matrix<symbolic::Polynomial, 6, 2> G;
-  quadrotor.PolynomialControlAffineDynamics(x, &f, &G);
+  PolynomialControlAffineDynamics(quadrotor, x, &f, &G);
   for (int i = 0; i < 6; ++i) {
     f(i) = f(i).RemoveTermsWithSmallCoefficients(1E-6);
     for (int j = 0; j < 2; ++j) {
@@ -64,9 +61,10 @@ int DoMain() {
   unsafe_regions[1](0) = symbolic::Polynomial(0.5 - x(1));
 
   Eigen::Matrix<double, 2, 4> u_vertices;
+  const double thrust_max = 3 * thrust_equilibrium;
   // clang-format off
-  u_vertices << 1, 1, -1, -1,
-                1, -1, 1, -1;
+  u_vertices << 0, 0, thrust_max, thrust_max,
+                0, thrust_max, 0, thrust_max;
   // clang-format on
   const ControlBarrier dut(f, G, x, unsafe_regions, u_vertices);
 

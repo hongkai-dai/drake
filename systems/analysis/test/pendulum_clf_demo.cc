@@ -209,7 +209,6 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
   const int V_degree = 4;
   symbolic::Polynomial lambda0;
   VectorX<symbolic::Polynomial> l;
-  symbolic::Polynomial r;
   VectorX<symbolic::Polynomial> p;
   double rho;
   const double deriv_eps = 0.25;
@@ -251,6 +250,7 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
     const double rho_bisection_tol = 0.01;
     const ControlLyapunov::RhoBisectionOption rho_bisection_option(
         rho_min, rho_max, rho_bisection_tol);
+    symbolic::Polynomial r;
     VectorX<symbolic::Polynomial> ellipsoid_c_lagrangian_sol;
     dut.Search(V_init, lambda0_degree, l_degrees, V_degree, p_degrees,
                ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S,

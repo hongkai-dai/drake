@@ -1,6 +1,10 @@
 #include "drake/systems/analysis/clf_cbf_utils.h"
 
+#include <fstream>
+#include <iostream>
 #include <limits>
+
+#include <fmt/format.h>
 
 #include "drake/common/text_logging.h"
 #include "drake/solvers/choose_best_solver.h"
@@ -319,31 +323,146 @@ std::unique_ptr<solvers::MathematicalProgram> FindCandidateLyapunov(
   NewSosPolynomialPassOrigin(prog.get(), x_set, V_degree,
                              symbolic::internal::DegreeType::kAny, V,
                              &V_monomials, V_gram);
+  Eigen::MatrixXd A_V_samples;
+  VectorX<symbolic::Variable> V_decision_variables;
+  Eigen::VectorXd b_V_samples;
+  V->EvaluateWithAffineCoefficients(x, x_val, &A_V_samples,
+                                    &V_decision_variables, &b_V_samples);
   // Now add the constraint V(xⁱ)<=1
-  const int num_samples = x_val.cols();
-  Eigen::MatrixXd V_monomials_vals(V_monomials.rows(), num_samples);
-  for (int i = 0; i < V_monomials.rows(); ++i) {
-    V_monomials_vals.row(i) = V_monomials(i).Evaluate(x, x_val).transpose();
-  }
-  for (int i = 0; i < num_samples; ++i) {
-    prog->AddLinearConstraint((*V_gram * (V_monomials_vals.col(i) *
-                                          V_monomials_vals.col(i).transpose()))
-                                  .trace(),
-                              -kInf, 1);
-  }
+  prog->AddLinearConstraint(
+      A_V_samples, Eigen::VectorXd::Constant(A_V_samples.rows(), -kInf),
+      Eigen::VectorXd::Ones(A_V_samples.rows()) - b_V_samples,
+      V_decision_variables);
+
   // Now add the constraint Vdot(xⁱ) <= 0
-  const RowVectorX<symbolic::Polynomial> dVdx = V->Jacobian(x);
-  symbolic::Expression cost;
-  for (int i = 0; i < num_samples; ++i) {
-    symbolic::Environment env;
-    env.insert(x, x_val.col(i));
-    const symbolic::Expression dVdx_i =
-        (dVdx.dot(xdot_val.col(i))).ToExpression().EvaluatePartial(env);
-    cost += dVdx_i;
-    prog->AddLinearConstraint(dVdx_i, -kInf, 0);
+  VectorX<symbolic::Variable> xdot_vars(x.rows());
+  VectorX<symbolic::Polynomial> xdot_poly(x.rows());
+  for (int i = 0; i < xdot_vars.rows(); ++i) {
+    xdot_vars(i) = symbolic::Variable("xd" + std::to_string(i));
+    xdot_poly(i) = symbolic::Polynomial(xdot_vars(i));
   }
-  prog->AddLinearCost(cost);
+  const RowVectorX<symbolic::Polynomial> dVdx = V->Jacobian(x);
+  const symbolic::Polynomial Vdot = dVdx.dot(xdot_poly);
+  Eigen::MatrixXd A_Vdot_samples;
+  VectorX<symbolic::Variable> Vdot_decision_variables;
+  Eigen::VectorXd b_Vdot_samples;
+  VectorX<symbolic::Variable> x_xdot(2 * x.rows());
+  x_xdot << x, xdot_vars;
+  Eigen::MatrixXd x_xdot_vals(2 * x.rows(), x_val.cols());
+  x_xdot_vals.topRows(x.rows()) = x_val;
+  x_xdot_vals.bottomRows(x.rows()) = xdot_val;
+  Vdot.EvaluateWithAffineCoefficients(x_xdot, x_xdot_vals, &A_Vdot_samples,
+                                      &Vdot_decision_variables,
+                                      &b_Vdot_samples);
+  // Add the cost min ∑ᵢ Vdot(xⁱ)
+  prog->AddLinearConstraint(
+      A_Vdot_samples, Eigen::VectorXd::Constant(A_Vdot_samples.rows(), -kInf),
+      -b_Vdot_samples, Vdot_decision_variables);
+  prog->AddLinearCost(A_Vdot_samples.colwise().sum(), b_Vdot_samples.sum(),
+                      Vdot_decision_variables);
   return prog;
+}
+
+namespace {
+Eigen::MatrixXd MeshgridHelper(const std::vector<Eigen::VectorXd>& x,
+                               int stop) {
+  DRAKE_DEMAND(x.size() >= 2);
+  DRAKE_DEMAND(stop >= 1 && stop < static_cast<int>(x.size()));
+  if (stop == 1) {
+    Eigen::MatrixXd ret(2, x[0].rows() * x[1].rows());
+    int pt_count = 0;
+    for (int i = 0; i < x[0].rows(); ++i) {
+      for (int j = 0; j < x[1].rows(); ++j) {
+        ret.col(pt_count++) = Eigen::Vector2d(x[0](i), x[1](j));
+      }
+    }
+    return ret;
+  } else {
+    const Eigen::MatrixXd ret_prev = MeshgridHelper(x, stop - 1);
+    Eigen::MatrixXd ret(ret_prev.rows() + 1, ret_prev.cols() * x[stop].rows());
+    for (int i = 0; i < ret_prev.cols(); ++i) {
+      for (int j = 0; j < x[stop].rows(); ++j) {
+        ret.block(0, x[stop].rows() * i + j, ret_prev.rows(), 1) =
+            ret_prev.col(i);
+      }
+      ret.block(ret_prev.rows(), x[stop].rows() * i, 1, x[stop].rows()) =
+          x[stop].transpose();
+    }
+    return ret;
+  }
+}
+}  // namespace
+
+Eigen::MatrixXd Meshgrid(const std::vector<Eigen::VectorXd>& x) {
+  return MeshgridHelper(x, static_cast<int>(x.size()) - 1);
+}
+
+void Save(const symbolic::Polynomial& p, const std::string& file_name) {
+  std::ofstream outfile;
+  outfile.open(file_name, std::ios::out);
+  std::unordered_map<symbolic::Variable::Id, int> var_to_index;
+  int indeterminate_count = 0;
+  for (const auto& x : p.indeterminates()) {
+    var_to_index.emplace(x.get_id(), indeterminate_count);
+    indeterminate_count++;
+  }
+  outfile << indeterminate_count << "\n";
+  for (const auto& [monomial, coeff] : p.monomial_to_coefficient_map()) {
+    DRAKE_DEMAND(symbolic::is_constant(coeff));
+    std::string term;
+    term.append(fmt::format("{:.10f} ", symbolic::get_constant_value(coeff)));
+    for (const auto& [var, degree] : monomial.get_powers()) {
+      term.append(
+          fmt::format("{} {}, ", var_to_index.at(var.get_id()), degree));
+    }
+    term.append("\n");
+    outfile << term;
+  }
+  outfile.close();
+}
+
+symbolic::Polynomial Load(const symbolic::Variables& indeterminates,
+                          const std::string& file_name) {
+  std::ifstream infile;
+  infile.open(file_name);
+
+  std::string line;
+  std::getline(infile, line);
+  std::stringstream ss(line);
+  int indeterminate_count;
+  ss >> indeterminate_count;
+  if (indeterminate_count != static_cast<int>(indeterminates.size())) {
+    throw std::runtime_error(
+        fmt::format("Load: expect {} indeterminates, but got {}",
+                    indeterminate_count, indeterminates.size()));
+  }
+  std::unordered_map<int, symbolic::Variable> index_to_var;
+  indeterminate_count = 0;
+  for (const auto& var : indeterminates) {
+    index_to_var.emplace(indeterminate_count, var);
+    indeterminate_count++;
+  }
+  symbolic::Polynomial::MapType monomial_to_coeff_map;
+  while (std::getline(infile, line)) {
+    size_t last = 0;
+    size_t next = line.find(" ", last);
+    const double coeff = std::stod(line.substr(last, next - last));
+    last = next + 1;
+    std::map<symbolic::Variable, int> monomial_powers;
+    while ((next = line.find(",", last)) != std::string::npos) {
+      const std::string var_power_pair = line.substr(last, next - last);
+      std::stringstream ss_pair(var_power_pair);
+      int var_index;
+      int degree;
+      ss_pair >> var_index >> degree;
+      monomial_powers.emplace(index_to_var.at(var_index), degree);
+      last = next + 1;
+    }
+    const symbolic::Monomial monomial{monomial_powers};
+    monomial_to_coeff_map.emplace(monomial, coeff);
+  }
+  infile.close();
+  return symbolic::Polynomial(monomial_to_coeff_map);
 }
 
 namespace internal {

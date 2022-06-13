@@ -38,7 +38,12 @@ TEST_F(ControlLyapunovTest, VdotCalculator) {
   G_ << symbolic::Polynomial{3.}, symbolic::Polynomial{a_, x_vars_},
       symbolic::Polynomial{x0_}, symbolic::Polynomial{b_ * x1_, x_vars_};
   const symbolic::Polynomial V1(x0_ * x0_ + 2 * x1_ * x1_);
-  const VdotCalculator dut1(x_, V1, f_, G_);
+  Eigen::Matrix<double, 2, 4> u_vertices;
+  // clang-format off
+  u_vertices << 1, 1, -1, -1,
+                1, -1, 1, -1;
+  // clang-format on
+  const VdotCalculator dut1(x_, V1, f_, G_, u_vertices);
 
   const Eigen::Vector2d u_val(2., 3.);
   EXPECT_PRED2(symbolic::test::PolyEqualAfterExpansion, dut1.Calc(u_val),
@@ -46,12 +51,50 @@ TEST_F(ControlLyapunovTest, VdotCalculator) {
                 (f_ + G_ * u_val))(0));
 
   const symbolic::Polynomial V2(2 * a_ * x0_ * x1_ * x1_, x_vars_);
-  const VdotCalculator dut2(x_, V2, f_, G_);
+  const VdotCalculator dut2(x_, V2, f_, G_, u_vertices);
   EXPECT_PRED2(symbolic::test::PolyEqualAfterExpansion, dut2.Calc(u_val),
                (Eigen::Matrix<symbolic::Polynomial, 1, 2>(
                     symbolic::Polynomial(2 * a_ * x1_ * x1_, x_vars_),
                     symbolic::Polynomial(4 * a_ * x0_ * x1_, x_vars_)) *
                 (f_ + G_ * u_val))(0));
+}
+
+TEST_F(ControlLyapunovTest, VdotCalcMin) {
+  const Vector2<symbolic::Polynomial> f{
+      2 * x0_, symbolic::Polynomial{3 * x1_ * x0_, x_vars_}};
+  Matrix2<symbolic::Polynomial> G;
+  G << symbolic::Polynomial{3.}, symbolic::Polynomial{1, x_vars_},
+      symbolic::Polynomial{x0_}, symbolic::Polynomial{2 * x1_ * x0_, x_vars_};
+  const symbolic::Polynomial V(x0_ * x0_ + 2 * x1_ * x1_ + x0_ * x1_);
+
+  Eigen::Matrix<double, 2, 5> u_vertices;
+  // clang-format off
+  u_vertices << 1, 1, -1, 0, 0.5,
+                1, -1, 1, -1, -2;
+  // clang-format on
+  const VdotCalculator dut(x_, V, f, G, u_vertices);
+  Eigen::Matrix<double, 2, 3> x_vals;
+  // clang-format off
+  x_vals << 0.4, 1, -0.5,
+            0.2, 2, -1;
+  // clang-format on
+  const Eigen::VectorXd Vdot_vals = dut.CalcMin(x_vals);
+  EXPECT_EQ(Vdot_vals.rows(), x_vals.cols());
+  const RowVectorX<symbolic::Polynomial> dVdx = V.Jacobian(x_);
+  const symbolic::Polynomial dVdx_times_f = dVdx.dot(f);
+  const RowVectorX<symbolic::Polynomial> dVdx_times_G = dVdx * G;
+  for (int i = 0; i < x_vals.cols(); ++i) {
+    symbolic::Environment env;
+    env.insert(x_, x_vals.col(i));
+    const double dVdx_times_f_val = dVdx_times_f.Evaluate(env);
+    Eigen::RowVectorXd dVdx_times_G_val(dVdx_times_G.cols());
+    for (int j = 0; j < dVdx_times_G_val.cols(); ++j) {
+      dVdx_times_G_val(j) = dVdx_times_G(j).Evaluate(env);
+    }
+    EXPECT_NEAR(Vdot_vals(i),
+                (dVdx_times_G_val * u_vertices).minCoeff() + dVdx_times_f_val,
+                1E-7);
+  }
 }
 
 class SimpleLinearSystemTest : public ::testing::Test {

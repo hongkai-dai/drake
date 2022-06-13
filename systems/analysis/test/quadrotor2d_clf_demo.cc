@@ -7,6 +7,7 @@
 #include "drake/math/autodiff_gradient.h"
 #include "drake/solvers/common_solver_option.h"
 #include "drake/solvers/solve.h"
+#include "drake/systems/analysis/clf_cbf_utils.h"
 #include "drake/systems/analysis/control_lyapunov.h"
 #include "drake/systems/analysis/simulator.h"
 #include "drake/systems/analysis/simulator_config_functions.h"
@@ -21,117 +22,33 @@ namespace analysis {
 
 const double kInf = std::numeric_limits<double>::infinity();
 
-class ControlledQuadrotor final : public LeafSystem<double> {
- public:
-  DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(ControlledQuadrotor)
-
-  ControlledQuadrotor(symbolic::Polynomial clf, Vector6<symbolic::Variable> x,
-                      double deriv_eps)
-      : LeafSystem<double>(),
-        clf_{std::move(clf)},
-        x_{std::move(x)},
-        deriv_eps_{deriv_eps} {
-    auto state_index = this->DeclareContinuousState(6);
-    state_output_index_ =
-        this->DeclareStateOutputPort("state", state_index).get_index();
-    clf_output_index_ =
-        this->DeclareVectorOutputPort("clf", 1, &ControlledQuadrotor::CalcClf)
-            .get_index();
-    u_output_index_ =
-        this->DeclareVectorOutputPort("u", 2, &ControlledQuadrotor::CalcU)
-            .get_index();
-    const RowVector6<symbolic::Polynomial> dVdx = clf_.Jacobian(x_);
-
-    quadrotor_.PolynomialControlAffineDynamics(x, &f_, &G_);
-    dVdx_times_f_ = dVdx.dot(f_);
-    dVdx_times_G_ = dVdx * G_;
-  }
-
-  ~ControlledQuadrotor() final{};
-
-  const OutputPortIndex& state_output_index() const {
-    return state_output_index_;
-  }
-
-  const OutputPortIndex& clf_output_index() const { return clf_output_index_; }
-
- private:
-  virtual void DoCalcTimeDerivatives(
-      const systems::Context<double>& context,
-      systems::ContinuousState<double>* derivatives) const final {
-    BasicVector<double> u_output(2);
-    this->CalcU(context, &u_output);
-
-    auto& derivative_vector = derivatives->get_mutable_vector();
-
-    const Vector6d x_val = context.get_continuous_state_vector().CopyToVector();
-    const Eigen::Vector2d u_val = u_output.get_value();
-    const Vector6d xdot = quadrotor_.CalcDynamics(x_val, u_val);
-    for (int i = 0; i < 6; ++i) {
-      derivative_vector.SetAtIndex(i, xdot(i));
-    }
-  }
-
-  void CalcU(const Context<double>& context,
-             BasicVector<double>* output) const {
-    solvers::MathematicalProgram prog;
-    auto u = prog.NewContinuousVariables<2>();
-    prog.AddBoundingBoxConstraint(-1, 1, u);
-    prog.AddQuadraticCost(Eigen::Matrix2d::Identity(), Eigen::Vector2d::Zero(),
-                          u);
-    const Vector6d x_val = context.get_continuous_state_vector().CopyToVector();
-
-    symbolic::Environment env;
-    env.insert(x_, x_val);
-    const double dVdx_times_f_val = dVdx_times_f_.Evaluate(env);
-    Eigen::RowVector2d dVdx_times_G_val;
-    for (int i = 0; i < 2; ++i) {
-      dVdx_times_G_val(i) = dVdx_times_G_(i).Evaluate(env);
-    }
-    const double V_val = clf_.Evaluate(env);
-    // dVdx * G * u + dVdx * f <= -eps * V
-    prog.AddLinearConstraint(dVdx_times_G_val, -kInf,
-                             -deriv_eps_ * V_val - dVdx_times_f_val, u);
-    const auto result = solvers::Solve(prog);
-    DRAKE_DEMAND(result.is_success());
-    const Eigen::Vector2d u_val =
-        quadrotor_.UnnormalizeU(result.GetSolution(u));
-    output->get_mutable_value() = u_val;
-  }
-
-  void CalcClf(const Context<double>& context,
-               BasicVector<double>* output) const {
-    const Vector6<double> x_val =
-        context.get_continuous_state_vector().CopyToVector();
-
-    symbolic::Environment env;
-    env.insert(x_, x_val);
-    Eigen::VectorBlock<VectorX<double>> clf_vec = output->get_mutable_value();
-    clf_vec(0) = clf_.Evaluate(env);
-  }
-
-  symbolic::Polynomial clf_;
-  Vector6<symbolic::Variable> x_;
-  double deriv_eps_;
-  Quadrotor quadrotor_;
-  Vector6<symbolic::Polynomial> f_;
-  Eigen::Matrix<symbolic::Polynomial, 6, 2> G_;
-  symbolic::Polynomial dVdx_times_f_;
-  RowVector2<symbolic::Polynomial> dVdx_times_G_;
-  OutputPortIndex state_output_index_;
-  OutputPortIndex clf_output_index_;
-  OutputPortIndex u_output_index_;
-};
-
-void Simulate(const Vector6<symbolic::Variable>& x,
-              const symbolic::Polynomial& clf, double deriv_eps,
-              const Vector6d& x0, double duration) {
+[[maybe_unused]] void Simulate(
+    const Vector6<symbolic::Variable>& x,
+    const Vector6<symbolic::Polynomial>& f,
+    const Eigen::Matrix<symbolic::Polynomial, 6, 2>& G, double thrust_max,
+    const symbolic::Polynomial& clf, double deriv_eps, const Vector6d& x0,
+    double duration) {
   systems::DiagramBuilder<double> builder;
-  auto system = builder.AddSystem<ControlledQuadrotor>(clf, x, deriv_eps);
-  auto state_logger = LogVectorOutput(
-      system->get_output_port(system->state_output_index()), &builder);
+  auto quadrotor = builder.AddSystem<QuadrotorPlant<double>>();
+  Eigen::Matrix<double, 4, 2> Au;
+  Au.topRows<2>() = Eigen::Matrix2d::Identity();
+  Au.bottomRows<2>() = -Eigen::Matrix2d::Identity();
+  const Eigen::Vector4d bu(thrust_max, thrust_max, 0, 0);
+  const Eigen::Vector2d u_star(0, 0);
+  const Eigen::Matrix2d Ru = Eigen::Matrix2d::Identity();
+  auto clf_controller = builder.AddSystem<ClfController>(
+      x, f, G, clf, deriv_eps, Au, bu, u_star, Ru);
+
+  auto state_logger =
+      LogVectorOutput(quadrotor->get_state_output_port(), &builder);
   auto clf_logger = LogVectorOutput(
-      system->get_output_port(system->clf_output_index()), &builder);
+      clf_controller->get_output_port(clf_controller->clf_output_index()),
+      &builder);
+  builder.Connect(quadrotor->get_state_output_port(),
+                  clf_controller->get_input_port());
+  builder.Connect(
+      clf_controller->get_output_port(clf_controller->control_output_index()),
+      quadrotor->get_input_port());
   auto diagram = builder.Build();
   auto context = diagram->CreateDefaultContext();
 
@@ -152,145 +69,21 @@ void Simulate(const Vector6<symbolic::Variable>& x,
       clf_logger->FindLog(simulator.get_context()).data().rightCols<1>());
 }
 
-[[maybe_unused]] void search(const Vector6<symbolic::Variable>& x,
-                             const symbolic::Polynomial& V_init,
-                             const Vector6<symbolic::Polynomial>& f,
-                             const Eigen::Matrix<symbolic::Polynomial, 6, 2>& G,
-                             symbolic::Polynomial* V_sol,
-                             double* deriv_eps_sol) {
-  Eigen::Matrix<double, 2, 4> u_vertices;
-  // clang-format off
-  u_vertices << 1, 1, -1, -1,
-                1, -1, 1, -1;
-  // clang-format on
-  VectorX<symbolic::Polynomial> state_constraints(0);
-  ControlLyapunov dut(x, f, G, u_vertices, state_constraints);
-  const double deriv_eps = 0.2;
-  *deriv_eps_sol = deriv_eps;
-  {
-    const symbolic::Polynomial lambda0{};
-    const int d_degree = 2;
-    const std::vector<int> l_degrees = {2, 2, 2, 2};
-    const std::vector<int> p_degrees = {};
-    VectorX<symbolic::Polynomial> l;
-    std::vector<MatrixX<symbolic::Variable>> l_grams;
-    VectorX<symbolic::Polynomial> p;
-    symbolic::Variable rho;
-    symbolic::Polynomial vdot_sos;
-    VectorX<symbolic::Monomial> vdot_monomials;
-    MatrixX<symbolic::Variable> vdot_gram;
-    auto prog = dut.ConstructLagrangianProgram(
-        V_init, lambda0, d_degree, l_degrees, p_degrees, *deriv_eps_sol, &l,
-        &l_grams, &p, &rho, &vdot_sos, &vdot_monomials, &vdot_gram);
-    const auto result = solvers::Solve(*prog);
-    DRAKE_DEMAND(result.is_success());
-    std::cout << V_init << " <= " << result.GetSolution(rho) << "\n";
-  }
-  {
-    const int lambda0_degree = 2;
-    const std::vector<int> l_degrees = {2, 2, 2, 2};
-    const std::vector<int> p_degrees = {};
-    const std::vector<int> ellipsoid_c_lagrangian_degrees = {};
-    const int V_degree = 2;
-    const Vector6d x_star = Vector6d::Zero();
-    const Matrix6<double> S = Matrix6<double>::Identity();
-    ControlLyapunov::SearchOptions search_options;
-    search_options.bilinear_iterations = 10;
-    search_options.backoff_scale = 0.02;
-    search_options.lyap_tiny_coeff_tol = 2E-7;
-    search_options.Vsol_tiny_coeff_tol = 1E-7;
-    search_options.lsol_tiny_coeff_tol = 1E-7;
-    search_options.lyap_step_solver_options = solvers::SolverOptions();
-    // search_options.lyap_step_solver_options->SetOption(solvers::CommonSolverOption::kPrintToConsole,
-    // 1);
-
-    ControlLyapunov::RhoBisectionOption rho_bisection_option(0.01, 2, 0.01);
-    symbolic::Polynomial lambda0;
-    VectorX<symbolic::Polynomial> l;
-    symbolic::Polynomial r;
-    double rho_sol;
-    VectorX<symbolic::Polynomial> p_sol;
-    VectorX<symbolic::Polynomial> ellipsoid_c_lagrangian_sol;
-
-    dut.Search(V_init, lambda0_degree, l_degrees, V_degree, p_degrees,
-               ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S,
-               V_degree - 2, search_options, rho_bisection_option, V_sol,
-               &lambda0, &l, &r, &p_sol, &rho_sol, &ellipsoid_c_lagrangian_sol);
-  }
-}
-
-[[maybe_unused]] void search_w_box_bounds(
-    const Vector6<symbolic::Variable>& x, const symbolic::Polynomial& V_init,
-    const Vector6<symbolic::Polynomial>& f,
-    const Eigen::Matrix<symbolic::Polynomial, 6, 2>& G,
-    symbolic::Polynomial* V_sol, double* deriv_eps_sol) {
-  const int V_degree = 2;
-
-  const double positivity_eps{0};
-  const ControlLyapunovBoxInputBound dut(f, G, x, positivity_eps);
-  ControlLyapunovBoxInputBound::SearchOptions search_options;
-  search_options.bilinear_iterations = 10;
-  search_options.backoff_scale = 0.02;
-  // I run into numerical problem if I only search for l.
-  search_options.search_l_and_b = true;
-  search_options.lagrangian_step_solver_options = solvers::SolverOptions();
-  // search_options.lagrangian_step_solver_options->SetOption(
-  //    solvers::CommonSolverOption::kPrintToConsole, 1);
-  ControlLyapunovBoxInputBound::RhoBisectionOption rho_bisection_option(0.01, 5,
-                                                                        0.01);
-
-  const int nu = 2;
-  const int num_vdot_sos = 2;
-  std::vector<std::vector<symbolic::Polynomial>> l_given(nu);
-  for (int i = 0; i < nu; ++i) {
-    l_given[i].resize(num_vdot_sos);
-    for (int j = 0; j < num_vdot_sos; ++j) {
-      l_given[i][j] = symbolic::Polynomial();
-    }
-  }
-  std::vector<std::vector<std::array<int, 3>>> lagrangian_degrees(nu);
-  for (int i = 0; i < nu; ++i) {
-    lagrangian_degrees[i].resize(num_vdot_sos);
-    for (int j = 0; j < num_vdot_sos; ++j) {
-      lagrangian_degrees[i][j] = {0, 2, 4};
-    }
-  }
-  std::vector<int> b_degrees(nu);
-  for (int i = 0; i < nu; ++i) {
-    b_degrees[i] = 4;
-  }
-  const Vector6d x_star = Vector6d::Zero();
-  const Eigen::Matrix<double, 6, 6> S = Eigen::Matrix<double, 6, 6>::Identity();
-  const int r_degree = V_degree - 2;
-  const double deriv_eps_lower = 0.2;
-  const double deriv_eps_upper = kInf;
-
-  const auto search_result =
-      dut.Search(V_init, l_given, lagrangian_degrees, b_degrees, x_star, S,
-                 r_degree, V_degree, deriv_eps_lower, deriv_eps_upper,
-                 search_options, rho_bisection_option);
-  *V_sol = search_result.V;
-  *deriv_eps_sol = search_result.deriv_eps;
-}
-
-int DoMain() {
-  Quadrotor quadrotor;
+[[maybe_unused]] void SearchWTaylorDynamics() {
+  QuadrotorPlant<double> quadrotor;
 
   // Synthesize an LQR controller.
-  const Vector6d x_des = Vector6d::Zero();
-  const double thrust_equilibrium = quadrotor.mass * quadrotor.gravity / 2;
-  const Eigen::Vector2d u_des = quadrotor.NormalizeU(
-      Eigen::Vector2d(thrust_equilibrium, thrust_equilibrium));
-  const auto x_des_ad = math::InitializeAutoDiff(x_des);
-  Vector6<AutoDiffXd> f_des;
-  Eigen::Matrix<AutoDiffXd, 6, 2> G_des;
-  quadrotor.ControlAffineDynamics<AutoDiffXd>(x_des_ad, &f_des, &G_des);
-  const auto xdot_des = f_des + G_des * u_des;
+  auto context = quadrotor.CreateDefaultContext();
+  context->SetContinuousState(Vector6d::Zero());
+  const double thrust_equilibrium = EquilibriumThrust(quadrotor);
+  const Eigen::Vector2d u_des(thrust_equilibrium, thrust_equilibrium);
+  quadrotor.get_input_port().FixValue(context.get(), u_des);
+  auto linearized_quadrotor = Linearize(quadrotor, *context);
   Vector6d lqr_Q_diag;
   lqr_Q_diag << 1, 1, 1, 10, 10, 10;
   const Eigen::Matrix<double, 6, 6> lqr_Q = lqr_Q_diag.asDiagonal();
   const auto lqr_result = controllers::LinearQuadraticRegulator(
-      math::ExtractGradient(xdot_des), math::ExtractValue(G_des), lqr_Q,
+      linearized_quadrotor->A(), linearized_quadrotor->B(), lqr_Q,
       Eigen::Matrix2d::Identity() * 10);
 
   Vector6<symbolic::Variable> x;
@@ -300,7 +93,9 @@ int DoMain() {
 
   Vector6<symbolic::Polynomial> f;
   Eigen::Matrix<symbolic::Polynomial, 6, 2> G;
-  quadrotor.PolynomialControlAffineDynamics(x, &f, &G);
+
+  PolynomialControlAffineDynamics(quadrotor, x, &f, &G);
+
   for (int i = 0; i < 6; ++i) {
     f(i) = f(i).RemoveTermsWithSmallCoefficients(1E-6);
     for (int j = 0; j < 2; ++j) {
@@ -313,26 +108,216 @@ int DoMain() {
   V_init = V_init.RemoveTermsWithSmallCoefficients(1E-8);
   std::cout << "V_init: " << V_init << "\n";
 
-  Eigen::MatrixXd x_samples = Eigen::MatrixXd::Random(6, 100000) * 0.15;
-  const VdotCalculator vdot_calculator(x, V_init, f, G);
-  const Eigen::VectorXd vdot_samples = vdot_calculator.CalcMin(x_samples);
-  const Eigen::VectorXd v_samples = V_init.EvaluateIndeterminates(x, x_samples);
-  for (int i = 0; i < v_samples.rows(); ++i) {
-    if (v_samples(i) < 1 && vdot_samples(i) > 0) {
-      std::cout << fmt::format("v = {}, vdot = {}\n", v_samples(i),
-                               vdot_samples(i));
+  symbolic::Polynomial V_sol;
+  const double deriv_eps = 0.2;
+  const double thrust_max = 3 * thrust_equilibrium;
+  {
+    Eigen::Matrix<double, 2, 4> u_vertices;
+    // clang-format off
+  u_vertices << 0, 0, thrust_max, thrust_max,
+                0, thrust_max, 0, thrust_max;
+    // clang-format on
+    VectorX<symbolic::Polynomial> state_constraints(0);
+    ControlLyapunov dut(x, f, G, u_vertices, state_constraints);
+    {
+      const symbolic::Polynomial lambda0{};
+      const int d_degree = 2;
+      const std::vector<int> l_degrees = {2, 2, 2, 2};
+      const std::vector<int> p_degrees = {};
+      VectorX<symbolic::Polynomial> l;
+      std::vector<MatrixX<symbolic::Variable>> l_grams;
+      VectorX<symbolic::Polynomial> p;
+      symbolic::Variable rho;
+      symbolic::Polynomial vdot_sos;
+      VectorX<symbolic::Monomial> vdot_monomials;
+      MatrixX<symbolic::Variable> vdot_gram;
+      auto prog = dut.ConstructLagrangianProgram(
+          V_init, lambda0, d_degree, l_degrees, p_degrees, deriv_eps, &l,
+          &l_grams, &p, &rho, &vdot_sos, &vdot_monomials, &vdot_gram);
+      const auto result = solvers::Solve(*prog);
+      DRAKE_DEMAND(result.is_success());
+      std::cout << V_init << " <= " << result.GetSolution(rho) << "\n";
+    }
+    {
+      const int lambda0_degree = 2;
+      const std::vector<int> l_degrees = {2, 2, 2, 2};
+      const std::vector<int> p_degrees = {};
+      const std::vector<int> ellipsoid_c_lagrangian_degrees = {};
+      const int V_degree = 2;
+      const Vector6d x_star = Vector6d::Zero();
+      const Matrix6<double> S = Matrix6<double>::Identity();
+      ControlLyapunov::SearchOptions search_options;
+      search_options.bilinear_iterations = 10;
+      search_options.backoff_scale = 0.02;
+      search_options.lyap_tiny_coeff_tol = 2E-7;
+      search_options.Vsol_tiny_coeff_tol = 1E-7;
+      search_options.lsol_tiny_coeff_tol = 1E-7;
+      search_options.lyap_step_solver_options = solvers::SolverOptions();
+      // search_options.lyap_step_solver_options->SetOption(solvers::CommonSolverOption::kPrintToConsole,
+      // 1);
+
+      ControlLyapunov::RhoBisectionOption rho_bisection_option(0.01, 2, 0.01);
+      symbolic::Polynomial lambda0;
+      VectorX<symbolic::Polynomial> l;
+      symbolic::Polynomial r;
+      double rho_sol;
+      VectorX<symbolic::Polynomial> p_sol;
+      VectorX<symbolic::Polynomial> ellipsoid_c_lagrangian_sol;
+
+      dut.Search(V_init, lambda0_degree, l_degrees, V_degree, p_degrees,
+                 ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S,
+                 V_degree - 2, search_options, rho_bisection_option, &V_sol,
+                 &lambda0, &l, &r, &p_sol, &rho_sol,
+                 &ellipsoid_c_lagrangian_sol);
     }
   }
-
-  symbolic::Polynomial V_sol;
-  double deriv_eps_sol;
-  search(x, V_init, f, G, &V_sol, &deriv_eps_sol);
-  // search_w_box_bounds(x, V_init, f, G, &V_sol, &deriv_eps_sol);
 
   Vector6d x0 = Vector6d::Zero();
   x0(0) += 0.5;
   x0(2) += 0.2 * M_PI;
-  Simulate(x, V_sol, deriv_eps_sol, x0, 10);
+  Simulate(x, f, G, thrust_max, V_sol, deriv_eps, x0, 10);
+}
+
+[[maybe_unused]] void SearchWTrigDynamics() {
+  QuadrotorPlant<double> quadrotor;
+  Eigen::Matrix<symbolic::Variable, 7, 1> x;
+  for (int i = 0; i < 7; ++i) {
+    x(i) = symbolic::Variable("x" + std::to_string(i));
+  }
+  Eigen::Matrix<symbolic::Polynomial, 7, 1> f;
+  Eigen::Matrix<symbolic::Polynomial, 7, 2> G;
+  TrigPolyDynamics(quadrotor, x, &f, &G);
+
+  const double thrust_equilibrium = EquilibriumThrust(quadrotor);
+  const double thrust_max = 3 * thrust_equilibrium;
+  Eigen::Matrix<double, 2, 4> u_vertices;
+  // clang-format off
+  u_vertices << 0, 0, thrust_max, thrust_max,
+                0, thrust_max, 0, thrust_max;
+  // clang-format on
+  const Vector1<symbolic::Polynomial> state_constraints(
+      symbolic::Polynomial(x(2) * x(2) + (x(3) + 1) * (x(3) + 1) - 1));
+  symbolic::Polynomial V_init;
+  const int V_degree = 2;
+  {
+    // Find the initial V_init by sampling states.
+    const Eigen::VectorXd pos_x_samples =
+        Eigen::VectorXd::LinSpaced(4, -0.02, 0.05);
+    const Eigen::VectorXd pos_y_samples =
+        Eigen::VectorXd::LinSpaced(4, -0.05, 0.03);
+    const Eigen::VectorXd theta_samples =
+        Eigen::VectorXd::LinSpaced(4, -0.05 * M_PI, 0.03 * M_PI);
+    const Eigen::VectorXd vel_x_samples =
+        Eigen::VectorXd::LinSpaced(4, -0.05, 0.03);
+    const Eigen::VectorXd vel_y_samples =
+        Eigen::VectorXd::LinSpaced(4, -0.05, 0.02);
+    const Eigen::VectorXd thetadot_samples =
+        Eigen::VectorXd::LinSpaced(4, -0.05, 0.06);
+    const std::vector<Eigen::VectorXd> state_samples(
+        {pos_x_samples, pos_y_samples, theta_samples, vel_x_samples,
+         vel_y_samples, thetadot_samples});
+    const Eigen::MatrixXd state_mesh = Meshgrid(state_samples);
+    Eigen::MatrixXd x_val(7, state_mesh.cols());
+    Eigen::MatrixXd xdot_val(7, state_mesh.cols());
+    // Synthesize an LQR controller to compute the action.
+    auto context = quadrotor.CreateDefaultContext();
+    context->SetContinuousState(Vector6d::Zero());
+    const Eigen::Vector2d u_equilibrium(thrust_equilibrium, thrust_equilibrium);
+    quadrotor.get_input_port().FixValue(context.get(), u_equilibrium);
+    auto linearized_quadrotor = Linearize(quadrotor, *context);
+    Vector6d lqr_Q_diag;
+    lqr_Q_diag << 1, 1, 1, 10, 10, 10;
+    const Eigen::Matrix<double, 6, 6> lqr_Q = lqr_Q_diag.asDiagonal();
+    auto lqr_result = controllers::LinearQuadraticRegulator(
+        linearized_quadrotor->A(), linearized_quadrotor->B(), lqr_Q,
+        10 * Eigen::Matrix2d::Identity());
+
+    for (int i = 0; i < state_mesh.cols(); ++i) {
+      x_val.col(i) = ToTrigState<double>(state_mesh.col(i));
+      xdot_val.col(i) = TrigDynamics<double>(
+          quadrotor, x_val.col(i),
+          -lqr_result.K * state_mesh.col(i) + u_equilibrium);
+    }
+
+    MatrixX<symbolic::Expression> V_init_gram;
+    auto prog_V_init = FindCandidateLyapunov(x, V_degree, x_val, xdot_val,
+                                             &V_init, &V_init_gram);
+    solvers::SolverOptions solver_options;
+    solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
+    const auto result_init =
+        solvers::Solve(*prog_V_init, std::nullopt, solver_options);
+    DRAKE_DEMAND(result_init.is_success());
+    V_init = result_init.GetSolution(V_init);
+    V_init = V_init.RemoveTermsWithSmallCoefficients(1e-6);
+    std::cout << "V_init: " << V_init << "\n";
+    // Now sample many points and evaluate Vdot.
+    const RowVectorX<symbolic::Polynomial> dVdx = V_init.Jacobian(x);
+    Eigen::MatrixXd state_validate = Eigen::MatrixXd::Random(6, 10000) * 0.02;
+    Eigen::MatrixXd x_validate(7, state_validate.cols());
+    for (int i = 0; i < state_validate.cols(); ++i) {
+      x_validate.col(i) = ToTrigState<double>(state_validate.col(i));
+    }
+    VdotCalculator vdot_calculator(x, V_init, f, G, u_vertices);
+    const Eigen::VectorXd Vdot_validate = vdot_calculator.CalcMin(x_validate);
+    std::cout << "Vdot max: " << Vdot_validate.maxCoeff() << "\n";
+  }
+
+  const ControlLyapunov dut(x, f, G, u_vertices, state_constraints);
+  const int lambda0_degree = 2;
+  const std::vector<int> l_degrees{4, 4, 4, 4};
+  const std::vector<int> p_degrees{6};
+  symbolic::Polynomial lambda0;
+  VectorX<symbolic::Polynomial> l;
+  VectorX<symbolic::Polynomial> p;
+  const double deriv_eps = 0.0;
+  {
+    // Maximize rho such that V(x) <= rho defines a valid ROA.
+    std::vector<MatrixX<symbolic::Variable>> l_grams;
+    symbolic::Variable rho_var;
+    symbolic::Polynomial vdot_sos;
+    VectorX<symbolic::Monomial> vdot_monomials;
+    MatrixX<symbolic::Variable> vdot_gram;
+    const int d_degree = lambda0_degree / 2 + 1;
+    auto prog = dut.ConstructLagrangianProgram(
+        V_init, symbolic::Polynomial(), d_degree, l_degrees, p_degrees,
+        deriv_eps, &l, &l_grams, &p, &rho_var, &vdot_sos, &vdot_monomials,
+        &vdot_gram);
+    solvers::SolverOptions solver_options;
+    solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
+    const auto result = solvers::Solve(*prog, std::nullopt, solver_options);
+    DRAKE_DEMAND(result.is_success());
+    std::cout << fmt::format("V_init(x) <= {}\n", result.GetSolution(rho_var));
+  }
+
+  symbolic::Polynomial V_sol;
+  {
+    ControlLyapunov::SearchOptions search_options;
+    search_options.rho_converge_tol = 0.;
+    search_options.bilinear_iterations = 10;
+    search_options.backoff_scale = 0.;
+    search_options.lagrangian_step_solver_options = solvers::SolverOptions();
+    search_options.lagrangian_step_solver_options->SetOption(
+        solvers::CommonSolverOption::kPrintToConsole, 1);
+    Eigen::MatrixXd state_samples(6, 1);
+    state_samples.col(0) << 0, 0.1, 0, 0, 0, 0;
+    Eigen::MatrixXd x_samples(7, state_samples.cols());
+    for (int i = 0; i < state_samples.cols(); ++i) {
+      x_samples.col(i) = ToTrigState<double>(state_samples.col(i));
+    }
+
+    symbolic::Polynomial lambda0_sol;
+    VectorX<symbolic::Polynomial> l_sol;
+    VectorX<symbolic::Polynomial> p_sol;
+    const bool minimize_max = true;
+    dut.Search(V_init, lambda0_degree, l_degrees, V_degree, p_degrees,
+               deriv_eps, x_samples, minimize_max, search_options, &V_sol,
+               &lambda0_sol, &l_sol, &p_sol);
+  }
+}
+
+int DoMain() {
+  // SearchWTaylorDynamics();
+  SearchWTrigDynamics();
   return 0;
 }
 }  // namespace analysis

@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include "drake/common/temp_directory.h"
+#include "drake/common/test_utilities/eigen_matrix_compare.h"
 #include "drake/common/test_utilities/symbolic_test_util.h"
 #include "drake/math/matrix_util.h"
 #include "drake/solvers/mosek_solver.h"
@@ -279,6 +281,48 @@ GTEST_TEST(FindCandidateLyapunov, Test) {
     cost_expected += dVdx_val.dot(xdot_val.col(i));
   }
   EXPECT_NEAR(result.get_optimal_cost(), cost_expected, 1E-5);
+}
+
+GTEST_TEST(Meshgrid, Test) {
+  std::vector<Eigen::VectorXd> x;
+  x.push_back(Eigen::Vector2d(1, 2));
+  x.push_back(Eigen::Vector3d(3, 4, 5));
+  x.push_back(Eigen::Vector4d(6, 7, 8, 9));
+  const auto mesh = Meshgrid(x);
+  EXPECT_EQ(mesh.rows(), 3);
+  EXPECT_EQ(mesh.cols(), 2 * 3 * 4);
+  Eigen::MatrixXd mesh_expected(3, 2 * 3 * 4);
+  int pt_count = 0;
+  for (int i = 0; i < x[0].rows(); ++i) {
+    for (int j = 0; j < x[1].rows(); ++j) {
+      for (int k = 0; k < x[2].rows(); ++k) {
+        mesh_expected.col(pt_count++) =
+            Eigen::Vector3d(x[0](i), x[1](j), x[2](k));
+      }
+    }
+  }
+  EXPECT_TRUE(CompareMatrices(mesh, mesh_expected));
+}
+
+GTEST_TEST(SaveLoadPolynomial, Test) {
+  const symbolic::Variable x0("x0");
+  const symbolic::Variable x1("x1");
+  const symbolic::Variables x_set{{x0, x1}};
+
+  const std::string file = temp_directory() + "polynomial.txt";
+
+  const symbolic::Polynomial p0{x0 * x1};
+  Save(p0, file);
+  EXPECT_PRED2(symbolic::test::PolyEqual, p0, Load(x_set, file));
+
+  const symbolic::Polynomial p1{2 * x0 * x0 + 3 * x1};
+  Save(p1, file);
+  EXPECT_PRED2(symbolic::test::PolyEqual, p1, Load(x_set, file));
+
+  const symbolic::Polynomial p2{3 * x0 + 4 * x1 + 2 * x0 * x1 +
+                                3 * x0 * x1 * x1};
+  Save(p2, file);
+  EXPECT_PRED2(symbolic::test::PolyEqual, p2, Load(x_set, file));
 }
 
 }  // namespace analysis

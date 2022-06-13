@@ -282,7 +282,8 @@ ControlLyapunov::ConstructLyapunovProgram(
                                      &vdot_monomials, &vdot_gram);
   return prog;
 }
-void ControlLyapunov::SearchLagrangian(
+
+bool ControlLyapunov::SearchLagrangian(
     const symbolic::Polynomial& V, int lambda0_degree,
     const std::vector<int>& l_degrees, const std::vector<int>& p_degrees,
     double deriv_eps, const ControlLyapunov::SearchOptions& search_options,
@@ -321,8 +322,9 @@ void ControlLyapunov::SearchLagrangian(
                            search_options.lsol_tiny_coeff_tol, p_sol);
   } else {
     drake::log()->error("Faild to find Lagrangian.");
-    return;
+    return false;
   }
+  return true;
 }
 
 void ControlLyapunov::Search(
@@ -358,8 +360,12 @@ void ControlLyapunov::Search(
       }
     }
 
-    SearchLagrangian(*V_sol, lambda0_degree, l_degrees, p_degrees, deriv_eps,
-                     search_options, lambda0_sol, l_sol, p_sol);
+    const bool found_lagrangian =
+        SearchLagrangian(*V_sol, lambda0_degree, l_degrees, p_degrees,
+                         deriv_eps, search_options, lambda0_sol, l_sol, p_sol);
+    if (!found_lagrangian) {
+      return;
+    }
 
     {
       // Solve the program to find new V given Lagrangians.
@@ -421,8 +427,12 @@ void ControlLyapunov::Search(
   *V_sol = V_init;
   while (iter_count < search_options.bilinear_iterations) {
     drake::log()->info("Iteration {}", iter_count);
-    SearchLagrangian(*V_sol, lambda0_degree, l_degrees, p_degrees, deriv_eps,
-                     search_options, lambda0_sol, l_sol, p_sol);
+    const bool found_lagrangian =
+        SearchLagrangian(*V_sol, lambda0_degree, l_degrees, p_degrees,
+                         deriv_eps, search_options, lambda0_sol, l_sol, p_sol);
+    if (!found_lagrangian) {
+      return;
+    }
 
     {
       // Given the Lagrangian, find V to minimize the cost.
@@ -500,8 +510,10 @@ VdotCalculator::VdotCalculator(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
     const symbolic::Polynomial& V,
     const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
-    const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G)
-    : x_{x} {
+    const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
+    const Eigen::Ref<const Eigen::MatrixXd>& u_vertices)
+    : x_{x}, u_vertices_{u_vertices} {
+  DRAKE_DEMAND(u_vertices_.rows() == G.cols());
   const RowVectorX<symbolic::Polynomial> dVdx = V.Jacobian(x);
   dVdx_times_f_ = (dVdx * f)(0);
   dVdx_times_G_ = dVdx * G;
@@ -516,13 +528,12 @@ Eigen::VectorXd VdotCalculator::CalcMin(
     const Eigen::Ref<const Eigen::MatrixXd>& x_vals) const {
   DRAKE_DEMAND(x_vals.rows() == x_.rows());
   Eigen::VectorXd ret = dVdx_times_f_.EvaluateIndeterminates(x_, x_vals);
+  Eigen::MatrixXd dVdx_times_G_val(x_vals.cols(), dVdx_times_G_.cols());
   for (int i = 0; i < dVdx_times_G_.cols(); ++i) {
-    ret -= dVdx_times_G_(i)
-               .EvaluateIndeterminates(x_, x_vals)
-               .array()
-               .abs()
-               .matrix();
+    dVdx_times_G_val.col(i) =
+        dVdx_times_G_(i).EvaluateIndeterminates(x_, x_vals);
   }
+  ret += (dVdx_times_G_val * u_vertices_).rowwise().minCoeff();
   return ret;
 }
 

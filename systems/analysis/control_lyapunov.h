@@ -747,7 +747,6 @@ class ClfController : public LeafSystem<double> {
 };
 
 namespace internal {
-
 /**
  * Returns if the dynamics is symmetric, namely f(x) = -f(-x) and G(x) = G(-x),
  * which implies the time derivative at (-x, -u) is -ẋ.

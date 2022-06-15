@@ -924,6 +924,26 @@ drake_cc_library(
     ],
 )
 
+drake_cc_library(
+    name = "quadrotor",
+    srcs = ["test/quadrotor.cc"],
+    hdrs = ["test/quadrotor.h"],
+    deps = [
+        "//common:essential",
+        "//common:symbolic",
+        "//systems/framework:leaf_system",
+    ],
+)
+
+drake_cc_googletest(
+    name = "quadrotor_test",
+    deps = [
+        ":quadrotor",
+        "//examples/quadrotor:quadrotor_plant",
+        "//common/test_utilities:eigen_matrix_compare",
+    ],
+)
+
 drake_cc_binary(
     name = "quadrotor2d_clf_demo",
     srcs = ["test/quadrotor2d_clf_demo.cc"],

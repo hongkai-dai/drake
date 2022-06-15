@@ -149,6 +149,19 @@ void Save(const symbolic::Polynomial& p, const std::string& file_name);
 [[nodiscard]] symbolic::Polynomial Load(
     const symbolic::Variables& indeterminates, const std::string& file_name);
 
+/**
+ * Construct a nonlinear optimization problem to search for x with the maximal
+ * Vdot max s s.t ∂V/∂x*(f(x)+G(x)uⁱ)≥ s where uⁱ is the i'th vertex in
+ * u_vertices.
+ */
+std::unique_ptr<solvers::MathematicalProgram> ConstructMaxVdotProgram(
+    const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+    const symbolic::Polynomial& V,
+    const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
+    const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
+    const Eigen::Ref<const Eigen::MatrixXd>& u_vertices,
+    symbolic::Variable* max_Vdot);
+
 namespace internal {
 /** The ellipsoid polynomial (x−x*)ᵀS(x−x*)−ρ
  */

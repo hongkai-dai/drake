@@ -7,6 +7,7 @@
 #include <fmt/format.h>
 
 #include "drake/common/text_logging.h"
+#include "drake/math/autodiff_gradient.h"
 #include "drake/solvers/choose_best_solver.h"
 namespace drake {
 namespace systems {
@@ -463,6 +464,127 @@ symbolic::Polynomial Load(const symbolic::Variables& indeterminates,
   }
   infile.close();
   return symbolic::Polynomial(monomial_to_coeff_map);
+}
+
+/**
+ * Impose the constraint
+ * ∂V/∂x*(f(x)+G(x)uⁱ)≥ s
+ */
+class VdotMaxConstraint : public solvers::Constraint {
+ public:
+  VdotMaxConstraint(const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+                    symbolic::Polynomial dVdx_times_f,
+                    RowVectorX<symbolic::Polynomial> dVdx_times_G,
+                    Eigen::MatrixXd u_vertices)
+      : solvers::Constraint(u_vertices.cols(), x.rows() + 1,
+                            Eigen::VectorXd::Zero(u_vertices.cols()),
+                            Eigen::VectorXd::Constant(u_vertices.cols(), kInf)),
+        x_{x},
+        dVdx_times_f_{std::move(dVdx_times_f)},
+        dVdx_times_G_{std::move(dVdx_times_G)},
+        u_vertices_{std::move(u_vertices)} {
+    env_.insert(x_, Eigen::VectorXd::Zero(x_.rows()));
+    const int nx = x_.rows();
+    const int nu = dVdx_times_G_.cols();
+    dVdx_times_f_jacobian_ = dVdx_times_f_.Jacobian(x_);
+    dVdx_times_G_jacobian_.resize(nu, nx);
+    for (int i = 0; i < nu; ++i) {
+      dVdx_times_G_jacobian_.row(i) = dVdx_times_G_(i).Jacobian(x_);
+    }
+  }
+
+ protected:
+  // input is (x, max_Vdot)
+  void DoEval(const Eigen::Ref<const Eigen::VectorXd>& input,
+              Eigen::VectorXd* y) const override {
+    for (int i = 0; i < x_.rows(); ++i) {
+      auto it = env_.find(x_(i));
+      it->second = input(i);
+    }
+    const double dVdx_times_f_val = dVdx_times_f_.Evaluate(env_);
+    Eigen::RowVectorXd dVdx_times_G_val(dVdx_times_G_.cols());
+    for (int i = 0; i < dVdx_times_G_val.cols(); ++i) {
+      dVdx_times_G_val(i) = dVdx_times_G_(i).Evaluate(env_);
+    }
+    *y = (dVdx_times_f_val - input(input.rows() - 1)) *
+             Eigen::VectorXd::Ones(u_vertices_.cols()) +
+         (dVdx_times_G_val * u_vertices_).transpose();
+  }
+
+  void DoEval(const Eigen::Ref<const AutoDiffVecXd>& input,
+              AutoDiffVecXd* y) const override {
+    for (int i = 0; i < x_.rows(); ++i) {
+      const auto it = env_.find(x_(i));
+      it->second = input(i).value();
+    }
+    const double dVdx_times_f_val = dVdx_times_f_.Evaluate(env_);
+    Eigen::RowVectorXd dVdx_times_G_val(dVdx_times_G_.cols());
+    for (int i = 0; i < dVdx_times_G_val.cols(); ++i) {
+      dVdx_times_G_val(i) = dVdx_times_G_(i).Evaluate(env_);
+    }
+    const Eigen::VectorXd y_val =
+        (dVdx_times_f_val - input(input.rows() - 1).value()) *
+            Eigen::VectorXd::Ones(u_vertices_.cols()) +
+        (dVdx_times_G_val * u_vertices_).transpose();
+    Eigen::RowVectorXd dVdx_times_f_jacobian_val(dVdx_times_f_jacobian_.cols());
+    Eigen::MatrixXd dVdx_times_G_jacobian_val(dVdx_times_G_jacobian_.rows(),
+                                              dVdx_times_G_jacobian_.cols());
+    for (int j = 0; j < x_.rows(); ++j) {
+      dVdx_times_f_jacobian_val(j) = dVdx_times_f_jacobian_(j).Evaluate(env_);
+      for (int i = 0; i < u_vertices_.rows(); ++i) {
+        dVdx_times_G_jacobian_val(i, j) =
+            dVdx_times_G_jacobian_(i, j).Evaluate(env_);
+      }
+    }
+
+    Eigen::MatrixXd dydx = Eigen::MatrixXd::Zero(y_val.rows(), x_.rows());
+    for (int i = 0; i < u_vertices_.cols(); ++i) {
+      dydx.row(i) = dVdx_times_f_jacobian_val +
+                    u_vertices_.col(i).transpose() * dVdx_times_G_jacobian_val;
+    }
+    Eigen::MatrixXd dy_dinput(dydx.rows(), dydx.cols() + 1);
+    dy_dinput.leftCols(dydx.cols()) = dydx;
+    dy_dinput.rightCols<1>() = -Eigen::VectorXd::Ones(dydx.rows());
+    *y = math::InitializeAutoDiff(y_val,
+                                  dy_dinput * math::ExtractGradient(input));
+  }
+
+  void DoEval(const Eigen::Ref<const VectorX<symbolic::Variable>>&,
+              VectorX<symbolic::Expression>*) const override {
+    throw std::runtime_error(
+        "VdotMaxConstraint::DoEval not implemented for symbolic.");
+  }
+
+ private:
+  VectorX<symbolic::Variable> x_;
+  symbolic::Polynomial dVdx_times_f_;
+  RowVectorX<symbolic::Polynomial> dVdx_times_G_;
+  RowVectorX<symbolic::Polynomial> dVdx_times_f_jacobian_;
+  MatrixX<symbolic::Polynomial> dVdx_times_G_jacobian_;
+  Eigen::MatrixXd u_vertices_;
+  mutable symbolic::Environment env_;
+};
+
+std::unique_ptr<solvers::MathematicalProgram> ConstructMaxVdotProgram(
+    const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+    const symbolic::Polynomial& V,
+    const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
+    const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
+    const Eigen::Ref<const Eigen::MatrixXd>& u_vertices,
+    symbolic::Variable* max_Vdot) {
+  auto prog = std::make_unique<solvers::MathematicalProgram>();
+  prog->AddDecisionVariables(x);
+  *max_Vdot = prog->NewContinuousVariables<1>()(0);
+
+  const RowVectorX<symbolic::Polynomial> dVdx = V.Jacobian(x);
+  const symbolic::Polynomial dVdx_times_f = dVdx.dot(f);
+  const RowVectorX<symbolic::Polynomial> dVdx_times_G = dVdx * G;
+
+  prog->AddConstraint(std::make_shared<VdotMaxConstraint>(
+                          x, dVdx_times_f, dVdx_times_G, u_vertices),
+                      {x, Vector1<symbolic::Variable>(*max_Vdot)});
+  prog->AddLinearCost(-Vector1d(1), 0, Vector1<symbolic::Variable>(*max_Vdot));
+  return prog;
 }
 
 namespace internal {

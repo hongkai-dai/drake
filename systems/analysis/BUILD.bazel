@@ -118,6 +118,7 @@ drake_cc_library(
     hdrs = ["clf_cbf_utils.h"],
     deps = [
         "//common:symbolic",
+        "//math:gradient",
         "//solvers:mathematical_program",
         "//solvers:mathematical_program_result",
         "//solvers:choose_best_solver",
@@ -926,6 +927,20 @@ drake_cc_library(
 drake_cc_binary(
     name = "quadrotor2d_clf_demo",
     srcs = ["test/quadrotor2d_clf_demo.cc"],
+    deps = [
+        ":control_lyapunov",
+        ":quadrotor2d",
+        ":simulator",
+        ":simulator_config_functions",
+        "//solvers:solve",
+        "//systems/controllers:linear_quadratic_regulator",
+        "//systems/primitives:vector_log_sink",
+    ],
+)
+
+drake_cc_binary(
+    name = "quadrotor2d_trig_clf_demo",
+    srcs = ["test/quadrotor2d_trig_clf_demo.cc"],
     deps = [
         ":control_lyapunov",
         ":quadrotor2d",

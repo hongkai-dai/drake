@@ -123,17 +123,21 @@ class ControlLyapunov {
   /**
    * Given λ₀(x) and l(x), construct a methematical program
    * <pre>
-   * find V(x), p(x)
-   * s.t V(x) is sos
-   *     (1+λ₀(x))xᵀx(V−1) − ∑ᵢlᵢ(x)*(∂V/∂x*f(x)+ε*V+∂V/∂x*G(x)*sᵢ)
-   *           - p(x)ᵀc(x) is sos
+   * find V(x), q(x), p(x)
+   * V - ε₁*(xᵀx)ᵈ¹ - q(x) * c(x) is sos
+   * (1+λ₀(x))(xᵀx)ᵈ²(V(x) − 1) − ∑ᵢ lᵢ(x)(∂V/∂x*f(x) + ε₂*V+∂V/∂xG(x)uⁱ)
+   *              - p(x)ᵀc(x)is sos.
    * </pre>
+   * @param[out] positivity_eq_lagrangian q(x) in the documentation above.
    */
   std::unique_ptr<solvers::MathematicalProgram> ConstructLyapunovProgram(
       const symbolic::Polynomial& lambda0,
       const VectorX<symbolic::Polynomial>& l, int V_degree,
+      double positivity_eps, int positivity_d,
+      const std::vector<int>& positivity_eq_lagrangian_degrees,
       const std::vector<int>& p_degrees, double deriv_eps,
-      symbolic::Polynomial* V, MatrixX<symbolic::Expression>* V_gram,
+      symbolic::Polynomial* V,
+      VectorX<symbolic::Polynomial>* positivity_eq_lagrangian,
       VectorX<symbolic::Polynomial>* p) const;
 
   struct SearchOptions {
@@ -185,6 +189,8 @@ class ControlLyapunov {
    */
   void Search(const symbolic::Polynomial& V_init, int lambda0_degree,
               const std::vector<int>& l_degrees, int V_degree,
+              double positivity_eps, int positivity_d,
+              const std::vector<int>& positivity_eq_lagrangian_degrees,
               const std::vector<int>& p_degrees,
               const std::vector<int>& ellipsoid_c_lagrangian_degrees,
               double deriv_eps, const Eigen::Ref<const Eigen::VectorXd>& x_star,
@@ -193,7 +199,9 @@ class ControlLyapunov {
               const RhoBisectionOption& rho_bisection_option,
               symbolic::Polynomial* V, symbolic::Polynomial* lambda0,
               VectorX<symbolic::Polynomial>* l, symbolic::Polynomial* r,
-              VectorX<symbolic::Polynomial>* p, double* rho,
+              VectorX<symbolic::Polynomial>* p,
+              VectorX<symbolic::Polynomial>* positivity_eq_lagrangian,
+              double* rho,
               VectorX<symbolic::Polynomial>* ellipsoid_c_lagrangian_sol) const;
 
   /**
@@ -202,14 +210,27 @@ class ControlLyapunov {
    * or
    * min maxᵢ V(xⁱ)
    * where xⁱ is the i'th sampled state.
+   * The constraints are
+   * <pre>
+   * V - ε₁*(xᵀx)ᵈ¹ - r(x) * c(x) is sos
+   * (1+λ₀(x))(xᵀx)ᵈ²(V(x) − 1) − ∑ᵢ lᵢ(x)(∂V/∂x*f(x) + ε₂*V+∂V/∂xG(x)uⁱ)
+   *              - p(x)ᵀc(x)is sos.
+   * </pre>
+   * @param positivity_eps ε₁ in the documentation above.
+   * @param positivity_d d1 in the documentation above.
+   * @param positivity_eq_lagrangian_degrees Degrees of r(x).
+   * @param deriv_eps ε₂ in the documentation above.
    */
   void Search(const symbolic::Polynomial& V_init, int lambda0_degree,
               const std::vector<int>& l_degrees, int V_degree,
+              double positivity_eps, int positivity_d,
+              const std::vector<int>& positivity_eq_lagrangian_degrees,
               const std::vector<int>& p_degrees, double deriv_eps,
               const Eigen::Ref<const Eigen::MatrixXd>& x_samples,
               bool minimize_max, const SearchOptions& search_options,
-              symbolic::Polynomial* V, symbolic::Polynomial* lambda0,
-              VectorX<symbolic::Polynomial>* l,
+              symbolic::Polynomial* V,
+              VectorX<symbolic::Polynomial>* positivity_eq_lagrangian,
+              symbolic::Polynomial* lambda0, VectorX<symbolic::Polynomial>* l,
               VectorX<symbolic::Polynomial>* p) const;
 
   [[nodiscard]] const VectorX<symbolic::Variable>& x() const { return x_; }

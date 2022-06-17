@@ -1,5 +1,7 @@
 #include "drake/systems/analysis/clf_cbf_utils.h"
 
+#include <limits>
+
 #include <gtest/gtest.h>
 
 #include "drake/common/temp_directory.h"
@@ -8,10 +10,13 @@
 #include "drake/math/matrix_util.h"
 #include "drake/solvers/mosek_solver.h"
 #include "drake/solvers/solve.h"
+#include "drake/systems/analysis/test/quadrotor2d.h"
 
 namespace drake {
 namespace systems {
 namespace analysis {
+
+const double kInf = std::numeric_limits<double>::infinity();
 
 // Check if the ellipsoid {x | (x-x*)ᵀS(x-x*) <= ρ} in the
 // sub-level set {x | f(x) <= 0}
@@ -252,22 +257,25 @@ GTEST_TEST(FindCandidateLyapunov, Test) {
   const Eigen::Matrix<double, 2, 5> xdot_val = A * x_val;
 
   symbolic::Polynomial V;
-  MatrixX<symbolic::Expression> V_gram;
   const int V_degree = 2;
-  auto prog = FindCandidateLyapunov(x, V_degree, x_val, xdot_val, &V, &V_gram);
+  const int positivity_eps = 0.1;
+  const int d = 1;
+  VectorX<symbolic::Polynomial> state_constraints(0);
+  std::vector<int> c_lagrangian_degrees{};
+  VectorX<symbolic::Polynomial> c_lagrangian;
+
+  auto prog = FindCandidateLyapunov(x, V_degree, positivity_eps, d,
+                                    state_constraints, c_lagrangian_degrees,
+                                    x_val, xdot_val, &V, &c_lagrangian);
   const auto result = solvers::Solve(*prog);
   ASSERT_TRUE(result.is_success());
-  EXPECT_EQ(V_gram.rows(), 2);
   const auto V_sol = result.GetSolution(V);
-  Eigen::Matrix2d V_gram_sol;
-  for (int i = 0; i < V_gram.rows(); ++i) {
-    for (int j = 0; j < V_gram.cols(); ++j) {
-      const symbolic::Expression V_gram_ij = result.GetSolution(V_gram(i, j));
-      V_gram_sol(i, j) = symbolic::get_constant_value(V_gram_ij);
-    }
-  }
-  EXPECT_TRUE(math::IsPositiveDefinite(V_gram_sol));
-  EXPECT_TRUE((V_sol.EvaluateIndeterminates(x, x_val).array() >= 0).all());
+  const Eigen::VectorXd V_val = V_sol.EvaluateIndeterminates(x, x_val);
+  EXPECT_TRUE((V_val.array() >=
+               positivity_eps *
+                   (x_val.array() * x_val.array()).colwise().sum().transpose())
+                  .all());
+  EXPECT_TRUE((V_val.array() <= 1 + 1E-5).all());
   const RowVector2<symbolic::Polynomial> dVdx = V_sol.Jacobian(x);
   double cost_expected = 0;
   for (int i = 0; i < x_val.cols(); ++i) {
@@ -281,6 +289,96 @@ GTEST_TEST(FindCandidateLyapunov, Test) {
     cost_expected += dVdx_val.dot(xdot_val.col(i));
   }
   EXPECT_NEAR(result.get_optimal_cost(), cost_expected, 1E-5);
+}
+
+GTEST_TEST(FindCandidateRegionalLyapunov, Test) {
+  // Find a candidate Lyapunov for 2D quadrotor with trigonometric dynamics and
+  // LQR controller.
+  QuadrotorPlant<double> quadrotor2d;
+  Eigen::Matrix<double, 7, 1> lqr_Q_diag;
+  lqr_Q_diag << 1, 1, 1, 1, 10, 10, 10;
+  const Eigen::MatrixXd lqr_Q = lqr_Q_diag.asDiagonal();
+  const Eigen::Matrix2d lqr_R = 10 * Eigen::Matrix2d::Identity();
+  const auto lqr_result = SynthesizeTrigLqr(lqr_Q, lqr_R);
+  Eigen::Matrix<symbolic::Variable, 7, 1> x;
+  for (int i = 0; i < 7; ++i) {
+    x(i) = symbolic::Variable("x" + std::to_string(i));
+  }
+  const double thrust_equilibrium = EquilibriumThrust(quadrotor2d);
+  const Vector2<symbolic::Expression> u_lqr =
+      -lqr_result.K * x +
+      Eigen::Vector2d(thrust_equilibrium, thrust_equilibrium);
+  const Eigen::Matrix<symbolic::Expression, 7, 1> dynamics_expr =
+      TrigDynamics<symbolic::Expression>(quadrotor2d,
+                                         x.cast<symbolic::Expression>(), u_lqr);
+  Eigen::Matrix<symbolic::Polynomial, 7, 1> dynamics;
+  for (int i = 0; i < 7; ++i) {
+    dynamics(i) = symbolic::Polynomial(dynamics_expr(i));
+  }
+
+  const int V_degree = 2;
+  const double positivity_eps = 0.01;
+  const int d = 1;
+  const double deriv_eps = 0.0001;
+  const Vector1<symbolic::Polynomial> state_eq_constraints(
+      StateEqConstraint(x));
+  const std::vector<int> positivity_ceq_lagrangian_degrees{{V_degree - 2}};
+  const std::vector<int> derivative_ceq_lagrangian_degrees{2};
+  const Vector1<symbolic::Polynomial> state_ineq_constraints(
+      symbolic::Polynomial(x.cast<symbolic::Expression>().dot(x) - 0.0001));
+  const std::vector<int> positivity_cin_lagrangian_degrees{{V_degree - 2}};
+  const std::vector<int> derivative_cin_lagrangian_degrees{{2}};
+  symbolic::Polynomial V;
+  VectorX<symbolic::Polynomial> positivity_cin_lagrangian;
+  VectorX<symbolic::Polynomial> positivity_ceq_lagrangian;
+  VectorX<symbolic::Polynomial> derivative_cin_lagrangian;
+  VectorX<symbolic::Polynomial> derivative_ceq_lagrangian;
+  symbolic::Polynomial positivity_sos_condition;
+  symbolic::Polynomial derivative_sos_condition;
+  auto prog = FindCandidateRegionalLyapunov(
+      x, dynamics, V_degree, positivity_eps, d, deriv_eps, state_eq_constraints,
+      positivity_ceq_lagrangian_degrees, derivative_ceq_lagrangian_degrees,
+      state_ineq_constraints, positivity_cin_lagrangian_degrees,
+      derivative_cin_lagrangian_degrees, &V, &positivity_cin_lagrangian,
+      &positivity_ceq_lagrangian, &derivative_cin_lagrangian,
+      &derivative_ceq_lagrangian, &positivity_sos_condition,
+      &derivative_sos_condition);
+  solvers::SolverOptions solver_options;
+  solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
+  const auto result = solvers::Solve(*prog, std::nullopt, solver_options);
+  ASSERT_TRUE(result.is_success());
+  const symbolic::Polynomial V_sol = result.GetSolution(V);
+  VectorX<symbolic::Polynomial> positivity_cin_lagrangian_sol;
+  GetPolynomialSolutions(result, positivity_cin_lagrangian, 0,
+                         &positivity_cin_lagrangian_sol);
+  VectorX<symbolic::Polynomial> positivity_ceq_lagrangian_sol;
+  GetPolynomialSolutions(result, positivity_ceq_lagrangian, 0,
+                         &positivity_ceq_lagrangian_sol);
+  const symbolic::Polynomial positivity_sos_condition_expected =
+      V_sol -
+      positivity_eps *
+          symbolic::Polynomial(pow(x.cast<symbolic::Expression>().dot(x), d)) +
+      positivity_cin_lagrangian_sol.dot(state_ineq_constraints) -
+      positivity_ceq_lagrangian_sol.dot(state_eq_constraints);
+  EXPECT_PRED2(
+      symbolic::test::PolyEqual,
+      result.GetSolution(positivity_sos_condition)
+          .RemoveTermsWithSmallCoefficients(1E-5),
+      positivity_sos_condition_expected.RemoveTermsWithSmallCoefficients(1E-5));
+
+  VectorX<symbolic::Polynomial> derivative_cin_lagrangian_sol;
+  GetPolynomialSolutions(result, derivative_cin_lagrangian, 0,
+                         &derivative_cin_lagrangian_sol);
+  VectorX<symbolic::Polynomial> derivative_ceq_lagrangian_sol;
+  GetPolynomialSolutions(result, derivative_ceq_lagrangian, 0,
+                         &derivative_ceq_lagrangian_sol);
+  const symbolic::Polynomial derivative_sos_condition_expected =
+      -V_sol.Jacobian(x).dot(dynamics) - deriv_eps * V_sol +
+      derivative_cin_lagrangian_sol.dot(state_ineq_constraints) -
+      derivative_ceq_lagrangian_sol.dot(state_eq_constraints);
+  EXPECT_PRED3(symbolic::test::PolynomialEqual,
+               result.GetSolution(derivative_sos_condition),
+               derivative_sos_condition_expected, 1E-5);
 }
 
 GTEST_TEST(Meshgrid, Test) {

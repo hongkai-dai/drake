@@ -118,11 +118,18 @@ void NewSosPolynomialPassOrigin(solvers::MathematicalProgram* prog,
                                 MatrixX<symbolic::Expression>* gram);
 
 /**
+ * Creates a new free polynomial passing the origin.
+ */
+symbolic::Polynomial NewFreePolynomialPassOrigin(
+    solvers::MathematicalProgram* prog,
+    const symbolic::Variables& indeterminates, int degree,
+    const std::string& coeff_name, symbolic::internal::DegreeType degree_type);
+/**
  * Constructs a program to find Lyapunov candidate V that satisfy the following
  * constraints
  * <pre>
  * min ∑ᵢVdot(xⁱ)
- * s.t V is sos
+ * s.t V - ε*(xᵀx)ᵈ >= 0 when c(x) = 0
  *     V(0) = 0
  *     Vdot(xⁱ) <= 0
  *     V(xⁱ) <= 1
@@ -134,9 +141,44 @@ void NewSosPolynomialPassOrigin(solvers::MathematicalProgram* prog,
  */
 std::unique_ptr<solvers::MathematicalProgram> FindCandidateLyapunov(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x, int V_degree,
+    double positivity_eps, int d,
+    const Eigen::Ref<const VectorX<symbolic::Polynomial>>& state_constraints,
+    const std::vector<int>& c_lagrangian_degrees,
     const Eigen::Ref<const Eigen::MatrixXd>& x_val,
     const Eigen::Ref<const Eigen::MatrixXd>& xdot_val, symbolic::Polynomial* V,
-    MatrixX<symbolic::Expression>* V_gram);
+    VectorX<symbolic::Polynomial>* c_lagrangian);
+
+/**
+ * Constructs a program to find Lyapunov candidate V that satisfy the Lyapunov
+ * condition within a region cin(x) <= 0
+ * <pre> Find V(x), p1(x), p2(x), q1(1), q2(x)
+ * s.t V - ε1*(xᵀx)ᵈ + p1(x) * cin(x) - p2(x) * ceq(x) is sos  (1)
+ *     -Vdot - ε2 * V + q1(x) * cin(x) - q2(x) * ceq(x) is sos  (2)
+ *     p1(x) is sos, q1(x) is sos.
+ * </pre>
+ * @param positivity_eps ε1 in the documentation above.
+ * @param deriv_eps ε2 in the documentation above.
+ * @param[out] positivity_sos_condition The sos condition (1)
+ * @param[out] derivative_sos_condition The sos condition (2)
+ */
+std::unique_ptr<solvers::MathematicalProgram> FindCandidateRegionalLyapunov(
+    const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+    const Eigen::Ref<const VectorX<symbolic::Polynomial>>& dynamics,
+    int V_degree, double positivity_eps, int d, double deriv_eps,
+    const Eigen::Ref<const VectorX<symbolic::Polynomial>>& state_eq_constraints,
+    const std::vector<int>& positivity_ceq_lagrangian_degrees,
+    const std::vector<int>& derivative_ceq_lagrangian_degrees,
+    const Eigen::Ref<const VectorX<symbolic::Polynomial>>&
+        state_ineq_constraints,
+    const std::vector<int>& positivity_cin_lagrangian_degrees,
+    const std::vector<int>& derivative_cin_lagrangian_degrees,
+    symbolic::Polynomial* V,
+    VectorX<symbolic::Polynomial>* positivity_cin_lagrangian,
+    VectorX<symbolic::Polynomial>* positivity_ceq_lagrangian,
+    VectorX<symbolic::Polynomial>* derivative_cin_lagrangian,
+    VectorX<symbolic::Polynomial>* derivative_ceq_lagrangian,
+    symbolic::Polynomial* positivity_sos_condition,
+    symbolic::Polynomial* derivative_sos_condition);
 
 /**
  * Each x[i] contains the coordinate along one dimension, returns the matrix
@@ -161,6 +203,9 @@ std::unique_ptr<solvers::MathematicalProgram> ConstructMaxVdotProgram(
     const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
     const Eigen::Ref<const Eigen::MatrixXd>& u_vertices,
     symbolic::Variable* max_Vdot);
+
+void CheckPolynomialsPassOrigin(
+    const Eigen::Ref<const VectorX<symbolic::Polynomial>>& p);
 
 namespace internal {
 /** The ellipsoid polynomial (x−x*)ᵀS(x−x*)−ρ

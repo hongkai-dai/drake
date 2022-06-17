@@ -23,21 +23,6 @@ namespace {
   }
 }
 
-symbolic::Polynomial NewFreePolynomialNoConstant(
-    solvers::MathematicalProgram* prog,
-    const symbolic::Variables& indeterminates, int degree,
-    const std::string& coeff_name, symbolic::internal::DegreeType degree_type) {
-  const VectorX<symbolic::Monomial> m =
-      ComputeMonomialBasisNoConstant(indeterminates, degree, degree_type);
-  const VectorX<symbolic::Variable> coeffs =
-      prog->NewContinuousVariables(m.size(), coeff_name);
-  symbolic::Polynomial::MapType poly_map;
-  for (int i = 0; i < coeffs.rows(); ++i) {
-    poly_map.emplace(m(i), coeffs(i));
-  }
-  return symbolic::Polynomial(poly_map);
-}
-
 template <typename C>
 double SmallestCoeff(const solvers::Binding<C>& binding) {
   double ret = kInf;
@@ -154,13 +139,18 @@ void ControlLyapunov::AddControlLyapunovConstraint(
   if (state_constraints_.rows() > 0) {
     *vdot_poly -= p.dot(state_constraints_);
   }
-  // We know this sos polynomial should not contain 1 in its monomial basis.
   std::tie(*gram, *monomials) = prog->AddSosConstraint(
       *vdot_poly, solvers::MathematicalProgram::NonnegativePolynomial::kSos,
       "Vd");
-  for (int i = 0; i < monomials->rows(); ++i) {
-    if ((*monomials)(i).total_degree() == 0) {
-      throw std::runtime_error("degree should not be 0");
+  if (state_constraints_.rows() == 0) {
+    // If there is no state constraints, then because V(x) >= 0 and V(0) = 0, we
+    // know that the monomial basis of V cannot contain 1, and this constraint
+    // cannot contain 1 in its basis either.
+    for (int i = 0; i < monomials->rows(); ++i) {
+      if ((*monomials)(i).total_degree() == 0) {
+        throw std::runtime_error(
+            "This polynomial should not contain a constant term");
+      }
     }
   }
 }
@@ -256,8 +246,11 @@ ControlLyapunov::ConstructLagrangianProgram(
 std::unique_ptr<solvers::MathematicalProgram>
 ControlLyapunov::ConstructLyapunovProgram(
     const symbolic::Polynomial& lambda0, const VectorX<symbolic::Polynomial>& l,
-    int V_degree, const std::vector<int>& p_degrees, double deriv_eps,
-    symbolic::Polynomial* V, MatrixX<symbolic::Expression>* V_gram,
+    int V_degree, double positivity_eps, int positivity_d,
+    const std::vector<int>& positivity_eq_lagrangian_degrees,
+    const std::vector<int>& p_degrees, double deriv_eps,
+    symbolic::Polynomial* V,
+    VectorX<symbolic::Polynomial>* positivity_eq_lagrangian,
     VectorX<symbolic::Polynomial>* p) const {
   auto prog = std::make_unique<solvers::MathematicalProgram>();
   prog->AddIndeterminates(x_);
@@ -266,8 +259,32 @@ ControlLyapunov::ConstructLyapunovProgram(
   // TODO(hongkai.dai): if the dynamics is symmetric, then use an even V.
   const symbolic::internal::DegreeType V_degree_type{
       symbolic::internal::DegreeType::kAny};
-  NewSosPolynomialPassOrigin(prog.get(), x_set_, V_degree, V_degree_type, V,
-                             &V_monomial, V_gram);
+  // Since V(0) = 0, V(x) can't have a constant term.
+  // If state_constraints is empty, then V(x) >= 0, hence V(x) can't have a
+  // linear term either.
+  if (state_constraints_.rows() == 0) {
+    *V = internal::NewFreePolynomialNoConstantOrLinear(
+        prog.get(), x_set_, V_degree, "V", V_degree_type);
+  } else {
+    *V = NewFreePolynomialPassOrigin(prog.get(), x_set_, V_degree, "V",
+                                     V_degree_type);
+  }
+  symbolic::Polynomial positivity_sos_condition = *V;
+  DRAKE_DEMAND(positivity_d >= 0);
+  if (positivity_eps != 0) {
+    positivity_sos_condition -=
+        positivity_eps *
+        symbolic::Polynomial(
+            pow(x_.cast<symbolic::Expression>().dot(x_), positivity_d));
+  }
+  positivity_eq_lagrangian->resize(state_constraints_.rows());
+  for (int i = 0; i < state_constraints_.rows(); ++i) {
+    (*positivity_eq_lagrangian)(i) =
+        prog->NewFreePolynomial(x_set_, positivity_eq_lagrangian_degrees[i]);
+  }
+  positivity_sos_condition -= positivity_eq_lagrangian->dot(state_constraints_);
+  prog->AddSosConstraint(positivity_sos_condition);
+
   symbolic::Polynomial vdot_poly;
   VectorX<symbolic::Monomial> vdot_monomials;
   MatrixX<symbolic::Variable> vdot_gram;
@@ -329,7 +346,8 @@ bool ControlLyapunov::SearchLagrangian(
 
 void ControlLyapunov::Search(
     const symbolic::Polynomial& V_init, int lambda0_degree,
-    const std::vector<int>& l_degrees, int V_degree,
+    const std::vector<int>& l_degrees, int V_degree, double positivity_eps,
+    int positivity_d, const std::vector<int>& positivity_eq_lagrangian_degrees,
     const std::vector<int>& p_degrees,
     const std::vector<int>& ellipsoid_c_lagrangian_degrees, double deriv_eps,
     const Eigen::Ref<const Eigen::VectorXd>& x_star,
@@ -338,6 +356,7 @@ void ControlLyapunov::Search(
     const RhoBisectionOption& rho_bisection_option, symbolic::Polynomial* V_sol,
     symbolic::Polynomial* lambda0_sol, VectorX<symbolic::Polynomial>* l_sol,
     symbolic::Polynomial* r_sol, VectorX<symbolic::Polynomial>* p_sol,
+    VectorX<symbolic::Polynomial>* positivity_eq_lagrangian_sol,
     double* rho_sol,
     VectorX<symbolic::Polynomial>* ellipsoid_c_lagrangian_sol) const {
   int iter_count = 0;
@@ -371,10 +390,12 @@ void ControlLyapunov::Search(
       // Solve the program to find new V given Lagrangians.
       MatrixX<symbolic::Expression> V_gram;
       symbolic::Polynomial V_search;
+      VectorX<symbolic::Polynomial> positivity_eq_lagrangian;
       VectorX<symbolic::Polynomial> p;
       auto prog_lyapunov = this->ConstructLyapunovProgram(
-          *lambda0_sol, *l_sol, V_degree, p_degrees, deriv_eps, &V_search,
-          &V_gram, &p);
+          *lambda0_sol, *l_sol, V_degree, positivity_eps, positivity_d,
+          positivity_eq_lagrangian_degrees, p_degrees, deriv_eps, &V_search,
+          &positivity_eq_lagrangian, &p);
       const auto d = prog_lyapunov->NewContinuousVariables<1>("d");
       symbolic::Polynomial r;
       VectorX<symbolic::Polynomial> c_lagrangian;
@@ -403,6 +424,9 @@ void ControlLyapunov::Search(
         GetPolynomialSolutions(result_lyapunov, c_lagrangian,
                                search_options.lsol_tiny_coeff_tol,
                                ellipsoid_c_lagrangian_sol);
+        GetPolynomialSolutions(result_lyapunov, positivity_eq_lagrangian,
+                               search_options.lsol_tiny_coeff_tol,
+                               positivity_eq_lagrangian_sol);
         drake::log()->info("d = {}", result_lyapunov.GetSolution(d(0)));
       } else {
         drake::log()->error("Failed to find Lyapunov");
@@ -415,10 +439,12 @@ void ControlLyapunov::Search(
 
 void ControlLyapunov::Search(
     const symbolic::Polynomial& V_init, int lambda0_degree,
-    const std::vector<int>& l_degrees, int V_degree,
+    const std::vector<int>& l_degrees, int V_degree, double positivity_eps,
+    int positivity_d, const std::vector<int>& positivity_eq_lagrangian_degrees,
     const std::vector<int>& p_degrees, double deriv_eps,
     const Eigen::Ref<const Eigen::MatrixXd>& x_samples, bool minimize_max,
     const SearchOptions& search_options, symbolic::Polynomial* V_sol,
+    VectorX<symbolic::Polynomial>* positivity_eq_lagrangian_sol,
     symbolic::Polynomial* lambda0_sol, VectorX<symbolic::Polynomial>* l_sol,
     VectorX<symbolic::Polynomial>* p_sol) const {
   DRAKE_DEMAND(x_samples.rows() == x_.rows());
@@ -436,12 +462,13 @@ void ControlLyapunov::Search(
 
     {
       // Given the Lagrangian, find V to minimize the cost.
-      MatrixX<symbolic::Expression> V_gram;
       symbolic::Polynomial V_search;
+      VectorX<symbolic::Polynomial> positivity_eq_lagrangian;
       VectorX<symbolic::Polynomial> p;
       auto prog_lyapunov = this->ConstructLyapunovProgram(
-          *lambda0_sol, *l_sol, V_degree, p_degrees, deriv_eps, &V_search,
-          &V_gram, &p);
+          *lambda0_sol, *l_sol, V_degree, positivity_eps, positivity_d,
+          positivity_eq_lagrangian_degrees, p_degrees, deriv_eps, &V_search,
+          &positivity_eq_lagrangian, &p);
       // Evaluate V at x_samples.
       Eigen::MatrixXd A_coeff_samples;
       VectorX<symbolic::Variable> decision_variables_samples;
@@ -482,6 +509,9 @@ void ControlLyapunov::Search(
           *V_sol = V_sol->RemoveTermsWithSmallCoefficients(
               search_options.Vsol_tiny_coeff_tol);
         }
+        GetPolynomialSolutions(result_lyapunov, positivity_eq_lagrangian,
+                               search_options.lsol_tiny_coeff_tol,
+                               positivity_eq_lagrangian_sol);
         GetPolynomialSolutions(result_lyapunov, p,
                                search_options.lsol_tiny_coeff_tol, p_sol);
         double cost;
@@ -1149,7 +1179,7 @@ ControlLyapunovBoxInputBound::ConstructLagrangianAndBProgram(
   b->resize(nu_);
   for (int i = 0; i < nu_; ++i) {
     (*b)(i) =
-        NewFreePolynomialNoConstant(prog.get(), x_set_, b_degrees[i],
+        NewFreePolynomialPassOrigin(prog.get(), x_set_, b_degrees[i],
                                     "b" + std::to_string(i), b_degree_type);
   }
   // Add the constraint ∂V/∂x*f(x) + εV = ∑ᵢ bᵢ(x)
@@ -1210,7 +1240,7 @@ ControlLyapunovBoxInputBound::ConstructLyapunovProgram(
                          : symbolic::internal::DegreeType::kAny;
   b->resize(nu_);
   for (int i = 0; i < nu_; ++i) {
-    (*b)(i) = NewFreePolynomialNoConstant(prog.get(), x_set_, b_degrees[i],
+    (*b)(i) = NewFreePolynomialPassOrigin(prog.get(), x_set_, b_degrees[i],
                                           "b_coeff", b_degree_type);
   }
   const RowVectorX<symbolic::Polynomial> dVdx = V->Jacobian(x_);

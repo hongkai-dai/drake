@@ -309,11 +309,30 @@ void NewSosPolynomialPassOrigin(solvers::MathematicalProgram* prog,
   }
 }
 
+symbolic::Polynomial NewFreePolynomialPassOrigin(
+    solvers::MathematicalProgram* prog,
+    const symbolic::Variables& indeterminates, int degree,
+    const std::string& coeff_name, symbolic::internal::DegreeType degree_type) {
+  const VectorX<symbolic::Monomial> m =
+      ComputeMonomialBasisNoConstant(indeterminates, degree, degree_type);
+  const VectorX<symbolic::Variable> coeffs =
+      prog->NewContinuousVariables(m.size(), coeff_name);
+  symbolic::Polynomial::MapType poly_map;
+  for (int i = 0; i < coeffs.rows(); ++i) {
+    poly_map.emplace(m(i), coeffs(i));
+  }
+  return symbolic::Polynomial(poly_map);
+}
+
 std::unique_ptr<solvers::MathematicalProgram> FindCandidateLyapunov(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x, int V_degree,
+    double positivity_eps, int d,
+    const Eigen::Ref<const VectorX<symbolic::Polynomial>>& state_constraints,
+    const std::vector<int>& c_lagrangian_degrees,
     const Eigen::Ref<const Eigen::MatrixXd>& x_val,
     const Eigen::Ref<const Eigen::MatrixXd>& xdot_val, symbolic::Polynomial* V,
-    MatrixX<symbolic::Expression>* V_gram) {
+    VectorX<symbolic::Polynomial>* c_lagrangian) {
+  CheckPolynomialsPassOrigin(state_constraints);
   auto prog = std::make_unique<solvers::MathematicalProgram>();
   prog->AddIndeterminates(x);
   const symbolic::Variables x_set(x);
@@ -321,9 +340,24 @@ std::unique_ptr<solvers::MathematicalProgram> FindCandidateLyapunov(
   DRAKE_DEMAND(xdot_val.rows() == x.rows());
   DRAKE_DEMAND(xdot_val.cols() == x_val.cols());
   VectorX<symbolic::Monomial> V_monomials;
-  NewSosPolynomialPassOrigin(prog.get(), x_set, V_degree,
-                             symbolic::internal::DegreeType::kAny, V,
-                             &V_monomials, V_gram);
+  *V = NewFreePolynomialPassOrigin(prog.get(), x_set, V_degree, "V",
+                                   symbolic::internal::DegreeType::kAny);
+  // Add the constraint V - ε*(xᵀx)ᵈ - l(x)*c(x) is sos.
+  symbolic::Polynomial sos_condition = *V;
+  DRAKE_DEMAND(positivity_eps >= 0);
+  if (positivity_eps > 0) {
+    sos_condition -=
+        positivity_eps *
+        symbolic::Polynomial(pow(x.cast<symbolic::Expression>().dot(x), d));
+  }
+  c_lagrangian->resize(state_constraints.rows());
+  for (int i = 0; i < state_constraints.rows(); ++i) {
+    (*c_lagrangian)(i) =
+        prog->NewFreePolynomial(x_set, c_lagrangian_degrees[i]);
+  }
+  sos_condition -= c_lagrangian->dot(state_constraints);
+  prog->AddSosConstraint(sos_condition);
+
   Eigen::MatrixXd A_V_samples;
   VectorX<symbolic::Variable> V_decision_variables;
   Eigen::VectorXd b_V_samples;
@@ -361,6 +395,72 @@ std::unique_ptr<solvers::MathematicalProgram> FindCandidateLyapunov(
       -b_Vdot_samples, Vdot_decision_variables);
   prog->AddLinearCost(A_Vdot_samples.colwise().sum(), b_Vdot_samples.sum(),
                       Vdot_decision_variables);
+  return prog;
+}
+
+std::unique_ptr<solvers::MathematicalProgram> FindCandidateRegionalLyapunov(
+    const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+    const Eigen::Ref<const VectorX<symbolic::Polynomial>>& dynamics,
+    int V_degree, double positivity_eps, int d, double deriv_eps,
+    const Eigen::Ref<const VectorX<symbolic::Polynomial>>& state_eq_constraints,
+    const std::vector<int>& positivity_ceq_lagrangian_degrees,
+    const std::vector<int>& derivative_ceq_lagrangian_degrees,
+    const Eigen::Ref<const VectorX<symbolic::Polynomial>>&
+        state_ineq_constraints,
+    const std::vector<int>& positivity_cin_lagrangian_degrees,
+    const std::vector<int>& derivative_cin_lagrangian_degrees,
+    symbolic::Polynomial* V,
+    VectorX<symbolic::Polynomial>* positivity_cin_lagrangian,
+    VectorX<symbolic::Polynomial>* positivity_ceq_lagrangian,
+    VectorX<symbolic::Polynomial>* derivative_cin_lagrangian,
+    VectorX<symbolic::Polynomial>* derivative_ceq_lagrangian,
+    symbolic::Polynomial* positivity_sos_condition,
+    symbolic::Polynomial* derivative_sos_condition) {
+  CheckPolynomialsPassOrigin(dynamics);
+  auto prog = std::make_unique<solvers::MathematicalProgram>();
+  prog->AddIndeterminates(x);
+  const symbolic::Variables x_set{x};
+  *V = NewFreePolynomialPassOrigin(prog.get(), x_set, V_degree, "V",
+                                   symbolic::internal::DegreeType::kAny);
+  const symbolic::Polynomial x_squared_d(
+      pow(x.cast<symbolic::Expression>().dot(x), d));
+  *positivity_sos_condition = *V - positivity_eps * x_squared_d;
+  positivity_cin_lagrangian->resize(state_ineq_constraints.rows());
+  for (int i = 0; i < state_ineq_constraints.rows(); ++i) {
+    std::tie((*positivity_cin_lagrangian)(i), std::ignore) =
+        prog->NewSosPolynomial(
+            x_set, positivity_cin_lagrangian_degrees[i],
+            solvers::MathematicalProgram::NonnegativePolynomial::kSos, "p1");
+  }
+  *positivity_sos_condition +=
+      positivity_cin_lagrangian->dot(state_ineq_constraints);
+  positivity_ceq_lagrangian->resize(state_eq_constraints.rows());
+  for (int i = 0; i < state_eq_constraints.rows(); ++i) {
+    (*positivity_ceq_lagrangian)(i) = prog->NewFreePolynomial(
+        x_set, positivity_ceq_lagrangian_degrees[i], "p2");
+  }
+  *positivity_sos_condition -=
+      positivity_ceq_lagrangian->dot(state_eq_constraints);
+  prog->AddSosConstraint(*positivity_sos_condition);
+
+  const symbolic::Polynomial Vdot = V->Jacobian(x).dot(dynamics);
+  *derivative_sos_condition = -Vdot - deriv_eps * (*V);
+  derivative_cin_lagrangian->resize(state_ineq_constraints.rows());
+  for (int i = 0; i < state_ineq_constraints.rows(); ++i) {
+    std::tie((*derivative_cin_lagrangian)(i), std::ignore) =
+        prog->NewSosPolynomial(x_set, derivative_cin_lagrangian_degrees[i]);
+  }
+  *derivative_sos_condition +=
+      derivative_cin_lagrangian->dot(state_ineq_constraints);
+  derivative_ceq_lagrangian->resize(state_eq_constraints.rows());
+  for (int i = 0; i < state_eq_constraints.rows(); ++i) {
+    (*derivative_ceq_lagrangian)(i) =
+        prog->NewFreePolynomial(x_set, derivative_ceq_lagrangian_degrees[i]);
+  }
+  *derivative_sos_condition -=
+      derivative_ceq_lagrangian->dot(state_eq_constraints);
+  prog->AddSosConstraint(*derivative_sos_condition);
+
   return prog;
 }
 
@@ -585,6 +685,17 @@ std::unique_ptr<solvers::MathematicalProgram> ConstructMaxVdotProgram(
                       {x, Vector1<symbolic::Variable>(*max_Vdot)});
   prog->AddLinearCost(-Vector1d(1), 0, Vector1<symbolic::Variable>(*max_Vdot));
   return prog;
+}
+
+void CheckPolynomialsPassOrigin(
+    const Eigen::Ref<const VectorX<symbolic::Polynomial>>& p) {
+  for (int i = 0; i < p.rows(); ++i) {
+    auto it = p(i).monomial_to_coefficient_map().find(symbolic::Monomial());
+    if (it != p(i).monomial_to_coefficient_map().end()) {
+      DRAKE_DEMAND(symbolic::is_constant(it->second));
+      DRAKE_DEMAND(symbolic::get_constant_value(it->second) == 0);
+    }
+  }
 }
 
 namespace internal {

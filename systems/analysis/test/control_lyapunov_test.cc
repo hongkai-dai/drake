@@ -892,11 +892,16 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunov) {
   }
 
   // Now search for the Lyapunov given Lagrangian.
+  const double positivity_eps = 0.0001;
+  const int positivity_d = 1;
+  const std::vector<int> positivity_eq_lagrangian_degrees{};
   symbolic::Polynomial V_new;
-  MatrixX<symbolic::Expression> V_gram;
+  VectorX<symbolic::Polynomial> positivity_eq_lagrangian;
   const int V_degree = V.TotalDegree();
   auto prog_lyapunov = dut.ConstructLyapunovProgram(
-      lambda0_sol, l_sol, V_degree, p_degrees, deriv_eps, &V_new, &V_gram, &p);
+      lambda0_sol, l_sol, V_degree, positivity_eps, positivity_d,
+      positivity_eq_lagrangian_degrees, p_degrees, deriv_eps, &V_new,
+      &positivity_eq_lagrangian, &p);
   for (const auto& binding : prog_lyapunov->linear_equality_constraints()) {
     binding.evaluator()->RemoveTinyCoefficient(1E-12);
   }
@@ -909,14 +914,6 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunov) {
   const symbolic::Polynomial V_new_sol = result_lyapunov.GetSolution(V_new);
   EXPECT_EQ(V_new_sol.monomial_to_coefficient_map().count(symbolic::Monomial()),
             0);
-  const auto V_gram_sol_expr = result_lyapunov.GetSolution(V_gram);
-  Eigen::MatrixXd V_gram_sol(V_gram.rows(), V_gram.rows());
-  for (int i = 0; i < V_gram.rows(); ++i) {
-    for (int j = 0; j < V_gram.cols(); ++j) {
-      V_gram_sol(i, j) = symbolic::get_constant_value(V_gram_sol_expr(i, j));
-    }
-  }
-  EXPECT_TRUE(math::IsPositiveDefinite(V_gram_sol));
 
   symbolic::Polynomial V_init = V;
   symbolic::Polynomial V_sol;
@@ -934,12 +931,17 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunov) {
   double rho_sol;
   ControlLyapunov::RhoBisectionOption rho_bisection_option(rho_min, rho_max,
                                                            rho_tol);
+
   symbolic::Polynomial r_sol;
+  VectorX<symbolic::Polynomial> positivity_eq_lagrangian_sol;
   VectorX<symbolic::Polynomial> ellipsoid_c_lagrangian_sol;
-  dut.Search(V_init, lambda0_degree, l_degrees, V_degree, p_degrees,
+
+  dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
+             positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
              ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S, r_degree,
              search_options, rho_bisection_option, &V_sol, &lambda0_sol, &l_sol,
-             &r_sol, &p_sol, &rho_sol, &ellipsoid_c_lagrangian_sol);
+             &r_sol, &p_sol, &positivity_eq_lagrangian_sol, &rho_sol,
+             &ellipsoid_c_lagrangian_sol);
 }
 
 TEST_F(SimpleLinearSystemTest, ControlLyapunovConstructLagrangianProgram) {

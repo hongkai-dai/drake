@@ -144,6 +144,9 @@ const double kInf = std::numeric_limits<double>::infinity();
       const std::vector<int> p_degrees = {};
       const std::vector<int> ellipsoid_c_lagrangian_degrees = {};
       const int V_degree = 2;
+      const double positivity_eps = 0.0001;
+      const int positivity_d = V_degree / 2;
+      const std::vector<int> positivity_eq_lagrangian_degrees{};
       const Vector6d x_star = Vector6d::Zero();
       const Matrix6<double> S = Matrix6<double>::Identity();
       ControlLyapunov::SearchOptions search_options;
@@ -161,14 +164,16 @@ const double kInf = std::numeric_limits<double>::infinity();
       VectorX<symbolic::Polynomial> l;
       symbolic::Polynomial r;
       double rho_sol;
+      VectorX<symbolic::Polynomial> positivity_eq_lagrangian_sol;
       VectorX<symbolic::Polynomial> p_sol;
       VectorX<symbolic::Polynomial> ellipsoid_c_lagrangian_sol;
 
-      dut.Search(V_init, lambda0_degree, l_degrees, V_degree, p_degrees,
+      dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
+                 positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
                  ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S,
                  V_degree - 2, search_options, rho_bisection_option, &V_sol,
-                 &lambda0, &l, &r, &p_sol, &rho_sol,
-                 &ellipsoid_c_lagrangian_sol);
+                 &lambda0, &l, &r, &p_sol, &positivity_eq_lagrangian_sol,
+                 &rho_sol, &ellipsoid_c_lagrangian_sol);
     }
   }
 

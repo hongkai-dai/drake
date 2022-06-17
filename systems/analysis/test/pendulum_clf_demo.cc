@@ -195,12 +195,19 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
       }
     }
     const int V_init_degree = 2;
-    MatrixX<symbolic::Expression> V_init_gram;
-    auto prog_V_init = FindCandidateLyapunov(x, V_init_degree, x_val, xdot_val,
-                                             &V_init, &V_init_gram);
-    const auto result_init = solvers::Solve(*prog_V_init);
-    DRAKE_DEMAND(result_init.is_success());
-    V_init = result_init.GetSolution(V_init);
+    {
+      const double positivity_eps = 0;
+      const int d = 0;
+      const VectorX<symbolic::Polynomial> state_constraints_init(0);
+      const std::vector<int> c_lagrangian_degrees{};
+      VectorX<symbolic::Polynomial> c_lagrangian;
+      auto prog_V_init = FindCandidateLyapunov(
+          x, V_init_degree, positivity_eps, d, state_constraints_init,
+          c_lagrangian_degrees, x_val, xdot_val, &V_init, &c_lagrangian);
+      const auto result_init = solvers::Solve(*prog_V_init);
+      DRAKE_DEMAND(result_init.is_success());
+      V_init = result_init.GetSolution(V_init);
+    }
   }
   const ControlLyapunov dut(x, f, G, u_vertices, state_constraints);
   const int lambda0_degree = 2;
@@ -230,7 +237,11 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
     V_init = V_init / result.GetSolution(rho_var);
   }
 
+  const double positivity_eps = 0.0001;
+  const int positivity_d = 1;
+  const std::vector<int> positivity_eq_lagrangian_degrees{{V_degree - 2}};
   symbolic::Polynomial V_sol;
+  VectorX<symbolic::Polynomial> positivity_eq_lagrangian_sol;
   if (max_ellipsoid) {
     const Eigen::Vector3d x_star(0, -0.0, 0);
     const Eigen::Matrix3d S = Eigen::Matrix3d::Identity();
@@ -252,10 +263,12 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
         rho_min, rho_max, rho_bisection_tol);
     symbolic::Polynomial r;
     VectorX<symbolic::Polynomial> ellipsoid_c_lagrangian_sol;
-    dut.Search(V_init, lambda0_degree, l_degrees, V_degree, p_degrees,
+    dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
+               positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
                ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S,
                V_degree - 2, search_options, rho_bisection_option, &V_sol,
-               &lambda0, &l, &r, &p, &rho, &ellipsoid_c_lagrangian_sol);
+               &lambda0, &l, &r, &p, &positivity_eq_lagrangian_sol, &rho,
+               &ellipsoid_c_lagrangian_sol);
   } else {
     ControlLyapunov::SearchOptions search_options;
     search_options.rho_converge_tol = 0.;
@@ -274,9 +287,10 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
     symbolic::Polynomial lambda0_sol;
     VectorX<symbolic::Polynomial> l_sol;
     VectorX<symbolic::Polynomial> p_sol;
-    dut.Search(V_init, lambda0_degree, l_degrees, V_degree, p_degrees,
-               deriv_eps, x_samples, true, search_options, &V_sol, &lambda0_sol,
-               &l_sol, &p_sol);
+    dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
+               positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
+               deriv_eps, x_samples, true, search_options, &V_sol,
+               &positivity_eq_lagrangian_sol, &lambda0_sol, &l_sol, &p_sol);
   }
   const double theta0 = 0.0;
   const double thetadot0 = 0.0;
@@ -337,6 +351,9 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
   {
     const int lambda0_degree = 2;
     const std::vector<int> l_degrees{2, 2};
+    const double positivity_eps = 0.0001;
+    const int positivity_d = 1;
+    const std::vector<int> positivity_eq_lagrangian_degrees{};
     const std::vector<int> p_degrees{};
     const std::vector<int> ellipsoid_c_lagrangian_degrees{};
     const int V_degree = 2;
@@ -357,12 +374,15 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
     VectorX<symbolic::Polynomial> l;
     symbolic::Polynomial r;
     VectorX<symbolic::Polynomial> p;
+    VectorX<symbolic::Polynomial> positivity_eq_lagrangian;
     double rho;
     VectorX<symbolic::Polynomial> ellipsoid_c_lagrangian_sol;
-    dut.Search(V_init, lambda0_degree, l_degrees, V_degree, p_degrees,
+    dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
+               positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
                ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S,
                V_degree - 2, search_options, rho_bisection_option, &V_sol,
-               &lambda0, &l, &r, &p, &rho, &ellipsoid_c_lagrangian_sol);
+               &lambda0, &l, &r, &p, &positivity_eq_lagrangian, &rho,
+               &ellipsoid_c_lagrangian_sol);
     Simulate(x, theta_des, V_sol, u_bound, deriv_eps,
              Eigen::Vector2d(M_PI + 0.6 * M_PI, 0), 10);
   }

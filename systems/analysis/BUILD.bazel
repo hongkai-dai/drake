@@ -920,7 +920,9 @@ drake_cc_library(
     deps = [
         "//common:essential",
         "//common:symbolic",
+        "//math:gradient",
         "//systems/framework:leaf_system",
+        "//systems/controllers:linear_quadratic_regulator",
     ],
 )
 
@@ -1031,6 +1033,7 @@ drake_cc_googletest(
     name = "clf_cbf_utils_test",
     deps = [
         ":clf_cbf_utils",
+        ":quadrotor2d",
         "//common/test_utilities:symbolic_test_util",
         "//common/test_utilities:eigen_matrix_compare",
         "//common:temp_directory",

@@ -228,8 +228,14 @@ GTEST_TEST(PendulumROA, TestTrigLQR) {
     }
     const int V_init_degree = 2;
     MatrixX<symbolic::Expression> V_init_gram;
-    auto prog_V_init = FindCandidateLyapunov(x, V_init_degree, x_val, xdot_val,
-                                             &V_init, &V_init_gram);
+    const double positivity_eps = 0;
+    const int d = 0;
+    const VectorX<symbolic::Polynomial> state_constraints_init(0);
+    const std::vector<int> c_lagrangian_degrees{};
+    VectorX<symbolic::Polynomial> c_lagrangian;
+    auto prog_V_init = FindCandidateLyapunov(
+        x, V_init_degree, positivity_eps, d, state_constraints_init,
+        c_lagrangian_degrees, x_val, xdot_val, &V_init, &c_lagrangian);
     const auto result_init = solvers::Solve(*prog_V_init);
     ASSERT_TRUE(result_init.is_success());
     V_init = result_init.GetSolution(V_init);

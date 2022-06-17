@@ -1,5 +1,7 @@
 #include "drake/systems/analysis/test/quadrotor2d.h"
 
+#include "drake/math/autodiff_gradient.h"
+
 namespace drake {
 namespace systems {
 namespace analysis {
@@ -88,6 +90,32 @@ void PolynomialControlAffineDynamics(
   (*G)(4, 1) = (*G)(4, 0);
   (*G)(5, 0) = symbolic::Polynomial(quadrotor.length() / quadrotor.inertia());
   (*G)(5, 1) = -(*G)(5, 0);
+}
+
+symbolic::Polynomial StateEqConstraint(
+    const Eigen::Ref<const Eigen::Matrix<symbolic::Variable, 7, 1>>& x) {
+  return symbolic::Polynomial(x(2) * x(2) + x(3) * x(3) + 2 * x(3));
+}
+
+controllers::LinearQuadraticRegulatorResult SynthesizeTrigLqr(
+    const Eigen::Ref<const Eigen::Matrix<double, 7, 7>>& Q,
+    const Eigen::Ref<const Eigen::Matrix2d>& R) {
+  QuadrotorPlant<double> quadrotor;
+  const double thrust_equilibrium = EquilibriumThrust(quadrotor);
+  Eigen::VectorXd xu_des = Eigen::VectorXd::Zero(9);
+  xu_des.tail<2>() = Eigen::Vector2d(thrust_equilibrium, thrust_equilibrium);
+  const auto xu_des_ad = math::InitializeAutoDiff(xu_des);
+  const auto xdot_des_ad = TrigDynamics<AutoDiffXd>(
+      quadrotor, xu_des_ad.head<7>(), xu_des_ad.tail<2>());
+  const auto xdot_des_grad = math::ExtractGradient(xdot_des_ad);
+  // The constraint is x(2) * x(2) + (x(3) + 1) * (x(3) + 1) = 1.
+  Eigen::RowVectorXd F = Eigen::RowVectorXd::Zero(7);
+  F(3) = 1;
+  const auto lqr_result = controllers::LinearQuadraticRegulator(
+      xdot_des_grad.leftCols<7>(), xdot_des_grad.rightCols<2>(), Q, R,
+      Eigen::MatrixXd(0, 2), F);
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(lqr_result.S);
+  return lqr_result;
 }
 
 }  // namespace analysis

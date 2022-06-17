@@ -5,6 +5,7 @@
 #include "drake/common/drake_copyable.h"
 #include "drake/common/eigen_types.h"
 #include "drake/common/symbolic.h"
+#include "drake/systems/controllers/linear_quadratic_regulator.h"
 #include "drake/systems/framework/leaf_system.h"
 
 namespace drake {
@@ -99,6 +100,13 @@ void PolynomialControlAffineDynamics(
     const QuadrotorPlant<double>& quadrotor,
     const Vector6<symbolic::Variable>& x, Vector6<symbolic::Polynomial>* f,
     Eigen::Matrix<symbolic::Polynomial, 6, 2>* G);
+
+symbolic::Polynomial StateEqConstraint(
+    const Eigen::Ref<const Eigen::Matrix<symbolic::Variable, 7, 1>>& x);
+
+controllers::LinearQuadraticRegulatorResult SynthesizeTrigLqr(
+    const Eigen::Ref<const Eigen::Matrix<double, 7, 7>>& Q,
+    const Eigen::Ref<const Eigen::Matrix2d>& R);
 
 }  // namespace analysis
 }  // namespace systems

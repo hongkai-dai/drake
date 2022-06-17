@@ -23,7 +23,7 @@ QuadrotorTrigPlant<T>::QuadrotorTrigPlant()
       gravity_{9.81} {
   this->DeclareVectorInputPort("propeller_force", 4);
 
-  auto state_index = this->DeclareContinuousState(12);
+  auto state_index = this->DeclareContinuousState(13);
   state_output_port_index_ = this->DeclareStateOutputPort("x", state_index);
 }
 
@@ -51,7 +51,7 @@ void QuadrotorTrigPlant<T>::DoCalcTimeDerivatives(
   const Vector3<T> Fgravity_N(0, 0, -mass_ * gravity_);
 
   const Vector4<T> quat(x(0) + 1, x(1), x(2), x(3));
-  const auto w_NB_B = x.segment<3>(7);
+  const auto w_NB_B = x.template tail<3>();
   Vector4<T> quat_dot;
   quat_dot(0) =
       0.5 * (-w_NB_B(0) * quat(1) - w_NB_B(1) * quat(2) - w_NB_B(2) * quat(3));

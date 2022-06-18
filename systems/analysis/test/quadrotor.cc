@@ -24,7 +24,8 @@ QuadrotorTrigPlant<T>::QuadrotorTrigPlant()
   this->DeclareVectorInputPort("propeller_force", 4);
 
   auto state_index = this->DeclareContinuousState(13);
-  state_output_port_index_ = this->DeclareStateOutputPort("x", state_index);
+  state_output_port_index_ =
+      this->DeclareStateOutputPort("x", state_index).get_index();
 }
 
 template <typename T>
@@ -80,8 +81,14 @@ void QuadrotorTrigPlant<T>::DoCalcTimeDerivatives(
                               (Tau_B(1) - wIw(1)) / inertia_(1, 1),
                               (Tau_B(2) - wIw(2)) / inertia_(2, 2));
   Eigen::Matrix<T, 13, 1> xDt;
-  xDt << quat_dot, x.segment<3>(7), xyzDDt, alpha_NB_B;
+  xDt << quat_dot, x.template segment<3>(7), xyzDDt, alpha_NB_B;
   derivatives->SetFromVector(xDt);
+}
+
+symbolic::Polynomial StateEqConstraint(
+    const Eigen::Ref<const Eigen::Matrix<symbolic::Variable, 13, 1>>& x) {
+  return symbolic::Polynomial(x(0) * x(0) + 2 * x(0) + x(1) * x(1) +
+                              x(2) * x(2) + x(3) * x(3));
 }
 }  // namespace analysis
 }  // namespace systems

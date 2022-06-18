@@ -933,6 +933,7 @@ drake_cc_library(
     deps = [
         "//common:essential",
         "//common:symbolic",
+        "//math:geometric_transform",
         "//systems/framework:leaf_system",
     ],
 )

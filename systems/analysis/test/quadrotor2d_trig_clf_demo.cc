@@ -58,8 +58,8 @@ const double kInf = std::numeric_limits<double>::infinity();
   symbolic::Polynomial Vdot = dVdx.dot(xdot);
   Vdot = Vdot.RemoveTermsWithSmallCoefficients(1E-8);
   const symbolic::Variables x_set(x);
-  const symbolic::Polynomial state_constraints(x(2) * x(2) +
-                                               (x(3) + 1) * (x(3) + 1) - 1);
+  const symbolic::Polynomial state_constraints(x(2) * x(2) + x(3) * x(3) +
+                                               2 * x(3));
 
   const double rho = 0.01;
   {
@@ -132,7 +132,7 @@ const double kInf = std::numeric_limits<double>::infinity();
       StateEqConstraint(x));
   const std::vector<int> positivity_ceq_lagrangian_degrees{{V_degree - 2}};
   const std::vector<int> derivative_ceq_lagrangian_degrees{
-      static_cast<int>(std::ceil((V_degree + 1) / 2.) * 2 - 2)};
+      {static_cast<int>(std::ceil((V_degree + 1) / 2.) * 2 - 2)}};
   const Vector1<symbolic::Polynomial> state_ineq_constraints(
       symbolic::Polynomial(x.cast<symbolic::Expression>().dot(x) - 0.0001));
   const std::vector<int> positivity_cin_lagrangian_degrees{V_degree - 2};
@@ -146,7 +146,8 @@ const double kInf = std::numeric_limits<double>::infinity();
   symbolic::Polynomial positivity_sos_condition;
   symbolic::Polynomial derivative_sos_condition;
   auto prog = FindCandidateRegionalLyapunov(
-      x, dynamics, V_degree, positivity_eps, d, deriv_eps, state_eq_constraints,
+      x, dynamics, std::nullopt /* dynamics_denominator*/, V_degree,
+      positivity_eps, d, deriv_eps, state_eq_constraints,
       positivity_ceq_lagrangian_degrees, derivative_ceq_lagrangian_degrees,
       state_ineq_constraints, positivity_cin_lagrangian_degrees,
       derivative_cin_lagrangian_degrees, &V, &positivity_cin_lagrangian,
@@ -330,9 +331,9 @@ void ValidateTrigClfInit(
   //{ ValidateLQRasLyapunov(); }
 
   const ControlLyapunov dut(x, f, G, u_vertices, state_constraints);
-  const int lambda0_degree = 2;
-  const std::vector<int> l_degrees{4, 4, 4, 4};
-  const std::vector<int> p_degrees{6};
+  const int lambda0_degree = 0;
+  const std::vector<int> l_degrees{{2, 2, 2, 2}};
+  const std::vector<int> p_degrees{{4}};
   symbolic::Polynomial lambda0;
   VectorX<symbolic::Polynomial> l;
   VectorX<symbolic::Polynomial> p;
@@ -363,12 +364,15 @@ void ValidateTrigClfInit(
   {
     ControlLyapunov::SearchOptions search_options;
     search_options.rho_converge_tol = 0.;
-    search_options.bilinear_iterations = 25;
+    search_options.bilinear_iterations = 100;
     search_options.backoff_scale = 0.01;
     search_options.lsol_tiny_coeff_tol = 1E-8;
     search_options.lyap_tiny_coeff_tol = 1E-8;
     search_options.lagrangian_step_solver_options = solvers::SolverOptions();
     search_options.lagrangian_step_solver_options->SetOption(
+        solvers::CommonSolverOption::kPrintToConsole, 0);
+    search_options.lyap_step_solver_options = solvers::SolverOptions();
+    search_options.lyap_step_solver_options->SetOption(
         solvers::CommonSolverOption::kPrintToConsole, 0);
     Eigen::MatrixXd state_samples(6, 4);
     state_samples.col(0) << 0, 0.5, 0, 0, 0, 0;

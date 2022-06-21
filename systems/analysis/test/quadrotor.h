@@ -40,6 +40,8 @@ class QuadrotorTrigPlant : public LeafSystem<T> {
 
   double kF() const { return kF_; }
 
+  double kM() const { return kM_; }
+
   const OutputPort<T>& get_state_output_port() const {
     return this->get_output_port(state_output_port_index_);
   }
@@ -86,6 +88,12 @@ Eigen::Matrix<T, 13, 1> ToTrigState(
       rpy.CalcAngularVelocityInChildFromRpyDt(x_original.template tail<3>());
   return x_trig;
 }
+
+void TrigPolyDynamics(
+    const QuadrotorTrigPlant<double>& plant,
+    const Eigen::Ref<const Eigen::Matrix<symbolic::Variable, 13, 1>>& x,
+    Eigen::Matrix<symbolic::Polynomial, 13, 1>* f,
+    Eigen::Matrix<symbolic::Polynomial, 13, 4>* G);
 }  // namespace analysis
 }  // namespace systems
 }  // namespace drake

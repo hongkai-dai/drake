@@ -336,7 +336,8 @@ GTEST_TEST(FindCandidateRegionalLyapunov, Test) {
   symbolic::Polynomial positivity_sos_condition;
   symbolic::Polynomial derivative_sos_condition;
   auto prog = FindCandidateRegionalLyapunov(
-      x, dynamics, V_degree, positivity_eps, d, deriv_eps, state_eq_constraints,
+      x, dynamics, std::nullopt /*dynamics_denominator */, V_degree,
+      positivity_eps, d, deriv_eps, state_eq_constraints,
       positivity_ceq_lagrangian_degrees, derivative_ceq_lagrangian_degrees,
       state_ineq_constraints, positivity_cin_lagrangian_degrees,
       derivative_cin_lagrangian_degrees, &V, &positivity_cin_lagrangian,
@@ -421,6 +422,74 @@ GTEST_TEST(SaveLoadPolynomial, Test) {
                                 3 * x0 * x1 * x1};
   Save(p2, file);
   EXPECT_PRED2(symbolic::test::PolyEqual, p2, Load(x_set, file));
+}
+
+GTEST_TEST(NewFreePolynomialPassOrigin, Test) {
+  Vector3<symbolic::Variable> x;
+  for (int i = 0; i < 3; ++i) {
+    x(i) = symbolic::Variable("x" + std::to_string(i));
+  }
+  solvers::MathematicalProgram prog;
+  prog.AddIndeterminates(x);
+  const symbolic::Variables x_set{x};
+  const symbolic::internal::DegreeType degree_type{
+      symbolic::internal::DegreeType::kAny};
+
+  // Test with no_linear_term_variables being empty.
+  const auto p1 =
+      NewFreePolynomialPassOrigin(&prog, x_set, 2, "p", degree_type, {});
+  EXPECT_EQ(p1.monomial_to_coefficient_map().size(), 9);
+  for (const auto& [monomial, coeff] : p1.monomial_to_coefficient_map()) {
+    EXPECT_LE(monomial.total_degree(), 2);
+    EXPECT_GT(monomial.total_degree(), 0);
+  }
+
+  // Test with no_linear_term_variables being {x2}.
+  const auto p2 = NewFreePolynomialPassOrigin(&prog, x_set, 2, "p", degree_type,
+                                              symbolic::Variables({x(2)}));
+  EXPECT_EQ(p2.monomial_to_coefficient_map().size(), 8);
+  for (const auto& [monomial, coeff] : p2.monomial_to_coefficient_map()) {
+    EXPECT_LE(monomial.total_degree(), 2);
+    EXPECT_GT(monomial.total_degree(), 0);
+    EXPECT_NE(monomial, symbolic::Monomial(x(2)));
+  }
+
+  // Test with no_linear_term_variables being {x0, x2}.
+  const auto p3 = NewFreePolynomialPassOrigin(
+      &prog, x_set, 2, "p", degree_type, symbolic::Variables({x(0), x(2)}));
+  EXPECT_EQ(p3.monomial_to_coefficient_map().size(), 7);
+  for (const auto& [monomial, coeff] : p3.monomial_to_coefficient_map()) {
+    EXPECT_LE(monomial.total_degree(), 2);
+    EXPECT_GT(monomial.total_degree(), 0);
+    EXPECT_NE(monomial, symbolic::Monomial(x(2)));
+    EXPECT_NE(monomial, symbolic::Monomial(x(0)));
+  }
+}
+
+GTEST_TEST(FindNoLinearTermVariables, Test) {
+  Vector4<symbolic::Variable> x;
+  for (int i = 0; i < x.rows(); ++i) {
+    x(i) = symbolic::Variable("x" + std::to_string(i));
+  }
+  const symbolic::Variables x_set(x);
+
+  const Vector2<symbolic::Polynomial> p1(
+      symbolic::Polynomial(x(0) * x(0) + 2 * x(1)),
+      symbolic::Polynomial(x(0) * x(2) + x(3)));
+  const symbolic::Variables no_linear_term_variables1 =
+      FindNoLinearTermVariables(x_set, p1);
+  EXPECT_EQ(no_linear_term_variables1.size(), 2);
+  EXPECT_TRUE(no_linear_term_variables1.include(x(0)));
+  EXPECT_TRUE(no_linear_term_variables1.include(x(2)));
+
+  // p2 doesn't contain all variables.
+  const Vector2<symbolic::Polynomial> p2(
+      symbolic::Polynomial(x(2) * x(2) + x(3)), symbolic::Polynomial(x(0)));
+  const symbolic::Variables no_linear_term_variables2 =
+      FindNoLinearTermVariables(x_set, p2);
+  EXPECT_EQ(no_linear_term_variables2.size(), 2);
+  EXPECT_TRUE(no_linear_term_variables2.include(x(1)));
+  EXPECT_TRUE(no_linear_term_variables2.include(x(2)));
 }
 
 }  // namespace analysis

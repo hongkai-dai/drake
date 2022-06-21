@@ -90,6 +90,79 @@ symbolic::Polynomial StateEqConstraint(
   return symbolic::Polynomial(x(0) * x(0) + 2 * x(0) + x(1) * x(1) +
                               x(2) * x(2) + x(3) * x(3));
 }
+
+void TrigPolyDynamics(
+    const QuadrotorTrigPlant<double>& quadrotor,
+    const Eigen::Ref<const Eigen::Matrix<symbolic::Variable, 13, 1>>& x,
+    Eigen::Matrix<symbolic::Polynomial, 13, 1>* f,
+    Eigen::Matrix<symbolic::Polynomial, 13, 4>* G) {
+  const Vector4<symbolic::Expression> quat(x(0) + 1, x(1), x(2), x(3));
+  const auto w_NB_B = x.tail<3>();
+  // quatDt
+  (*f)(0) = symbolic::Polynomial(
+      0.5 * (-w_NB_B(0) * quat(1) - w_NB_B(1) * quat(2) - w_NB_B(2) * quat(3)));
+  (*f)(1) = symbolic::Polynomial(
+      0.5 * (w_NB_B(0) * quat(0) + w_NB_B(2) * quat(2) - w_NB_B(1) * quat(3)));
+  (*f)(2) = symbolic::Polynomial(
+      0.5 * (w_NB_B(1) * quat(0) - w_NB_B(2) * quat(1) + w_NB_B(0) * quat(3)));
+  (*f)(3) = symbolic::Polynomial(
+      0.5 * (w_NB_B(2) * quat(0) + w_NB_B(1) * quat(1) - w_NB_B(0) * quat(2)));
+  // v_WB
+  (*f)(4) = symbolic::Polynomial(x(7));
+  (*f)(5) = symbolic::Polynomial(x(8));
+  (*f)(6) = symbolic::Polynomial(x(9));
+  for (int i = 0; i < 7; ++i) {
+    for (int j = 0; j < 4; ++j) {
+      (*G)(i, j) = symbolic::Polynomial();
+    }
+  }
+
+  // a_WB
+  (*f)(7) = symbolic::Polynomial{};
+  (*f)(8) = symbolic::Polynomial{};
+  (*f)(9) = symbolic::Polynomial(-quadrotor.gravity());
+
+  Matrix3<symbolic::Expression> R_NB;
+  R_NB(0, 0) = 1 - 2 * quat(2) * quat(2) - 2 * quat(3) * quat(3);
+  R_NB(0, 1) = 2 * quat(1) * quat(2) - 2 * quat(0) * quat(3);
+  R_NB(0, 2) = 2 * quat(1) * quat(3) + 2 * quat(0) * quat(2);
+  R_NB(1, 0) = 2 * quat(1) * quat(2) + 2 * quat(0) * quat(3);
+  R_NB(1, 1) = 1 - 2 * quat(1) * quat(1) - 2 * quat(3) * quat(3);
+  R_NB(1, 2) = 2 * quat(2) * quat(3) - 2 * quat(0) * quat(1);
+  R_NB(2, 0) = 2 * quat(1) * quat(3) - 2 * quat(0) * quat(2);
+  R_NB(2, 1) = 2 * quat(2) * quat(3) + 2 * quat(0) * quat(1);
+  R_NB(2, 2) = 1 - 2 * quat(1) * quat(1) - 2 * quat(2) * quat(2);
+  for (int i = 0; i < 3; ++i) {
+    (*G)(i + 7, 0) =
+        symbolic::Polynomial(R_NB(i, 2) * quadrotor.kF() / quadrotor.mass());
+    for (int j = 1; j < 4; ++j) {
+      (*G)(i + 7, j) = (*G)(i + 7, 0);
+    }
+  }
+
+  // alpha_NB_B
+  const Vector3<symbolic::Expression> wIw =
+      w_NB_B.cross(quadrotor.inertia() * w_NB_B);
+  (*f)(10) = symbolic::Polynomial(-wIw(0) / quadrotor.inertia()(0, 0));
+  (*f)(11) = symbolic::Polynomial(-wIw(1) / quadrotor.inertia()(1, 1));
+  (*f)(12) = symbolic::Polynomial(-wIw(2) / quadrotor.inertia()(2, 2));
+
+  (*G)(10, 0) = symbolic::Polynomial{};
+  (*G)(10, 1) = symbolic::Polynomial{quadrotor.kF() * quadrotor.length() /
+                                     quadrotor.inertia()(0, 0)};
+  (*G)(10, 2) = symbolic::Polynomial{};
+  (*G)(10, 3) = -(*G)(10, 1);
+  (*G)(11, 0) = symbolic::Polynomial(-quadrotor.kF() * quadrotor.length() /
+                                     quadrotor.inertia()(1, 1));
+  (*G)(11, 1) = symbolic::Polynomial{};
+  (*G)(11, 2) = -(*G)(11, 0);
+  (*G)(11, 3) = symbolic::Polynomial{};
+  (*G)(12, 0) = symbolic::Polynomial(quadrotor.kF() * quadrotor.kM() /
+                                     quadrotor.inertia()(2, 2));
+  (*G)(12, 1) = -(*G)(12, 0);
+  (*G)(12, 2) = (*G)(12, 0);
+  (*G)(12, 3) = -(*G)(12, 0);
+}
 }  // namespace analysis
 }  // namespace systems
 }  // namespace drake

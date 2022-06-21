@@ -118,12 +118,24 @@ void NewSosPolynomialPassOrigin(solvers::MathematicalProgram* prog,
                                 MatrixX<symbolic::Expression>* gram);
 
 /**
- * Creates a new free polynomial passing the origin.
+ * Creates a new free polynomial passing the origin. Namely its constant term is
+ * 0. The new free polynomial doesn't have the linear term with variables in @p
+ * no_linear_term_variables either.
  */
 symbolic::Polynomial NewFreePolynomialPassOrigin(
     solvers::MathematicalProgram* prog,
     const symbolic::Variables& indeterminates, int degree,
-    const std::string& coeff_name, symbolic::internal::DegreeType degree_type);
+    const std::string& coeff_name, symbolic::internal::DegreeType degree_type,
+    const symbolic::Variables& no_linear_term_variables);
+
+/**
+ * Return the variables x in @p indeterminates, such that p doesn't have the
+ * linear term x.
+ */
+symbolic::Variables FindNoLinearTermVariables(
+    const symbolic::Variables& indeterminates,
+    const VectorX<symbolic::Polynomial>& p);
+
 /**
  * Constructs a program to find Lyapunov candidate V that satisfy the following
  * constraints
@@ -142,7 +154,7 @@ symbolic::Polynomial NewFreePolynomialPassOrigin(
 std::unique_ptr<solvers::MathematicalProgram> FindCandidateLyapunov(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x, int V_degree,
     double positivity_eps, int d,
-    const Eigen::Ref<const VectorX<symbolic::Polynomial>>& state_constraints,
+    const VectorX<symbolic::Polynomial>& state_constraints,
     const std::vector<int>& c_lagrangian_degrees,
     const Eigen::Ref<const Eigen::MatrixXd>& x_val,
     const Eigen::Ref<const Eigen::MatrixXd>& xdot_val, symbolic::Polynomial* V,
@@ -163,13 +175,13 @@ std::unique_ptr<solvers::MathematicalProgram> FindCandidateLyapunov(
  */
 std::unique_ptr<solvers::MathematicalProgram> FindCandidateRegionalLyapunov(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
-    const Eigen::Ref<const VectorX<symbolic::Polynomial>>& dynamics,
+    const VectorX<symbolic::Polynomial>& dynamics,
+    const std::optional<symbolic::Polynomial>& dynamics_denominator,
     int V_degree, double positivity_eps, int d, double deriv_eps,
-    const Eigen::Ref<const VectorX<symbolic::Polynomial>>& state_eq_constraints,
+    const VectorX<symbolic::Polynomial>& state_eq_constraints,
     const std::vector<int>& positivity_ceq_lagrangian_degrees,
     const std::vector<int>& derivative_ceq_lagrangian_degrees,
-    const Eigen::Ref<const VectorX<symbolic::Polynomial>>&
-        state_ineq_constraints,
+    const VectorX<symbolic::Polynomial>& state_ineq_constraints,
     const std::vector<int>& positivity_cin_lagrangian_degrees,
     const std::vector<int>& derivative_cin_lagrangian_degrees,
     symbolic::Polynomial* V,
@@ -198,14 +210,12 @@ void Save(const symbolic::Polynomial& p, const std::string& file_name);
  */
 std::unique_ptr<solvers::MathematicalProgram> ConstructMaxVdotProgram(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
-    const symbolic::Polynomial& V,
-    const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
-    const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
+    const symbolic::Polynomial& V, const VectorX<symbolic::Polynomial>& f,
+    const MatrixX<symbolic::Polynomial>& G,
     const Eigen::Ref<const Eigen::MatrixXd>& u_vertices,
     symbolic::Variable* max_Vdot);
 
-void CheckPolynomialsPassOrigin(
-    const Eigen::Ref<const VectorX<symbolic::Polynomial>>& p);
+void CheckPolynomialsPassOrigin(const VectorX<symbolic::Polynomial>& p);
 
 namespace internal {
 /** The ellipsoid polynomial (x−x*)ᵀS(x−x*)−ρ

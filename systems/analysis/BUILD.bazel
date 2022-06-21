@@ -1003,6 +1003,22 @@ drake_cc_binary(
     ],
 )
 
+drake_cc_binary(
+    name = "quadrotor3d_trig_clf_demo",
+    srcs = ["test/quadrotor3d_trig_clf_demo.cc"],
+    deps = [
+        ":control_lyapunov",
+        ":quadrotor",
+        ":simulator",
+        ":simulator_config_functions",
+        "//math:geometric_transform",
+        "//math:gray_code",
+        "//solvers:solve",
+        "//systems/controllers:linear_quadratic_regulator",
+        "//systems/primitives:vector_log_sink",
+    ],
+)
+
 drake_cc_googletest(
     name = "control_lyapunov_test",
     timeout = "moderate",
@@ -1053,5 +1069,39 @@ drake_cc_googletest(
         "//common/test_utilities:eigen_matrix_compare",
     ],
 )
+
+drake_cc_library(
+    name = "acrobot",
+    srcs = ["test/acrobot.cc"],
+    hdrs = ["test/acrobot.h"],
+    deps = [
+        "//examples/acrobot:acrobot_plant",
+    ],
+)
+
+drake_cc_googletest(
+    name = "acrobot_test",
+    deps = [
+        ":acrobot",
+        "//common/test_utilities:eigen_matrix_compare",
+    ],
+)
+
+drake_cc_binary(
+    name = "acrobot_trig_clf_demo",
+    srcs = ["test/acrobot_trig_clf_demo.cc"],
+    deps = [
+        ":acrobot",
+        ":control_lyapunov",
+        ":simulator",
+        ":simulator_config_functions",
+        "//math:geometric_transform",
+        "//math:gradient",
+        "//solvers:solve",
+        "//systems/controllers:linear_quadratic_regulator",
+        "//systems/primitives:vector_log_sink",
+    ],
+)
+
 
 add_lint_tests(enable_clang_format_lint = False)

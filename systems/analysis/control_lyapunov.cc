@@ -260,14 +260,22 @@ ControlLyapunov::ConstructLyapunovProgram(
   const symbolic::internal::DegreeType V_degree_type{
       symbolic::internal::DegreeType::kAny};
   // Since V(0) = 0, V(x) can't have a constant term.
-  // If state_constraints is empty, then V(x) >= 0, hence V(x) can't have a
+  // If state_constraints is empty, then V(x) >= 0 ∀x, hence V(x) can't have a
   // linear term either.
+  // If state_constraints doesn't have a linear term in variable x(i), then V(x)
+  // can't have the term x(i) either.
   if (state_constraints_.rows() == 0) {
     *V = internal::NewFreePolynomialNoConstantOrLinear(
         prog.get(), x_set_, V_degree, "V", V_degree_type);
   } else {
+    const symbolic::Variables no_linear_term_variables =
+        FindNoLinearTermVariables(x_set_, state_constraints_);
+    unused(no_linear_term_variables);
+    // Not sure why, but if I use no_linear_term_variables in the line below,
+    // quadrotor2d_trig_clf_demo says it is infeasible to find V, although
+    // feasible V really doesn't have linear terms for these variables.
     *V = NewFreePolynomialPassOrigin(prog.get(), x_set_, V_degree, "V",
-                                     V_degree_type);
+                                     V_degree_type, symbolic::Variables());
   }
   symbolic::Polynomial positivity_sos_condition = *V;
   DRAKE_DEMAND(positivity_d >= 0);
@@ -1178,9 +1186,9 @@ ControlLyapunovBoxInputBound::ConstructLagrangianAndBProgram(
                          : symbolic::internal::DegreeType::kAny;
   b->resize(nu_);
   for (int i = 0; i < nu_; ++i) {
-    (*b)(i) =
-        NewFreePolynomialPassOrigin(prog.get(), x_set_, b_degrees[i],
-                                    "b" + std::to_string(i), b_degree_type);
+    (*b)(i) = NewFreePolynomialPassOrigin(prog.get(), x_set_, b_degrees[i],
+                                          "b" + std::to_string(i),
+                                          b_degree_type, symbolic::Variables{});
   }
   // Add the constraint ∂V/∂x*f(x) + εV = ∑ᵢ bᵢ(x)
   prog->AddEqualityConstraintBetweenPolynomials(
@@ -1240,8 +1248,9 @@ ControlLyapunovBoxInputBound::ConstructLyapunovProgram(
                          : symbolic::internal::DegreeType::kAny;
   b->resize(nu_);
   for (int i = 0; i < nu_; ++i) {
-    (*b)(i) = NewFreePolynomialPassOrigin(prog.get(), x_set_, b_degrees[i],
-                                          "b_coeff", b_degree_type);
+    (*b)(i) =
+        NewFreePolynomialPassOrigin(prog.get(), x_set_, b_degrees[i], "b_coeff",
+                                    b_degree_type, symbolic::Variables{});
   }
   const RowVectorX<symbolic::Polynomial> dVdx = V->Jacobian(x_);
   prog->AddEqualityConstraintBetweenPolynomials(

@@ -209,7 +209,8 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
       V_init = result_init.GetSolution(V_init);
     }
   }
-  const ControlLyapunov dut(x, f, G, u_vertices, state_constraints);
+  const ControlLyapunov dut(x, f, G, std::nullopt /*dynamics denominator */,
+                            u_vertices, state_constraints);
   const int lambda0_degree = 2;
   const std::vector<int> l_degrees{4, 4};
   const std::vector<int> p_degrees{8};
@@ -314,7 +315,8 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
   const double u_bound = 25;
   const Eigen::RowVector2d u_vertices(-u_bound, u_bound);
   VectorX<symbolic::Polynomial> state_constraints(0);
-  ControlLyapunov dut(x, f, G, u_vertices, state_constraints);
+  ControlLyapunov dut(x, f, G, std::nullopt /* dynamics denominator */,
+                      u_vertices, state_constraints);
 
   auto context = pendulum.CreateDefaultContext();
   context->SetContinuousState(Eigen::Vector2d(theta_des, 0));

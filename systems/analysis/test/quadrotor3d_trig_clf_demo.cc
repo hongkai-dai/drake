@@ -116,7 +116,8 @@ void SearchWTrigDynamics() {
     V_init = Load(x_set, "quadrotor3d_trig_clf_regional.txt");
   }
 
-  const ControlLyapunov dut(x, f, G, u_vertices, state_constraints);
+  const ControlLyapunov dut(x, f, G, std::nullopt /* dynamics denominator */,
+                            u_vertices, state_constraints);
   const int lambda0_degree = 2;
   const std::vector<int> l_degrees(16, 2);
   const std::vector<int> p_degrees{{4}};

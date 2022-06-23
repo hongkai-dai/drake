@@ -164,7 +164,8 @@ struct Quadrotor {
 
   VectorX<symbolic::Polynomial> state_constraints(0);
 
-  ControlLyapunov dut(x, f, G, u_vertices, state_constraints);
+  ControlLyapunov dut(x, f, G, std::nullopt /* dynamics denominator */,
+                      u_vertices, state_constraints);
   const double deriv_eps = 0.2;
   *deriv_eps_sol = deriv_eps;
   const int lambda0_degree = 2;

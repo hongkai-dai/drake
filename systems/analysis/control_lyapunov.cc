@@ -98,12 +98,15 @@ ControlLyapunov::ControlLyapunov(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
     const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
     const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
+    const std::optional<symbolic::Polynomial>& dynamics_denominator,
     const Eigen::Ref<const Eigen::MatrixXd>& u_vertices,
     const Eigen::Ref<const VectorX<symbolic::Polynomial>>& state_constraints)
     : x_{x},
       x_set_{x_},
       f_{f},
       G_{G},
+      dynamics_denominator_{
+          dynamics_denominator.value_or(symbolic::Polynomial(1))},
       u_vertices_{u_vertices},
       state_constraints_{state_constraints} {
   DRAKE_ASSERT(f.rows() == G.rows());
@@ -131,10 +134,11 @@ void ControlLyapunov::AddControlLyapunovConstraint(
     x_square_map.emplace(symbolic::Monomial(x(i), 2), 1);
   }
   const symbolic::Polynomial x_square{x_square_map};
-  *vdot_poly = (1 + lambda0) * x_square * (V - 1);
+  *vdot_poly = (1 + lambda0) * x_square * (V - 1) * dynamics_denominator_;
   const RowVectorX<symbolic::Polynomial> dVdx = V.Jacobian(x);
   const symbolic::Polynomial dVdx_times_f = dVdx.dot(f_);
-  *vdot_poly -= l.sum() * (dVdx_times_f + deriv_eps * V);
+  *vdot_poly -=
+      l.sum() * (dVdx_times_f + deriv_eps * V * dynamics_denominator_);
   *vdot_poly -= (dVdx * G_ * u_vertices).dot(l);
   if (state_constraints_.rows() > 0) {
     *vdot_poly -= p.dot(state_constraints_);
@@ -234,10 +238,12 @@ ControlLyapunov::ConstructLagrangianProgram(
       pow(x_.cast<symbolic::Expression>().dot(x_), d_degree));
   const RowVectorX<symbolic::Polynomial> dVdx = V.Jacobian(x_);
   const RowVectorX<symbolic::Polynomial> dVdx_times_G = dVdx * G_;
-  *vdot_sos = (symbolic::Polynomial(1) + lambda0) * x_square_power *
-                  (V - symbolic::Polynomial({{symbolic::Monomial(), *rho}})) -
-              l->sum() * (dVdx.dot(f_) + deriv_eps * V) -
-              l->dot(dVdx_times_G * u_vertices_) - p->dot(state_constraints_);
+  *vdot_sos =
+      (symbolic::Polynomial(1) + lambda0) * x_square_power *
+          (V - symbolic::Polynomial({{symbolic::Monomial(), *rho}})) *
+          dynamics_denominator_ -
+      l->sum() * (dVdx.dot(f_) + deriv_eps * V * dynamics_denominator_) -
+      l->dot(dVdx_times_G * u_vertices_) - p->dot(state_constraints_);
   std::tie(*vdot_gram, *vdot_monomials) = prog->AddSosConstraint(*vdot_sos);
   prog->AddLinearCost(-Vector1d::Ones(), 0, Vector1<symbolic::Variable>(rho));
   return prog;

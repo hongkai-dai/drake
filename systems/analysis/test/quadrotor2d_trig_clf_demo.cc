@@ -330,7 +330,8 @@ void ValidateTrigClfInit(
   }
   //{ ValidateLQRasLyapunov(); }
 
-  const ControlLyapunov dut(x, f, G, u_vertices, state_constraints);
+  const ControlLyapunov dut(x, f, G, std::nullopt /* dynamics denominator */,
+                            u_vertices, state_constraints);
   const int lambda0_degree = 0;
   const std::vector<int> l_degrees{{2, 2, 2, 2}};
   const std::vector<int> p_degrees{{4}};

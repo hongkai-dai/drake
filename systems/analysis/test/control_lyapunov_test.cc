@@ -831,7 +831,8 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunov) {
   InitializeWithLQR(symmetric_dynamics, &V, &f, &G);
   V *= 0.1;
   VectorX<symbolic::Polynomial> state_constraints(0);
-  ControlLyapunov dut(x_, f, G, u_vertices_, state_constraints);
+  ControlLyapunov dut(x_, f, G, std::nullopt /* dynamics_denominator */,
+                      u_vertices_, state_constraints);
   const int lambda0_degree = 0;
   const std::vector<int> l_degrees = {2, 2, 2, 2};
   const std::vector<int> p_degrees = {};
@@ -953,7 +954,8 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovConstructLagrangianProgram) {
   InitializeWithLQR(symmetric_dynamics, &V, &f, &G);
   V *= 0.1;
   VectorX<symbolic::Polynomial> state_constraints(0);
-  ControlLyapunov dut(x_, f, G, u_vertices_, state_constraints);
+  ControlLyapunov dut(x_, f, G, std::nullopt /* dynamics denominator */,
+                      u_vertices_, state_constraints);
   const symbolic::Polynomial lambda0(1);
   const int d_degree = 1;
   const std::vector<int> l_degrees{2, 2, 2, 2};

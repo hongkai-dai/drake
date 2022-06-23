@@ -118,7 +118,8 @@ const double kInf = std::numeric_limits<double>::infinity();
                 0, thrust_max, 0, thrust_max;
     // clang-format on
     VectorX<symbolic::Polynomial> state_constraints(0);
-    ControlLyapunov dut(x, f, G, u_vertices, state_constraints);
+    ControlLyapunov dut(x, f, G, std::nullopt /* dynamics denominator */,
+                        u_vertices, state_constraints);
     {
       const symbolic::Polynomial lambda0{};
       const int d_degree = 2;

@@ -48,6 +48,9 @@ class ControlLyapunov {
   /**
    * @param f The dynamics of the system is ẋ = f(x) + G(x)u
    * @param G The dynamics of the system is ẋ = f(x) + G(x)u
+   * @param dynamics_denominator If not nullopt, then the dynamics is ẋ =
+   * f(x)/d(x) + G(x)/d(x) * u where d(x) = dynamics_denominator; otherwise d(x)
+   * = 1.
    * @param u_vertices An nᵤ * K matrix. u_vertices.col(i) is the i'th vertex
    * of the polytope as the bounds on the control action.
    * @param state_constraints The additional equality constraints on the system
@@ -58,6 +61,7 @@ class ControlLyapunov {
       const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
       const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
       const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
+      const std::optional<symbolic::Polynomial>& dynamics_denominator,
       const Eigen::Ref<const Eigen::MatrixXd>& u_vertices,
       const Eigen::Ref<const VectorX<symbolic::Polynomial>>& state_constraints);
 
@@ -256,6 +260,7 @@ class ControlLyapunov {
   symbolic::Variables x_set_;
   VectorX<symbolic::Polynomial> f_;
   MatrixX<symbolic::Polynomial> G_;
+  symbolic::Polynomial dynamics_denominator_;
   Eigen::MatrixXd u_vertices_;
   VectorX<symbolic::Polynomial> state_constraints_;
 };

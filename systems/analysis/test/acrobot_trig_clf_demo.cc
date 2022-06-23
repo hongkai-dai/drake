@@ -99,6 +99,88 @@ void SearchWTrigDynamics() {
   }
   const int V_degree = 4;
   symbolic::Polynomial V_init = FindClfInit(parameters, V_degree, x);
+  V_init = V_init.RemoveTermsWithSmallCoefficients(1E-5);
+
+  Vector6<symbolic::Polynomial> f;
+  Vector6<symbolic::Polynomial> G;
+  symbolic::Polynomial dynamics_denominator;
+  TrigPolyDynamics(parameters, x, &f, &G, &dynamics_denominator);
+  const Vector2<symbolic::Polynomial> state_constraints = StateEqConstraints(x);
+
+  // Arbitrary maximal joint torque.
+  const double u_max = 5;
+  const Eigen::RowVector2d u_vertices(-u_max, u_max);
+  const ControlLyapunov dut(x, f, G, dynamics_denominator, u_vertices,
+                            state_constraints);
+
+  const int lambda0_degree = 0;
+  const std::vector<int> l_degrees{{2, 2}};
+  const std::vector<int> p_degrees{{6, 6}};
+  symbolic::Polynomial lambda0;
+  VectorX<symbolic::Polynomial> l;
+  VectorX<symbolic::Polynomial> p;
+  const double deriv_eps = 0.01;
+  {
+    // Now maximize rho to prove V(x)<=rho is an ROA
+    std::vector<MatrixX<symbolic::Variable>> l_grams;
+    symbolic::Variable rho_var;
+    symbolic::Polynomial vdot_sos;
+    VectorX<symbolic::Monomial> vdot_monomials;
+    MatrixX<symbolic::Variable> vdot_gram;
+    const int d_degree = lambda0_degree / 2 + 1;
+    auto prog = dut.ConstructLagrangianProgram(
+        V_init, symbolic::Polynomial(), d_degree, l_degrees, p_degrees,
+        deriv_eps, &l, &l_grams, &p, &rho_var, &vdot_sos, &vdot_monomials,
+        &vdot_gram);
+    solvers::SolverOptions solver_options;
+    solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
+    drake::log()->info("Maximize rho for the initial Clf");
+    const auto result = solvers::Solve(*prog, std::nullopt, solver_options);
+    DRAKE_DEMAND(result.is_success());
+    const double rho_sol = result.GetSolution(rho_var);
+    std::cout << fmt::format("V_init(x) <= {}\n", rho_sol);
+    V_init = V_init / rho_sol;
+  }
+  symbolic::Polynomial V_sol;
+  {
+    ControlLyapunov::SearchOptions search_options;
+    search_options.rho_converge_tol = 0.;
+    search_options.bilinear_iterations = 10;
+    search_options.backoff_scale = 0.01;
+    search_options.lsol_tiny_coeff_tol = 1E-8;
+    search_options.lyap_tiny_coeff_tol = 1E-8;
+    search_options.lagrangian_step_solver_options = solvers::SolverOptions();
+    search_options.lagrangian_step_solver_options->SetOption(
+        solvers::CommonSolverOption::kPrintToConsole, 1);
+    search_options.lyap_step_solver_options = solvers::SolverOptions();
+    search_options.lyap_step_solver_options->SetOption(
+        solvers::CommonSolverOption::kPrintToConsole, 1);
+    Eigen::MatrixXd state_samples(4, 1);
+    state_samples.col(0) << 0, 0, 0, 0;
+    Eigen::MatrixXd x_samples(6, state_samples.cols());
+    for (int i = 0; i < state_samples.cols(); ++i) {
+      x_samples.col(i) = ToTrigState<double>(state_samples.col(i));
+    }
+    std::cout << "x_samples:\n" << x_samples.transpose() << "\n";
+
+    const double positivity_eps = 0.0001;
+    const int positivity_d = V_degree / 2;
+    const std::vector<int> positivity_eq_lagrangian_degrees{{V_degree - 2}};
+    VectorX<symbolic::Polynomial> positivity_eq_lagrangian;
+    symbolic::Polynomial lambda0_sol;
+    VectorX<symbolic::Polynomial> l_sol;
+    VectorX<symbolic::Polynomial> p_sol;
+    const bool minimize_max = true;
+    std::cout << "V_init(x_samples): "
+              << V_init.EvaluateIndeterminates(x, x_samples).transpose()
+              << "\n";
+    dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
+               positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
+               deriv_eps, x_samples, minimize_max, search_options, &V_sol,
+               &positivity_eq_lagrangian, &lambda0_sol, &l_sol, &p_sol);
+    std::cout << "V(x_samples): "
+              << V_sol.EvaluateIndeterminates(x, x_samples).transpose() << "\n";
+  }
 }
 
 int DoMain() {

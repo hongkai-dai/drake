@@ -491,6 +491,11 @@ std::unique_ptr<solvers::MathematicalProgram> FindCandidateRegionalLyapunov(
       positivity_ceq_lagrangian->dot(state_eq_constraints);
   prog->AddSosConstraint(*positivity_sos_condition);
 
+  // The condition is -Vdot - ε2 * V + q1(x) * cin(x) - q2(x) * ceq(x) is sos
+  // Since Vdot = dVdx * dynamics / dynamics_denominator,
+  // We write this condition as
+  // -dVdx * dynamics - ε2 * V * d(x) + q1(x) * cin(x) * d(x) - q2(x) * ceq(x)
+  // is sos where d(x) = dynamics_denominator.
   const symbolic::Polynomial Vdot = V->Jacobian(x).dot(dynamics);
   const symbolic::Polynomial dynamics_denominator_val =
       dynamics_denominator.value_or(symbolic::Polynomial(1));
@@ -510,8 +515,7 @@ std::unique_ptr<solvers::MathematicalProgram> FindCandidateRegionalLyapunov(
         prog->NewFreePolynomial(x_set, derivative_ceq_lagrangian_degrees[i]);
   }
   *derivative_sos_condition -=
-      derivative_ceq_lagrangian->dot(state_eq_constraints) *
-      dynamics_denominator_val;
+      derivative_ceq_lagrangian->dot(state_eq_constraints);
   prog->AddSosConstraint(*derivative_sos_condition);
 
   return prog;

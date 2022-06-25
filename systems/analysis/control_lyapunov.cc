@@ -124,9 +124,10 @@ ControlLyapunov::ControlLyapunov(
 void ControlLyapunov::AddControlLyapunovConstraint(
     solvers::MathematicalProgram* prog, const VectorX<symbolic::Variable>& x,
     const symbolic::Polynomial& lambda0, const VectorX<symbolic::Polynomial>& l,
-    const symbolic::Polynomial& V, const Eigen::MatrixXd& u_vertices,
-    double deriv_eps, const VectorX<symbolic::Polynomial>& p,
-    symbolic::Polynomial* vdot_poly, VectorX<symbolic::Monomial>* monomials,
+    const symbolic::Polynomial& V, double rho,
+    const Eigen::MatrixXd& u_vertices, double deriv_eps,
+    const VectorX<symbolic::Polynomial>& p, symbolic::Polynomial* vdot_poly,
+    VectorX<symbolic::Monomial>* monomials,
     MatrixX<symbolic::Variable>* gram) const {
   // First compute the polynomial xᵀx
   symbolic::Polynomial::MapType x_square_map;
@@ -134,7 +135,7 @@ void ControlLyapunov::AddControlLyapunovConstraint(
     x_square_map.emplace(symbolic::Monomial(x(i), 2), 1);
   }
   const symbolic::Polynomial x_square{x_square_map};
-  *vdot_poly = (1 + lambda0) * x_square * (V - 1) * dynamics_denominator_;
+  *vdot_poly = (1 + lambda0) * x_square * (V - rho) * dynamics_denominator_;
   const RowVectorX<symbolic::Polynomial> dVdx = V.Jacobian(x);
   const symbolic::Polynomial dVdx_times_f = dVdx.dot(f_);
   *vdot_poly -=
@@ -161,10 +162,10 @@ void ControlLyapunov::AddControlLyapunovConstraint(
 
 std::unique_ptr<solvers::MathematicalProgram>
 ControlLyapunov::ConstructLagrangianProgram(
-    const symbolic::Polynomial& V, double deriv_eps, int lambda0_degree,
-    const std::vector<int>& l_degrees, const std::vector<int>& p_degrees,
-    symbolic::Polynomial* lambda0, MatrixX<symbolic::Variable>* lambda0_gram,
-    VectorX<symbolic::Polynomial>* l,
+    const symbolic::Polynomial& V, double rho, double deriv_eps,
+    int lambda0_degree, const std::vector<int>& l_degrees,
+    const std::vector<int>& p_degrees, symbolic::Polynomial* lambda0,
+    MatrixX<symbolic::Variable>* lambda0_gram, VectorX<symbolic::Polynomial>* l,
     std::vector<MatrixX<symbolic::Variable>>* l_grams,
     VectorX<symbolic::Polynomial>* p, symbolic::Polynomial* vdot_sos,
     VectorX<symbolic::Monomial>* vdot_monomials,
@@ -197,7 +198,7 @@ ControlLyapunov::ConstructLagrangianProgram(
   for (int i = 0; i < p->rows(); ++i) {
     (*p)(i) = prog->NewFreePolynomial(x_set_, p_degrees[i], "P");
   }
-  this->AddControlLyapunovConstraint(prog.get(), x_, *lambda0, *l, V,
+  this->AddControlLyapunovConstraint(prog.get(), x_, *lambda0, *l, V, rho,
                                      u_vertices_, deriv_eps, *p, vdot_sos,
                                      vdot_monomials, vdot_gram);
   return prog;
@@ -252,7 +253,7 @@ ControlLyapunov::ConstructLagrangianProgram(
 std::unique_ptr<solvers::MathematicalProgram>
 ControlLyapunov::ConstructLyapunovProgram(
     const symbolic::Polynomial& lambda0, const VectorX<symbolic::Polynomial>& l,
-    int V_degree, double positivity_eps, int positivity_d,
+    int V_degree, double rho, double positivity_eps, int positivity_d,
     const std::vector<int>& positivity_eq_lagrangian_degrees,
     const std::vector<int>& p_degrees, double deriv_eps,
     symbolic::Polynomial* V,
@@ -308,14 +309,14 @@ ControlLyapunov::ConstructLyapunovProgram(
   for (int i = 0; i < p->rows(); ++i) {
     (*p)(i) = prog->NewFreePolynomial(x_set_, p_degrees[i], "P");
   }
-  this->AddControlLyapunovConstraint(prog.get(), x_, lambda0, l, *V,
+  this->AddControlLyapunovConstraint(prog.get(), x_, lambda0, l, *V, rho,
                                      u_vertices_, deriv_eps, *p, &vdot_poly,
                                      &vdot_monomials, &vdot_gram);
   return prog;
 }
 
 bool ControlLyapunov::SearchLagrangian(
-    const symbolic::Polynomial& V, int lambda0_degree,
+    const symbolic::Polynomial& V, double rho, int lambda0_degree,
     const std::vector<int>& l_degrees, const std::vector<int>& p_degrees,
     double deriv_eps, const ControlLyapunov::SearchOptions& search_options,
     symbolic::Polynomial* lambda0_sol, VectorX<symbolic::Polynomial>* l_sol,
@@ -329,7 +330,7 @@ bool ControlLyapunov::SearchLagrangian(
   VectorX<symbolic::Monomial> vdot_monomials;
   MatrixX<symbolic::Variable> vdot_gram;
   auto prog_lagrangian = this->ConstructLagrangianProgram(
-      V, deriv_eps, lambda0_degree, l_degrees, p_degrees, &lambda0,
+      V, rho, deriv_eps, lambda0_degree, l_degrees, p_degrees, &lambda0,
       &lambda0_gram, &l, &l_grams, &p, &vdot_sos, &vdot_monomials, &vdot_gram);
   RemoveTinyCoeff(prog_lagrangian.get(),
                   search_options.lagrangian_tiny_coeff_tol);
@@ -393,9 +394,9 @@ void ControlLyapunov::Search(
       }
     }
 
-    const bool found_lagrangian =
-        SearchLagrangian(*V_sol, lambda0_degree, l_degrees, p_degrees,
-                         deriv_eps, search_options, lambda0_sol, l_sol, p_sol);
+    const bool found_lagrangian = SearchLagrangian(
+        *V_sol, search_options.rho, lambda0_degree, l_degrees, p_degrees,
+        deriv_eps, search_options, lambda0_sol, l_sol, p_sol);
     if (!found_lagrangian) {
       return;
     }
@@ -407,9 +408,9 @@ void ControlLyapunov::Search(
       VectorX<symbolic::Polynomial> positivity_eq_lagrangian;
       VectorX<symbolic::Polynomial> p;
       auto prog_lyapunov = this->ConstructLyapunovProgram(
-          *lambda0_sol, *l_sol, V_degree, positivity_eps, positivity_d,
-          positivity_eq_lagrangian_degrees, p_degrees, deriv_eps, &V_search,
-          &positivity_eq_lagrangian, &p);
+          *lambda0_sol, *l_sol, V_degree, search_options.rho, positivity_eps,
+          positivity_d, positivity_eq_lagrangian_degrees, p_degrees, deriv_eps,
+          &V_search, &positivity_eq_lagrangian, &p);
       const auto d = prog_lyapunov->NewContinuousVariables<1>("d");
       symbolic::Polynomial r;
       VectorX<symbolic::Polynomial> c_lagrangian;
@@ -432,6 +433,9 @@ void ControlLyapunov::Search(
         if (search_options.Vsol_tiny_coeff_tol > 0) {
           *V_sol = V_sol->RemoveTermsWithSmallCoefficients(
               search_options.Vsol_tiny_coeff_tol);
+        }
+        if (search_options.save_clf_file.has_value()) {
+          Save(*V_sol, search_options.save_clf_file.value());
         }
         GetPolynomialSolutions(result_lyapunov, p,
                                search_options.lsol_tiny_coeff_tol, p_sol);
@@ -467,9 +471,9 @@ void ControlLyapunov::Search(
   *V_sol = V_init;
   while (iter_count < search_options.bilinear_iterations) {
     drake::log()->info("Iteration {}", iter_count);
-    const bool found_lagrangian =
-        SearchLagrangian(*V_sol, lambda0_degree, l_degrees, p_degrees,
-                         deriv_eps, search_options, lambda0_sol, l_sol, p_sol);
+    const bool found_lagrangian = SearchLagrangian(
+        *V_sol, search_options.rho, lambda0_degree, l_degrees, p_degrees,
+        deriv_eps, search_options, lambda0_sol, l_sol, p_sol);
     if (!found_lagrangian) {
       return;
     }
@@ -480,9 +484,9 @@ void ControlLyapunov::Search(
       VectorX<symbolic::Polynomial> positivity_eq_lagrangian;
       VectorX<symbolic::Polynomial> p;
       auto prog_lyapunov = this->ConstructLyapunovProgram(
-          *lambda0_sol, *l_sol, V_degree, positivity_eps, positivity_d,
-          positivity_eq_lagrangian_degrees, p_degrees, deriv_eps, &V_search,
-          &positivity_eq_lagrangian, &p);
+          *lambda0_sol, *l_sol, V_degree, search_options.rho, positivity_eps,
+          positivity_d, positivity_eq_lagrangian_degrees, p_degrees, deriv_eps,
+          &V_search, &positivity_eq_lagrangian, &p);
       // Evaluate V at x_samples.
       Eigen::MatrixXd A_coeff_samples;
       VectorX<symbolic::Variable> decision_variables_samples;
@@ -522,6 +526,9 @@ void ControlLyapunov::Search(
         if (search_options.Vsol_tiny_coeff_tol > 0) {
           *V_sol = V_sol->RemoveTermsWithSmallCoefficients(
               search_options.Vsol_tiny_coeff_tol);
+        }
+        if (search_options.save_clf_file.has_value()) {
+          Save(*V_sol, search_options.save_clf_file.value());
         }
         GetPolynomialSolutions(result_lyapunov, positivity_eq_lagrangian,
                                search_options.lsol_tiny_coeff_tol,

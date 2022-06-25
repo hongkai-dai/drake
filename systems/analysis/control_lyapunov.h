@@ -19,12 +19,12 @@ namespace analysis {
  *
  *     V(x) > 0 ∀ x ≠ 0                                     (1)
  *     V(0) = 0                                             (2)
- *     ∀ x satisfying V(x) ≤ 1, ∃ u ∈ P s.t V̇ < 0            (3)
+ *     ∀ x satisfying V(x) ≤ ρ, ∃ u ∈ P s.t V̇ < 0            (3)
  *
- * These conditions prove that the sublevel set V(x) ≤ 1 is a region of
+ * These conditions prove that the sublevel set V(x) ≤ ρ is a region of
  * attraction, that starting from any state within this ROA, there exists
  * control actions that can stabilize the system to x*. In other word, we want
- * to prove the condition that minᵤ V̇ ≥ −εV ⇒ V≥1 or x = 0 Note that V̇(x, u) =
+ * to prove the condition that minᵤ V̇ ≥ −εV ⇒ V≥ρ or x = 0 Note that V̇(x, u) =
  * ∂V/∂x*f(x)+∂V/∂x*G(x)u. As we assumed that the bounds on the input u is a
  * polytope P. If we write the vertices of P as uᵢ, i = 1, ..., N, since V̇ is a
  * linear function of u, the minimal of min V̇, subject to u ∈ P is obtained in
@@ -37,7 +37,7 @@ namespace analysis {
  * Using s-procedure, the condition we want to prove is that
  * V(x) >= 0
  * V(0) = 0
- * (1+λ(x))xᵀx(V−1) − ∑ᵢ lᵢ(x)(∂V/∂x*f(x)+∂V/∂x*G(x)uᵢ+εV) >= 0
+ * (1+λ(x))xᵀx(V−ρ) − ∑ᵢ lᵢ(x)(∂V/∂x*f(x)+∂V/∂x*G(x)uᵢ+εV) >= 0
  * λ(x), lᵢ(x) >= 0
  * We will search for such V, λ(x), lᵢ(x) through bilinear alternation.
  */
@@ -67,7 +67,7 @@ class ControlLyapunov {
 
   /**
    * A helper function to add the constraint
-   * (1+λ₀(x))xᵀx(V−1) − ∑ᵢ lᵢ(x)*(∂V/∂x*f(x)+ε*V + ∂V/∂x*G(x)*uᵢ)-p(x)ᵀc(x) is
+   * (1+λ₀(x))xᵀx(V−ρ) − ∑ᵢ lᵢ(x)*(∂V/∂x*f(x)+ε*V + ∂V/∂x*G(x)*uᵢ)-p(x)ᵀc(x) is
    * sos. where c(x) is state_constraint, p(x) is its Lagrangian multipliers.
    * @param[out] monomials The monomial basis of this sos constraint.
    * @param[out] gram The Gram matrix of this sos constraint.
@@ -76,7 +76,7 @@ class ControlLyapunov {
       solvers::MathematicalProgram* prog, const VectorX<symbolic::Variable>& x,
       const symbolic::Polynomial& lambda0,
       const VectorX<symbolic::Polynomial>& l, const symbolic::Polynomial& V,
-      const Eigen::MatrixXd& u_vertices, double deriv_eps,
+      double rho, const Eigen::MatrixXd& u_vertices, double deriv_eps,
       const VectorX<symbolic::Polynomial>& p, symbolic::Polynomial* vdot_poly,
       VectorX<symbolic::Monomial>* monomials,
       MatrixX<symbolic::Variable>* gram) const;
@@ -86,7 +86,7 @@ class ControlLyapunov {
    * to search for the Lagrangians.
    * <pre>
    * find λ₀(x), l(x), p(x)
-   * s.t (1+λ₀(x))xᵀx(V−1) − ∑ᵢlᵢ(x)*(∂V/∂x*f(x)+ε*V+∂V/∂x*G(x)*sᵢ)
+   * s.t (1+λ₀(x))xᵀx(V−ρ) − ∑ᵢlᵢ(x)*(∂V/∂x*f(x)+ε*V+∂V/∂x*G(x)*sᵢ)
    *             - p(x)ᵀc(x) is sos
    *      λ₀(x), l(x) is sos
    * </pre>
@@ -94,9 +94,10 @@ class ControlLyapunov {
    * constraint).
    */
   std::unique_ptr<solvers::MathematicalProgram> ConstructLagrangianProgram(
-      const symbolic::Polynomial& V, double deriv_eps, int lambda0_degree,
-      const std::vector<int>& l_degrees, const std::vector<int>& p_degrees,
-      symbolic::Polynomial* lambda0, MatrixX<symbolic::Variable>* lambda0_gram,
+      const symbolic::Polynomial& V, double rho, double deriv_eps,
+      int lambda0_degree, const std::vector<int>& l_degrees,
+      const std::vector<int>& p_degrees, symbolic::Polynomial* lambda0,
+      MatrixX<symbolic::Variable>* lambda0_gram,
       VectorX<symbolic::Polynomial>* l,
       std::vector<MatrixX<symbolic::Variable>>* l_grams,
       VectorX<symbolic::Polynomial>* p, symbolic::Polynomial* vdot_sos,
@@ -125,18 +126,18 @@ class ControlLyapunov {
       MatrixX<symbolic::Variable>* vdot_gram) const;
 
   /**
-   * Given λ₀(x) and l(x), construct a methematical program
+   * Given λ₀(x) and l(x), construct a mathematical program
    * <pre>
    * find V(x), q(x), p(x)
    * V - ε₁*(xᵀx)ᵈ¹ - q(x) * c(x) is sos
-   * (1+λ₀(x))(xᵀx)ᵈ²(V(x) − 1) − ∑ᵢ lᵢ(x)(∂V/∂x*f(x) + ε₂*V+∂V/∂xG(x)uⁱ)
+   * (1+λ₀(x))(xᵀx)ᵈ²(V(x) − ρ) − ∑ᵢ lᵢ(x)(∂V/∂x*f(x) + ε₂*V+∂V/∂xG(x)uⁱ)
    *              - p(x)ᵀc(x)is sos.
    * </pre>
    * @param[out] positivity_eq_lagrangian q(x) in the documentation above.
    */
   std::unique_ptr<solvers::MathematicalProgram> ConstructLyapunovProgram(
       const symbolic::Polynomial& lambda0,
-      const VectorX<symbolic::Polynomial>& l, int V_degree,
+      const VectorX<symbolic::Polynomial>& l, int V_degree, double rho,
       double positivity_eps, int positivity_d,
       const std::vector<int>& positivity_eq_lagrangian_degrees,
       const std::vector<int>& p_degrees, double deriv_eps,
@@ -170,6 +171,11 @@ class ControlLyapunov {
     // remove terms in the polynomial with tiny coefficients.
     double Vsol_tiny_coeff_tol = 0;
     double lsol_tiny_coeff_tol = 0;
+
+    double rho = {1.};
+
+    // Name of the txt file to store the clf in each iteration of Search().
+    std::optional<std::string> save_clf_file;
   };
 
   /**
@@ -217,7 +223,7 @@ class ControlLyapunov {
    * The constraints are
    * <pre>
    * V - ε₁*(xᵀx)ᵈ¹ - r(x) * c(x) is sos
-   * (1+λ₀(x))(xᵀx)ᵈ²(V(x) − 1) − ∑ᵢ lᵢ(x)(∂V/∂x*f(x) + ε₂*V+∂V/∂xG(x)uⁱ)
+   * (1+λ₀(x))(xᵀx)ᵈ²(V(x) − ρ) − ∑ᵢ lᵢ(x)(∂V/∂x*f(x) + ε₂*V+∂V/∂xG(x)uⁱ)
    *              - p(x)ᵀc(x)is sos.
    * </pre>
    * @param positivity_eps ε₁ in the documentation above.
@@ -248,8 +254,8 @@ class ControlLyapunov {
   }
 
  private:
-  bool SearchLagrangian(const symbolic::Polynomial& V, int lambda0_degree,
-                        const std::vector<int>& l_degrees,
+  bool SearchLagrangian(const symbolic::Polynomial& V, double rho,
+                        int lambda0_degree, const std::vector<int>& l_degrees,
                         const std::vector<int>& p_degrees, double deriv_eps,
                         const SearchOptions& search_options,
                         symbolic::Polynomial* lambda0,

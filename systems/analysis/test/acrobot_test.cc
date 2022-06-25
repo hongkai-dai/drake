@@ -8,6 +8,9 @@ namespace drake {
 namespace systems {
 namespace analysis {
 GTEST_TEST(Acrobot, DynamicsTest) {
+  EXPECT_TRUE(
+      CompareMatrices(ToTrigState<double>(Eigen::Vector4d(M_PI, 0, 0, 0)),
+                      Vector6d::Zero(), 1E-12));
   examples::acrobot::AcrobotPlant<double> plant;
   auto context = plant.CreateDefaultContext();
   const auto& p = plant.get_parameters(*context);
@@ -31,8 +34,8 @@ GTEST_TEST(Acrobot, DynamicsTest) {
   const Eigen::Vector4d xdot_orig =
       plant.EvalTimeDerivatives(*context).CopyToVector();
   Vector6d x_trig_dot_expected;
-  x_trig_dot_expected(0) = std::cos(x_orig(0)) * x_orig(2);
-  x_trig_dot_expected(1) = -std::sin(x_orig(0)) * x_orig(2);
+  x_trig_dot_expected(0) = -std::cos(x_orig(0)) * x_orig(2);
+  x_trig_dot_expected(1) = std::sin(x_orig(0)) * x_orig(2);
   x_trig_dot_expected(2) = std::cos(x_orig(1)) * x_orig(3);
   x_trig_dot_expected(3) = -std::sin(x_orig(1)) * x_orig(3);
   x_trig_dot_expected(4) = xdot_orig(2);

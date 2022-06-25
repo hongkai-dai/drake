@@ -845,8 +845,9 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunov) {
   symbolic::Polynomial vdot_sos;
   VectorX<symbolic::Monomial> vdot_monomials;
   MatrixX<symbolic::Variable> vdot_gram;
+  const double rho = 1;
   auto prog_lagrangian = dut.ConstructLagrangianProgram(
-      V, deriv_eps, lambda0_degree, l_degrees, p_degrees, &lambda0,
+      V, rho, deriv_eps, lambda0_degree, l_degrees, p_degrees, &lambda0,
       &lambda0_gram, &l, &l_grams, &p, &vdot_sos, &vdot_monomials, &vdot_gram);
   solvers::SolverOptions solver_options;
   // solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
@@ -900,7 +901,7 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunov) {
   VectorX<symbolic::Polynomial> positivity_eq_lagrangian;
   const int V_degree = V.TotalDegree();
   auto prog_lyapunov = dut.ConstructLyapunovProgram(
-      lambda0_sol, l_sol, V_degree, positivity_eps, positivity_d,
+      lambda0_sol, l_sol, V_degree, rho, positivity_eps, positivity_d,
       positivity_eq_lagrangian_degrees, p_degrees, deriv_eps, &V_new,
       &positivity_eq_lagrangian, &p);
   for (const auto& binding : prog_lyapunov->linear_equality_constraints()) {

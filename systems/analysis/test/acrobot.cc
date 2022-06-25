@@ -14,14 +14,14 @@ void TrigPolyDynamics(const examples::acrobot::AcrobotParams<double>& p,
   const Vector2<symbolic::Expression> bias =
       DynamicsBiasTerm<symbolic::Expression>(p, x_expr);
   *d = symbolic::Polynomial(M(0, 0) * M(1, 1) - M(1, 0) * M(0, 1));
-  const symbolic::Expression& s1 = x_expr(0);
+  const symbolic::Expression& s1 = -x_expr(0);
   const symbolic::Expression& s2 = x_expr(2);
-  const symbolic::Expression c1 = x(1) + 1;
+  const symbolic::Expression c1 = -x(1) - 1;
   const symbolic::Expression c2 = x(3) + 1;
   const symbolic::Expression& theta1dot = x(4);
   const symbolic::Expression& theta2dot = x(5);
-  (*f)(0) = symbolic::Polynomial(c1 * theta1dot) * (*d);
-  (*f)(1) = symbolic::Polynomial(-s1 * theta1dot) * (*d);
+  (*f)(0) = symbolic::Polynomial(-c1 * theta1dot) * (*d);
+  (*f)(1) = symbolic::Polynomial(s1 * theta1dot) * (*d);
   (*f)(2) = symbolic::Polynomial(c2 * theta2dot) * (*d);
   (*f)(3) = symbolic::Polynomial(-s2 * theta2dot) * (*d);
 

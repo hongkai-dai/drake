@@ -98,6 +98,22 @@ void TrigDynamics(const examples::acrobot::AcrobotParams<double>& p,
   *d = det_M;
 }
 
+template <typename T>
+Vector4<T> CalcQdot(const Eigen::Ref<const Vector6<T>>& x) {
+  Vector4<T> qdot;
+  const T& s1 = -x(0);
+  const T& s2 = x(2);
+  const T c1 = -x(1) - 1;
+  const T c2 = x(3) + 1;
+  const T& theta1dot = x(4);
+  const T& theta2dot = x(5);
+  qdot(0) = -c1 * theta1dot;
+  qdot(1) = s1 * theta1dot;
+  qdot(2) = c2 * theta2dot;
+  qdot(3) = -s2 * theta2dot;
+  return qdot;
+}
+
 /**
  * Write the dynamics in the affine form
  * xdot = f(x) / d(x) + G(x) / d(x) * u

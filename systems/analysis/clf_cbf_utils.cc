@@ -753,6 +753,29 @@ void CheckPolynomialsPassOrigin(const VectorX<symbolic::Polynomial>& p) {
   }
 }
 
+template <typename C>
+double SmallestCoeff(const solvers::Binding<C>& binding) {
+  double ret = kInf;
+  const Eigen::SparseMatrix<double>& A = binding.evaluator()->get_sparse_A();
+  for (int i = 0; i < A.cols(); ++i) {
+    for (Eigen::SparseMatrix<double>::InnerIterator it(A, i); it; ++it) {
+      if (std::abs(it.value()) < std::abs(ret) && it.value() != 0) {
+        ret = it.value();
+      }
+    }
+  }
+  return ret;
+}
+
+[[maybe_unused]] double SmallestCoeff(
+    const solvers::MathematicalProgram& prog) {
+  double ret = kInf;
+  for (const auto& binding : prog.linear_equality_constraints()) {
+    ret = std::min(ret, std::abs(SmallestCoeff(binding)));
+  }
+  return ret;
+}
+
 namespace internal {
 template <typename RhoType>
 symbolic::Polynomial EllipsoidPolynomial(

@@ -42,6 +42,9 @@ GTEST_TEST(Acrobot, DynamicsTest) {
   x_trig_dot_expected(5) = xdot_orig(3);
   EXPECT_TRUE(CompareMatrices(x_trig_dot, x_trig_dot_expected, 1E-12));
 
+  const Eigen::Vector4d qdot = CalcQdot<double>(x_trig);
+  EXPECT_TRUE(CompareMatrices(x_trig_dot.head<4>(), qdot, 1E-12));
+
   Vector6<symbolic::Polynomial> f;
   Vector6<symbolic::Polynomial> G;
   symbolic::Polynomial d_poly;

@@ -98,13 +98,13 @@ void AddControlLyapunovConstraint(
     solvers::MathematicalProgram* prog, const Vector6<symbolic::Variable>& x,
     const Vector4<symbolic::Polynomial>& z_poly,
     const symbolic::Polynomial& lambda0, const symbolic::Polynomial& V,
-    const Vector2<symbolic::Polynomial>& l,
+    double rho, const Vector2<symbolic::Polynomial>& l,
     const Vector4<symbolic::Polynomial>& qdot, double deriv_eps,
     const Vector6<symbolic::Polynomial>& p,
     const Vector6<symbolic::Polynomial>& state_constraints) {
   symbolic::Polynomial vdot_sos =
       (1 + lambda0) *
-      symbolic::Polynomial(x.cast<symbolic::Expression>().dot(x)) * (V - 1);
+      symbolic::Polynomial(x.cast<symbolic::Expression>().dot(x)) * (V - rho);
   const RowVector4<symbolic::Polynomial> dVdq = V.Jacobian(x.head<4>());
   vdot_sos -= l.sum() * (dVdq.dot(qdot) + deriv_eps * V);
   const RowVector2<symbolic::Polynomial> dVdv = V.Jacobian(x.tail<2>());
@@ -141,14 +141,6 @@ void SearchWImplicitTrigDynamics() {
   const Vector2<symbolic::Expression> bias_expr =
       DynamicsBiasTerm<symbolic::Expression>(parameters,
                                              x.cast<symbolic::Expression>());
-  Matrix2<symbolic::Polynomial> M;
-  Vector2<symbolic::Polynomial> bias;
-  for (int i = 0; i < 2; ++i) {
-    bias(i) = symbolic::Polynomial(bias_expr(i));
-    for (int j = 0; j < 2; ++j) {
-      M(i, j) = symbolic::Polynomial(M_expr(i, j));
-    }
-  }
   Vector6<symbolic::Polynomial> state_constraints;
   state_constraints.head<2>() = StateEqConstraints(x);
   const Vector2<symbolic::Expression> constraint_expr1 =
@@ -177,10 +169,10 @@ void SearchWImplicitTrigDynamics() {
   symbolic::Variables xz2{x};
   xz2.insert(symbolic::Variables(z.tail<2>()));
 
-  const double deriv_eps = 0.1;
-  const int lambda0_degree = 0;
+  const double deriv_eps = 0.01;
+  const int lambda0_degree = 2;
   const std::vector<int> l_degrees{{2, 2}};
-  const std::vector<int> p_degrees{{3, 3, 3, 3, 3, 3}};
+  const std::vector<int> p_degrees{{4, 4, 4, 4, 4, 4}};
   double rho_sol;
   {
     // Maximize rho
@@ -224,7 +216,7 @@ void SearchWImplicitTrigDynamics() {
 
   const int max_iters = 25;
   int iter_count = 0;
-  symbolic::Polynomial V_sol = V_init / rho_sol;
+  symbolic::Polynomial V_sol = V_init;
   while (iter_count < max_iters) {
     // Find the Lagrangian multipliers
     symbolic::Polynomial lambda0_sol;
@@ -248,8 +240,8 @@ void SearchWImplicitTrigDynamics() {
         p(i) = prog.NewFreePolynomial(xz_set, p_degrees[i],
                                       "p" + std::to_string(i));
       }
-      AddControlLyapunovConstraint(&prog, x, z_poly, lambda0, V_sol, l, qdot,
-                                   deriv_eps, p, state_constraints);
+      AddControlLyapunovConstraint(&prog, x, z_poly, lambda0, V_sol, rho_sol, l,
+                                   qdot, deriv_eps, p, state_constraints);
       solvers::SolverOptions solver_options;
       solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
       RemoveTinyCoeff(&prog, 1E-9);

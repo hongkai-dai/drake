@@ -1,11 +1,9 @@
 #pragma once
 /**
  * Define the dynamics on the trigonometric states of the acrobot.
- * The states are (-sinθ₁, -cosθ₁−1, sinθ₂, cosθ₂−1, θ₁_dot, θ₂_dot)
+ * The states are (sinθ₁, cosθ₁+1, sinθ₂, cosθ₂−1, θ₁_dot, θ₂_dot)
  * This state = 0 when θ₁=π, θ₂=0, θ₁_dot=0, θ₂_dot=0
  */
-
-#include "examples/acrobot/_virtual_includes/acrobot_input/drake/examples/acrobot/gen/acrobot_input.h"
 
 #include "drake/examples/acrobot/acrobot_plant.h"
 
@@ -18,8 +16,8 @@ Vector6<T> ToTrigState(const Eigen::Ref<const Vector4<T>>& x_orig) {
   Vector6<T> x_trig;
   using std::cos;
   using std::sin;
-  x_trig(0) = -sin(x_orig(0));
-  x_trig(1) = -cos(x_orig(0)) - 1;
+  x_trig(0) = sin(x_orig(0));
+  x_trig(1) = cos(x_orig(0)) + 1;
   x_trig(2) = sin(x_orig(1));
   x_trig(3) = cos(x_orig(1)) - 1;
   x_trig.template tail<2>() = x_orig.template tail<2>();
@@ -42,9 +40,9 @@ Matrix2<T> MassMatrix(const examples::acrobot::AcrobotParams<double>& p,
 template <typename T>
 Vector2<T> DynamicsBiasTerm(const examples::acrobot::AcrobotParams<double>& p,
                             const Eigen::Ref<const Vector6<T>>& x) {
-  const T& s1 = -x(0);
+  const T& s1 = x(0);
   const T& s2 = x(2);
-  const T c1 = -x(1) - 1;
+  const T c1 = x(1) - 1;
   const T c2 = x(3) + 1;
   const T s12 = s1 * c2 + s2 * c1;
   const T theta1dot = x(4);
@@ -72,7 +70,7 @@ Vector2<T> DynamicsBiasTerm(const examples::acrobot::AcrobotParams<double>& p,
 /**
  * Compute the dynamics as xdot = n(x, u) / d(x)
  * where x is the trigonometric state
- * (-sinθ₁, -cosθ₁−1, sinθ₂, cosθ₂−1, θ₁_dot, θ₂_dot)
+ * (sinθ₁, cosθ₁+1, sinθ₂, cosθ₂−1, θ₁_dot, θ₂_dot)
  */
 template <typename T>
 void TrigDynamics(const examples::acrobot::AcrobotParams<double>& p,
@@ -81,14 +79,14 @@ void TrigDynamics(const examples::acrobot::AcrobotParams<double>& p,
   const Matrix2<T> M = MassMatrix<T>(p, x);
   const Vector2<T> bias = DynamicsBiasTerm<T>(p, x);
   const T det_M = M(0, 0) * M(1, 1) - M(1, 0) * M(0, 1);
-  const T& s1 = -x(0);
+  const T& s1 = x(0);
   const T& s2 = x(2);
-  const T c1 = -x(1) - 1;
+  const T c1 = x(1) - 1;
   const T c2 = x(3) + 1;
   const T& theta1dot = x(4);
   const T& theta2dot = x(5);
-  (*n)(0) = -c1 * theta1dot * det_M;
-  (*n)(1) = s1 * theta1dot * det_M;
+  (*n)(0) = c1 * theta1dot * det_M;
+  (*n)(1) = -s1 * theta1dot * det_M;
   (*n)(2) = c2 * theta2dot * det_M;
   (*n)(3) = -s2 * theta2dot * det_M;
 
@@ -101,14 +99,14 @@ void TrigDynamics(const examples::acrobot::AcrobotParams<double>& p,
 template <typename T>
 Vector4<T> CalcQdot(const Eigen::Ref<const Vector6<T>>& x) {
   Vector4<T> qdot;
-  const T& s1 = -x(0);
+  const T& s1 = x(0);
   const T& s2 = x(2);
-  const T c1 = -x(1) - 1;
+  const T c1 = x(1) - 1;
   const T c2 = x(3) + 1;
   const T& theta1dot = x(4);
   const T& theta2dot = x(5);
-  qdot(0) = -c1 * theta1dot;
-  qdot(1) = s1 * theta1dot;
+  qdot(0) = c1 * theta1dot;
+  qdot(1) = -s1 * theta1dot;
   qdot(2) = c2 * theta2dot;
   qdot(3) = -s2 * theta2dot;
   return qdot;

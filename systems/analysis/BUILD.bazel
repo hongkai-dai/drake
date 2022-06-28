@@ -1071,6 +1071,45 @@ drake_cc_googletest(
 )
 
 drake_cc_library(
+    name = "cart_pole",
+    srcs = ["test/cart_pole.cc"],
+    hdrs = ["test/cart_pole.h"],
+    deps = [
+        "//common:essential",
+        "//common:symbolic",
+        "//math:gradient",
+        "//systems/controllers:linear_quadratic_regulator",
+    ],
+)
+
+drake_cc_googletest(
+    name = "cart_pole_test",
+    data = [
+        "//examples/multibody/cart_pole:models"
+    ],
+    deps = [
+        ":cart_pole",
+        "//multibody/plant",
+        "//multibody/parsing:parser",
+        "//common/test_utilities:eigen_matrix_compare",
+    ],
+)
+
+drake_cc_binary(
+    name = "cart_pole_trig_clf_demo",
+    srcs = ["test/cart_pole_trig_clf_demo.cc"],
+    deps = [
+        ":cart_pole",
+        ":control_lyapunov",
+        ":simulator",
+        ":simulator_config_functions",
+        "//math:geometric_transform",
+        "//solvers:solve",
+        "//systems/primitives:vector_log_sink",
+    ],
+)
+
+drake_cc_library(
     name = "acrobot",
     srcs = ["test/acrobot.cc"],
     hdrs = ["test/acrobot.h"],

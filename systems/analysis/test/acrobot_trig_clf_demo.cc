@@ -185,7 +185,7 @@ void SearchWTrigDynamics() {
   const Vector2<symbolic::Polynomial> state_constraints = StateEqConstraints(x);
 
   // Arbitrary maximal joint torque.
-  const double u_max = 20;
+  const double u_max = 25;
   const Eigen::RowVector2d u_vertices(-u_max, u_max);
   const ControlLyapunov dut(x, f, G, dynamics_denominator, u_vertices,
                             state_constraints);
@@ -227,7 +227,7 @@ void SearchWTrigDynamics() {
     search_options.bilinear_iterations = 10;
     search_options.backoff_scale = 0.01;
     search_options.lsol_tiny_coeff_tol = 1E-6;
-    search_options.lyap_tiny_coeff_tol = 1E-8;
+    search_options.lyap_tiny_coeff_tol = 1E-5;
     search_options.Vsol_tiny_coeff_tol = 1E-8;
     search_options.lagrangian_step_solver_options = solvers::SolverOptions();
     search_options.lagrangian_step_solver_options->SetOption(

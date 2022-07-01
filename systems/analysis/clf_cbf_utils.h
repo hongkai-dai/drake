@@ -219,6 +219,8 @@ void CheckPolynomialsPassOrigin(const VectorX<symbolic::Polynomial>& p);
 
 double SmallestCoeff(const solvers::MathematicalProgram& prog);
 
+double LargestCoeff(const solvers::MathematicalProgram& prog);
+
 namespace internal {
 /** The ellipsoid polynomial (x−x*)ᵀS(x−x*)−ρ
  */

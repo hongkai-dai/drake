@@ -124,6 +124,24 @@ void TrigPolyDynamics(const examples::acrobot::AcrobotParams<double>& p,
 
 Vector2<symbolic::Polynomial> StateEqConstraints(
     const Eigen::Ref<const Vector6<symbolic::Variable>>& x);
+
+template <typename T>
+class ToTrigStateConverter : public LeafSystem<T> {
+ public:
+  ToTrigStateConverter();
+
+  template <typename U>
+  explicit ToTrigStateConverter(const ToTrigStateConverter<U>&)
+      : ToTrigStateConverter<T>() {}
+
+  ~ToTrigStateConverter(){};
+
+ private:
+  void CalcTrigState(const Context<T>& context, BasicVector<T>* x_trig) const;
+};
 }  // namespace analysis
 }  // namespace systems
 }  // namespace drake
+
+DRAKE_DEFINE_CLASS_TEMPLATE_INSTANTIATIONS_ON_DEFAULT_SCALARS(
+    class ::drake::systems::analysis::ToTrigStateConverter)

@@ -51,7 +51,8 @@ void Simulate(const Vector2<symbolic::Variable>& x, double theta_des,
   ControlAffineDynamics(*pendulum, x, theta_des, &f, &G);
 
   auto clf_controller = builder.AddSystem<ClfController>(
-      x, f, G, clf, deriv_eps, Au, bu, u_star, Ru);
+      x, f, G, std::nullopt /* dynamics numerator */, clf, deriv_eps, Au, bu,
+      u_star, Ru);
   auto state_logger =
       LogVectorOutput(pendulum->get_state_output_port(), &builder);
   auto clf_logger = LogVectorOutput(
@@ -112,8 +113,9 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
   TrigPolyDynamics(*pendulum, x, theta_des, &f, &G);
   Vector1d u_star(0);
   auto clf_controller = builder.AddSystem<ClfController>(
-      x, f, G, clf, deriv_eps, Eigen::Vector2d(1, -1),
-      Eigen::Vector2d(u_bound, u_bound), u_star, Vector1d::Ones());
+      x, f, G, std::nullopt /* dynamics numerator */, clf, deriv_eps,
+      Eigen::Vector2d(1, -1), Eigen::Vector2d(u_bound, u_bound), u_star,
+      Vector1d::Ones());
 
   auto state_converter = builder.AddSystem<TrigStateConverter>(theta_des);
 

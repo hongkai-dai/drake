@@ -7,15 +7,11 @@
 namespace drake {
 namespace systems {
 namespace analysis {
-GTEST_TEST(Acrobot, DynamicsTest) {
-  EXPECT_TRUE(
-      CompareMatrices(ToTrigState<double>(Eigen::Vector4d(M_PI, 0, 0, 0)),
-                      Vector6d::Zero(), 1E-12));
-  examples::acrobot::AcrobotPlant<double> plant;
+
+void TestAcrobotDynamics(const examples::acrobot::AcrobotPlant<double>& plant,
+                         const Eigen::Vector4d& x_orig, const double u) {
   auto context = plant.CreateDefaultContext();
   const auto& p = plant.get_parameters(*context);
-  const Eigen::Vector4d x_orig(0.2, 1.4, -.5, 0.9);
-  const double u = 3.1;
   context->SetContinuousState(x_orig);
   plant.get_input_port().FixValue(context.get(), Vector1d(u));
   const Vector6d x_trig = ToTrigState<double>(x_orig);
@@ -57,10 +53,27 @@ GTEST_TEST(Acrobot, DynamicsTest) {
   symbolic::Environment env;
   env.insert(x_var, x_trig);
   EXPECT_NEAR(d_poly.Evaluate(env), d, 1E-12);
+  EXPECT_GT(d, 0);
   for (int i = 0; i < 6; ++i) {
     EXPECT_NEAR(f(i).Evaluate(env) / d + G(i).Evaluate(env) / d * u,
                 x_trig_dot(i), 1E-12);
   }
+
+  const Vector2<symbolic::Polynomial> state_constraints =
+      StateEqConstraints(x_var);
+  for (int i = 0; i < 2; ++i) {
+    EXPECT_NEAR(state_constraints(i).Evaluate(env), 0, 1E-12);
+  }
+}
+
+GTEST_TEST(Acrobot, DynamicsTest) {
+  EXPECT_TRUE(
+      CompareMatrices(ToTrigState<double>(Eigen::Vector4d(M_PI, 0, 0, 0)),
+                      Vector6d::Zero(), 1E-12));
+  const examples::acrobot::AcrobotPlant<double> acrobot;
+  TestAcrobotDynamics(acrobot, Eigen::Vector4d(0, 0, 0, 0), 0);
+  TestAcrobotDynamics(acrobot, Eigen::Vector4d(M_PI, 0, 0, 0), 2);
+  TestAcrobotDynamics(acrobot, Eigen::Vector4d(0.5, -0.9, 1.2, 3.1), 2);
 }
 }  // namespace analysis
 }  // namespace systems

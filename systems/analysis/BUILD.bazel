@@ -1150,14 +1150,27 @@ drake_cc_binary(
         ":control_lyapunov",
         ":simulator",
         ":simulator_config_functions",
+        "//examples/acrobot:acrobot_geometry",
+        "//geometry:meshcat_visualizer",
         "//math:geometric_transform",
         "//math:gradient",
         "//solvers:csdp_solver",
         "//solvers:solve",
         "//solvers:scs_solver",
         "//systems/controllers:linear_quadratic_regulator",
+        "//systems/framework:diagram_builder",
         "//systems/primitives:vector_log_sink",
     ],
 )
+
+drake_cc_library(
+    name = "dubins_car",
+    hdrs = ["test/dubins_car.h"],
+    srcs = ["test/dubins_car.cc"],
+    deps = [
+        "//systems/framework:leaf_system",
+    ],
+)
+
 
 add_lint_tests(enable_clang_format_lint = False)

@@ -1,5 +1,7 @@
 #include "drake/systems/analysis/test/acrobot.h"
 
+#include "drake/systems/framework/framework_common.h"
+
 namespace drake {
 namespace systems {
 namespace analysis {
@@ -44,6 +46,21 @@ Vector2<symbolic::Polynomial> StateEqConstraints(
   return Vector2<symbolic::Polynomial>(
       symbolic::Polynomial(x(0) * x(0) + x(1) * x(1) - 2 * x(1)),
       symbolic::Polynomial(x(2) * x(2) + x(3) * x(3) + 2 * x(3)));
+}
+
+template <typename T>
+ToTrigStateConverter<T>::ToTrigStateConverter()
+    : LeafSystem<T>(SystemTypeTag<ToTrigStateConverter>{}) {
+  this->DeclareInputPort("state", systems::PortDataType::kVectorValued, 4);
+  this->DeclareVectorOutputPort("x_trig", 6,
+                                &ToTrigStateConverter<T>::CalcTrigState);
+}
+
+template <typename T>
+void ToTrigStateConverter<T>::CalcTrigState(const Context<T>& context,
+                                            BasicVector<T>* x_trig) const {
+  const Vector4<T> x_orig = this->get_input_port().Eval(context);
+  x_trig->get_mutable_value() = ToTrigState<T>(x_orig);
 }
 }  // namespace analysis
 }  // namespace systems

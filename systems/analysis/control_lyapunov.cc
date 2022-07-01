@@ -313,6 +313,7 @@ bool ControlLyapunov::SearchLagrangian(
                   search_options.lagrangian_tiny_coeff_tol);
   solvers::MathematicalProgramResult result_lagrangian;
   drake::log()->info("Search Lagrangian");
+  drake::log()->info("Smallest coeff {}", SmallestCoeff(*prog_lagrangian));
   solvers::MakeSolver(search_options.lagrangian_step_solver)
       ->Solve(*prog_lagrangian, std::nullopt,
               search_options.lagrangian_step_solver_options,
@@ -539,8 +540,9 @@ VdotCalculator::VdotCalculator(
     const symbolic::Polynomial& V,
     const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
     const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
+    const std::optional<symbolic::Polynomial>& dynamics_numerator,
     const Eigen::Ref<const Eigen::MatrixXd>& u_vertices)
-    : x_{x}, u_vertices_{u_vertices} {
+    : x_{x}, dynamics_numerator_{dynamics_numerator}, u_vertices_{u_vertices} {
   DRAKE_DEMAND(u_vertices_.rows() == G.cols());
   const RowVectorX<symbolic::Polynomial> dVdx = V.Jacobian(x);
   dVdx_times_f_ = (dVdx * f)(0);
@@ -562,6 +564,11 @@ Eigen::VectorXd VdotCalculator::CalcMin(
         dVdx_times_G_(i).EvaluateIndeterminates(x_, x_vals);
   }
   ret += (dVdx_times_G_val * u_vertices_).rowwise().minCoeff();
+  if (dynamics_numerator_.has_value()) {
+    const Eigen::VectorXd numerator_val =
+        dynamics_numerator_->EvaluateIndeterminates(x_, x_vals);
+    ret = (ret.array() / numerator_val.array()).matrix();
+  }
   return ret;
 }
 
@@ -1257,6 +1264,7 @@ ClfController::ClfController(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
     const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
     const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
+    const std::optional<symbolic::Polynomial>& dynamics_numerator,
     symbolic::Polynomial V, double deriv_eps,
     const Eigen::Ref<const Eigen::MatrixXd>& Au,
     const Eigen::Ref<const Eigen::VectorXd>& bu,
@@ -1266,6 +1274,7 @@ ClfController::ClfController(
       x_{x},
       f_{f},
       G_{G},
+      dynamics_numerator_{dynamics_numerator},
       V_{std::move(V)},
       deriv_eps_{deriv_eps},
       Au_{Au},
@@ -1326,14 +1335,16 @@ void ClfController::CalcControl(const Context<double>& context,
     dVdx_times_G_val(i) = dVdx_times_G_(i).Evaluate(env);
   }
   const double V_val = V_.Evaluate(env);
-  // dVdx * G * u + dVdx * f <= -eps * V
-  prog.AddLinearConstraint(dVdx_times_G_val, -kInf,
-                           -deriv_eps_ * V_val - dVdx_times_f_val, u);
+  // dVdx * G * u + dVdx * f <= -eps * V * n(x)
+  const double dynamics_numerator_val =
+      dynamics_numerator_.has_value() ? dynamics_numerator_->Evaluate(env) : 1;
+  prog.AddLinearConstraint(
+      dVdx_times_G_val, -kInf,
+      -deriv_eps_ * V_val * dynamics_numerator_val - dVdx_times_f_val, u);
   const auto result = solvers::Solve(prog);
   if (!result.is_success()) {
-    drake::log()->error("ClfController fails at t={} with x={}",
-                        context.get_time(), x_val.transpose());
-    DRAKE_DEMAND(result.is_success());
+    drake::log()->error("ClfController fails at t={} with x={}, V={}",
+                        context.get_time(), x_val.transpose(), V_val);
   }
   const Eigen::VectorXd u_val = result.GetSolution(u);
   output->get_mutable_value() = u_val;

@@ -1,5 +1,8 @@
-#include "examples/acrobot/gen/acrobot_params.h"
+#include <iomanip>
+#include <limits>
 
+#include "drake/examples/acrobot/acrobot_geometry.h"
+#include "drake/geometry/meshcat_visualizer.h"
 #include "drake/math/autodiff_gradient.h"
 #include "drake/solvers/common_solver_option.h"
 #include "drake/solvers/csdp_solver.h"
@@ -9,12 +12,96 @@
 #include "drake/solvers/solve.h"
 #include "drake/systems/analysis/clf_cbf_utils.h"
 #include "drake/systems/analysis/control_lyapunov.h"
+#include "drake/systems/analysis/simulator.h"
+#include "drake/systems/analysis/simulator_config_functions.h"
 #include "drake/systems/analysis/test/acrobot.h"
 #include "drake/systems/controllers/linear_quadratic_regulator.h"
+#include "drake/systems/framework/diagram_builder.h"
+#include "drake/systems/primitives/vector_log_sink.h"
 
 namespace drake {
 namespace systems {
 namespace analysis {
+const double kInf = std::numeric_limits<double>::infinity();
+
+void Simulate(const examples::acrobot::AcrobotParams<double>& parameters,
+              const Vector6<symbolic::Variable>& x,
+              const symbolic::Polynomial& clf, double u_bound, double deriv_eps,
+              const Eigen::Vector4d& initial_state, double duration) {
+  systems::DiagramBuilder<double> builder;
+  auto acrobot = builder.AddSystem<examples::acrobot::AcrobotPlant<double>>();
+  auto scene_graph = builder.AddSystem<geometry::SceneGraph<double>>();
+  examples::acrobot::AcrobotGeometry::AddToBuilder(
+      &builder, acrobot->get_output_port(0), scene_graph);
+
+  auto meshcat = std::make_shared<geometry::Meshcat>();
+  geometry::MeshcatVisualizerParams meshcat_params{};
+  meshcat_params.role = geometry::Role::kIllustration;
+  auto visualizer = &geometry::MeshcatVisualizer<double>::AddToBuilder(
+      &builder, *scene_graph, meshcat, meshcat_params);
+  unused(visualizer);
+
+  const Eigen::Vector2d Au(1, -1);
+  const Eigen::Vector2d bu(u_bound, u_bound);
+  const Vector1d u_star(0);
+  const Vector1d Ru(1);
+
+  Vector6<symbolic::Polynomial> f;
+  Vector6<symbolic::Polynomial> G;
+  symbolic::Polynomial dynamics_numerator;
+  TrigPolyDynamics(parameters, x, &f, &G, &dynamics_numerator);
+
+  auto clf_controller = builder.AddSystem<ClfController>(
+      x, f, G, dynamics_numerator, clf, deriv_eps, Au, bu, u_star, Ru);
+  auto state_logger = LogVectorOutput(acrobot->get_output_port(0), &builder);
+  auto clf_logger = LogVectorOutput(
+      clf_controller->get_output_port(clf_controller->clf_output_index()),
+      &builder);
+  auto control_logger = LogVectorOutput(
+      clf_controller->get_output_port(clf_controller->control_output_index()),
+      &builder);
+  unused(control_logger);
+  auto trig_state_converter = builder.AddSystem<ToTrigStateConverter<double>>();
+  builder.Connect(acrobot->get_output_port(0),
+                  trig_state_converter->get_input_port());
+  builder.Connect(
+      trig_state_converter->get_output_port(),
+      clf_controller->get_input_port(clf_controller->x_input_index()));
+  builder.Connect(
+      clf_controller->get_output_port(clf_controller->control_output_index()),
+      acrobot->get_input_port());
+
+  symbolic::Environment env;
+  env.insert(x, ToTrigState<double>(initial_state));
+  std::cout << std::setprecision(10)
+            << "V(initial_state): " << clf.Evaluate(env) << "\n";
+
+  auto diagram = builder.Build();
+  auto context = diagram->CreateDefaultContext();
+
+  Simulator<double> simulator(*diagram);
+  // ResetIntegratorFromFlags(&simulator, "implicit_euler", 0.0002);
+  simulator.get_mutable_context().SetContinuousState(initial_state);
+  diagram->Publish(simulator.get_context());
+  std::cout << "Refresh meshcat brower and press to continue\n";
+  std::cin.get();
+
+  simulator.AdvanceTo(duration);
+  std::cout << "finish simulation\n";
+
+  std::cout << fmt::format(
+      "final state: {}, final V: {}\n",
+      state_logger->FindLog(simulator.get_context())
+          .data()
+          .rightCols<1>()
+          .transpose(),
+      clf_logger->FindLog(simulator.get_context()).data().rightCols<1>());
+  std::cout << "V: " << std::setprecision(10)
+            << clf_logger->FindLog(simulator.get_context()).data() << "\n";
+  std::cout << "u: " << control_logger->FindLog(simulator.get_context()).data()
+            << "\n";
+}
+
 controllers::LinearQuadraticRegulatorResult SynthesizeTrigLqr(
     const examples::acrobot::AcrobotParams<double>& p) {
   const Eigen::Matrix<double, 7, 1> xu_des =
@@ -94,7 +181,9 @@ symbolic::Polynomial FindClfInit(
   return V_sol;
 }
 
-void AddControlLyapunovConstraint(
+// Add the constraint (1+λ₀(x, z))xᵀx(V(x)−ρ) − l₁(x, z) * (∂V/∂q*q̇+∂V/∂v*z¹+εV)
+// + l₂(x, z)(∂V/∂q*q̇+∂V/∂v*z²+εV)−p(x, z)c(x, z) is sos
+symbolic::Polynomial AddControlLyapunovConstraint(
     solvers::MathematicalProgram* prog, const Vector6<symbolic::Variable>& x,
     const Vector4<symbolic::Polynomial>& z_poly,
     const symbolic::Polynomial& lambda0, const symbolic::Polynomial& V,
@@ -112,6 +201,7 @@ void AddControlLyapunovConstraint(
   vdot_sos -= l(1) * dVdv.dot(z_poly.tail<2>());
   vdot_sos -= p.dot(state_constraints);
   prog->AddSosConstraint(vdot_sos);
+  return vdot_sos;
 }
 
 void SearchWImplicitTrigDynamics() {
@@ -164,63 +254,64 @@ void SearchWImplicitTrigDynamics() {
     z_poly(i) = symbolic::Polynomial(z(i));
   }
   const symbolic::Variables x_set{x};
-  symbolic::Variables xz1{x};
-  xz1.insert(symbolic::Variables(z.head<2>()));
-  symbolic::Variables xz2{x};
-  xz2.insert(symbolic::Variables(z.tail<2>()));
 
-  const double deriv_eps = 0.01;
-  const int lambda0_degree = 2;
-  const std::vector<int> l_degrees{{2, 2}};
-  const std::vector<int> p_degrees{{4, 4, 4, 4, 4, 4}};
-  double rho_sol;
-  {
-    // Maximize rho
-    solvers::MathematicalProgram prog;
-    prog.AddIndeterminates(x);
-    prog.AddIndeterminates(z);
-    const int d_degree = lambda0_degree / 2 + 1;
-    const symbolic::Variable rho = prog.NewContinuousVariables<1>("rho")(0);
-    symbolic::Polynomial vdot_sos =
-        symbolic::Polynomial(
-            pow(x.cast<symbolic::Expression>().dot(x), d_degree)) *
-        (V_init - rho);
-    Vector2<symbolic::Polynomial> l;
-    const RowVector4<symbolic::Polynomial> dVdq = V_init.Jacobian(x.head<4>());
-    for (int i = 0; i < 2; ++i) {
-      std::tie(l(i), std::ignore) = prog.NewSosPolynomial(
-          xz_set, l_degrees[i],
-          solvers::MathematicalProgram::NonnegativePolynomial::kSos, "l");
-    }
-    const RowVector2<symbolic::Polynomial> dVdv = V_init.Jacobian(x.tail<2>());
-    vdot_sos -= l.sum() * (dVdq.dot(qdot) + deriv_eps * V_init);
+  const double deriv_eps = 0.1;
+  const int lambda0_degree = 0;
+  const std::vector<int> l_degrees{{0, 0}};
+  const std::vector<int> p_degrees{{2, 2, 3, 3, 3, 3}};
+  // double rho_sol;
+  //{
+  //  // Maximize rho
+  //  solvers::MathematicalProgram prog;
+  //  prog.AddIndeterminates(x);
+  //  prog.AddIndeterminates(z);
+  //  const int d_degree = lambda0_degree / 2 + 1;
+  //  const symbolic::Variable rho = prog.NewContinuousVariables<1>("rho")(0);
+  //  symbolic::Polynomial vdot_sos =
+  //      symbolic::Polynomial(
+  //          pow(x.cast<symbolic::Expression>().dot(x), d_degree)) *
+  //      (V_init - rho);
+  //  Vector2<symbolic::Polynomial> l;
+  //  const RowVector4<symbolic::Polynomial> dVdq =
+  //  V_init.Jacobian(x.head<4>()); for (int i = 0; i < 2; ++i) {
+  //    std::tie(l(i), std::ignore) = prog.NewSosPolynomial(
+  //        xz_set, l_degrees[i],
+  //        solvers::MathematicalProgram::NonnegativePolynomial::kSos, "l");
+  //  }
+  //  const RowVector2<symbolic::Polynomial> dVdv =
+  //  V_init.Jacobian(x.tail<2>()); vdot_sos -= l.sum() * (dVdq.dot(qdot) +
+  //  deriv_eps * V_init);
 
-    vdot_sos -= l(0) * (dVdv.dot(z_poly.head<2>())) +
-                l(1) * (dVdv.dot(z_poly.tail<2>()));
-    Vector6<symbolic::Polynomial> p;
-    for (int i = 0; i < 6; ++i) {
-      p(i) = prog.NewFreePolynomial(xz_set, p_degrees[i], "p");
-    }
-    vdot_sos -= p.dot(state_constraints);
-    prog.AddSosConstraint(vdot_sos);
-    prog.AddLinearCost(Vector1d(-1), 0, Vector1<symbolic::Variable>(rho));
-    RemoveTinyCoeff(&prog, 1E-8);
-    solvers::SolverOptions solver_options;
-    solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
-    std::cout << "Smallest coeff: " << SmallestCoeff(prog) << "\n";
-    const auto result = solvers::Solve(prog, std::nullopt, solver_options);
-    DRAKE_DEMAND(result.is_success());
-    rho_sol = result.GetSolution(rho);
-    std::cout << "V_init <= " << rho_sol << "\n";
-  }
+  //  vdot_sos -= l(0) * (dVdv.dot(z_poly.head<2>())) +
+  //              l(1) * (dVdv.dot(z_poly.tail<2>()));
+  //  Vector6<symbolic::Polynomial> p;
+  //  for (int i = 0; i < 6; ++i) {
+  //    p(i) = prog.NewFreePolynomial(xz_set, p_degrees[i], "p");
+  //  }
+  //  vdot_sos -= p.dot(state_constraints);
+  //  prog.AddSosConstraint(vdot_sos);
+  //  prog.AddLinearCost(Vector1d(-1), 0, Vector1<symbolic::Variable>(rho));
+  //  RemoveTinyCoeff(&prog, 1E-8);
+  //  solvers::SolverOptions solver_options;
+  //  solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
+  //  std::cout << "Smallest coeff: " << SmallestCoeff(prog) << "\n";
+  //  std::cout << "Largest coeff: " << LargestCoeff(prog) << "\n";
+  //  const auto result = solvers::Solve(prog, std::nullopt, solver_options);
+  //  DRAKE_DEMAND(result.is_success());
+  //  rho_sol = result.GetSolution(rho);
+  //  std::cout << "V_init <= " << rho_sol << "\n";
+  //}
 
-  const int max_iters = 25;
+  const int max_iters = 1;
   int iter_count = 0;
   symbolic::Polynomial V_sol = V_init;
-  while (iter_count < max_iters) {
-    // Find the Lagrangian multipliers
+  const double rho = 0.05;
     symbolic::Polynomial lambda0_sol;
     Vector2<symbolic::Polynomial> l_sol;
+    Vector6<symbolic::Polynomial> p_sol;
+    symbolic::Polynomial vdot_sos_sol;
+  while (iter_count < max_iters) {
+    // Find the Lagrangian multipliers
     {
       solvers::MathematicalProgram prog;
       prog.AddIndeterminates(x);
@@ -240,25 +331,170 @@ void SearchWImplicitTrigDynamics() {
         p(i) = prog.NewFreePolynomial(xz_set, p_degrees[i],
                                       "p" + std::to_string(i));
       }
-      AddControlLyapunovConstraint(&prog, x, z_poly, lambda0, V_sol, rho_sol, l,
+      AddControlLyapunovConstraint(&prog, x, z_poly, lambda0, V_sol, rho, l,
                                    qdot, deriv_eps, p, state_constraints);
       solvers::SolverOptions solver_options;
       solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
       RemoveTinyCoeff(&prog, 1E-9);
       std::cout << "Smallest coeff in Lagrangian program: "
                 << SmallestCoeff(prog) << "\n";
+      std::cout << "Largest coeff in Lagrangian program: " << LargestCoeff(prog)
+                << "\n";
       const auto result = solvers::Solve(prog, std::nullopt, solver_options);
       if (result.is_success()) {
         lambda0_sol = result.GetSolution(lambda0);
+        const double lsol_tol = 5E-5;
+        lambda0_sol = lambda0_sol.RemoveTermsWithSmallCoefficients(lsol_tol);
         for (int i = 0; i < 2; ++i) {
           l_sol(i) = result.GetSolution(l(i));
+          l_sol(i) = l_sol(i).RemoveTermsWithSmallCoefficients(lsol_tol);
         }
       } else {
         drake::log()->error("Failed to find Lagrangian");
+        return;
       }
-      DRAKE_DEMAND(result.is_success());
+    }
+
+    // Now search for Lyapunov.
+    {
+      solvers::MathematicalProgram prog;
+      prog.AddIndeterminates(x);
+      prog.AddIndeterminates(z);
+      symbolic::Polynomial V;
+      V = NewFreePolynomialPassOrigin(&prog, x_set, V_degree, "V",
+                                      symbolic::internal::DegreeType::kAny,
+                                      symbolic::Variables{});
+      // First add the constraint that V −ε₁(xᵀx)ᵈ − p₁(x)c₁(x) is sos.
+      const double positivity_eps = 0.01;
+      const int d = V_degree / 2;
+      symbolic::Polynomial positivity_sos =
+          V - positivity_eps * symbolic::Polynomial(pow(
+                                   x.cast<symbolic::Expression>().dot(x), d));
+      const std::vector<int> positivity_lagrangian_degrees{
+          {V_degree - 2, V_degree - 2}};
+      Vector2<symbolic::Polynomial> positivity_lagrangian;
+      for (int i = 0; i < 2; ++i) {
+        positivity_lagrangian(i) =
+            prog.NewFreePolynomial(x_set, positivity_lagrangian_degrees[i]);
+      }
+      positivity_sos -= positivity_lagrangian.dot(StateEqConstraints(x));
+      prog.AddSosConstraint(positivity_sos);
+      // Now add the constraint on Vdot.
+      Vector6<symbolic::Polynomial> p;
+      for (int i = 0; i < 6; ++i) {
+        p(i) = prog.NewFreePolynomial(xz_set, p_degrees[i],
+                                      "p" + std::to_string(i));
+      }
+      const symbolic::Polynomial vdot_sos = AddControlLyapunovConstraint(&prog, x, z_poly, lambda0_sol, V, rho, l_sol,
+                                   qdot, deriv_eps, p, state_constraints);
+
+      // Now minimize V on x_samples.
+      Eigen::Matrix<double, 6, 3> x_samples;
+      x_samples.col(0) = ToTrigState<double>(Eigen::Vector4d(0, 0, 0, 0));
+      x_samples.col(1) =
+          ToTrigState<double>(Eigen::Vector4d(M_PI + 0.1, 0, 0, 0));
+      x_samples.col(2) =
+          ToTrigState<double>(Eigen::Vector4d(M_PI + 0.1, 0.2, 0, 0));
+      // Evaluate V at x_samples.
+      Eigen::MatrixXd A_coeff_samples;
+      VectorX<symbolic::Variable> decision_variables_samples;
+      Eigen::VectorXd b_samples;
+      V.EvaluateWithAffineCoefficients(x, x_samples, &A_coeff_samples,
+                                       &decision_variables_samples, &b_samples);
+      // Introduce a slack variable V_max_sample with the constraint
+      // V_max_sample >= A_coeff_samples * decision_variables_samples +
+      // b_samples.
+      const auto V_max_sample = prog.NewContinuousVariables<1>("Vmax");
+      Eigen::MatrixXd A_V_max(A_coeff_samples.rows(),
+                              A_coeff_samples.cols() + 1);
+      A_V_max.leftCols(A_coeff_samples.cols()) = A_coeff_samples;
+      A_V_max.rightCols<1>() = -Eigen::VectorXd::Ones(A_V_max.rows());
+
+      prog.AddLinearConstraint(
+          A_V_max, Eigen::VectorXd::Constant(A_V_max.rows(), -kInf), -b_samples,
+          {decision_variables_samples, V_max_sample});
+      prog.AddLinearCost(Vector1d::Ones(), 0, V_max_sample);
+
+      solvers::SolverOptions solver_options;
+      solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
+      const double backoff_scale = 0.02;
+      const auto result_lyapunov = SearchWithBackoff(
+          &prog, solvers::MosekSolver::id(), solver_options, backoff_scale);
+      if (result_lyapunov.is_success()) {
+        V_sol = result_lyapunov.GetSolution(V);
+        drake::log()->info(
+            "Optimal cost = {}",
+            V_sol.EvaluateIndeterminates(x, x_samples).maxCoeff());
+
+        std::cout << "V_sol: " << V_sol.Expand() << "\n";
+        for (int i = 0; i < 6; ++i) {
+          p_sol(i) = result_lyapunov.GetSolution(p(i));
+        }
+        Save(V_sol, "acrobot_implicit_trig_clf.txt");
+        vdot_sos_sol = result_lyapunov.GetSolution(vdot_sos);
+        internal::PrintPsdConstraintStat(prog, result_lyapunov);
+      } else {
+        drake::log()->error("Failed to find Lyapunov");
+        return;
+      }
+    }
+    iter_count += 1;
+  }
+
+  V_sol = Load(x_set, "acrobot_implicit_trig_clf.txt");
+  Vector6<symbolic::Polynomial> f_numerator;
+  Vector6<symbolic::Polynomial> G_numerator;
+  symbolic::Polynomial dynamics_denominator;
+  TrigPolyDynamics(parameters, x, &f_numerator, &G_numerator,
+                   &dynamics_denominator);
+  const VdotCalculator vdot_calculator(x, V_sol, f_numerator, G_numerator,
+                                       dynamics_denominator,
+                                       Eigen::RowVector2d(-u_max, u_max));
+  Vector6d x_sample;
+  x_sample << -0.198681735072, 0.019935936712, -0.000014775703, -0.000000000109, 0.007937667033, -0.009265162853;
+  std::cout << "V(x) at sample: " << V_sol.EvaluateIndeterminates(x, x_sample) << "\n";
+  std::cout << "min Vdot(x, u) at samples: "
+            << vdot_calculator.CalcMin(x_sample).transpose() << "\n";
+  symbolic::Environment env;
+  env.insert(x, x_sample);
+  Eigen::Matrix2d M_val;
+  Eigen::Vector2d bias_val;
+  for (int i = 0; i < 2; ++i) {
+    bias_val(i) = bias_expr(i).Evaluate(env);
+    for (int j = 0; j < 2; ++j) {
+      M_val(i, j) = M_expr(i, j).Evaluate(env);
     }
   }
+  Eigen::LLT<Eigen::Matrix2d> llt_M(M_val);
+  const Eigen::Vector2d z1 = llt_M.solve(Eigen::Vector2d(0, u_max) - bias_val);
+  const Eigen::Vector2d z2 = llt_M.solve(Eigen::Vector2d(0, -u_max) - bias_val);
+  env.insert(z.head<2>(), z1);
+  env.insert(z.tail<2>(), z2);
+  Vector6d state_constraints_val;
+  for (int i = 0; i < state_constraints.rows(); ++i) {
+    state_constraints_val(i) = state_constraints(i).Evaluate(env);
+  }
+  std::cout << "state constraints: " << state_constraints_val.transpose() << "\n";
+  Vector6d n1_val;
+  double d1_val;
+  TrigDynamics<double>(parameters, x_sample, u_max, &n1_val, &d1_val);
+  std::cout << "z1: " << z1.transpose() << " expected " << n1_val.tail<2>().transpose() / d1_val << "\n";
+  Vector6d n2_val;
+  double d2_val;
+  TrigDynamics<double>(parameters, x_sample, -u_max, &n2_val, &d2_val);
+  std::cout << "z2: " << z2.transpose() << " expected " << n2_val.tail<2>().transpose() / d2_val << "\n";
+  std::cout << (V_sol.Jacobian(x.head<4>()).dot(qdot) + deriv_eps * V_sol).Evaluate(env) + V_sol.Jacobian(x.tail<2>()).dot(z1).Evaluate(env) << "\n";
+  std::cout << (V_sol.Jacobian(x.head<4>()).dot(qdot) + deriv_eps * V_sol).Evaluate(env) + V_sol.Jacobian(x.tail<2>()).dot(z2).Evaluate(env) << "\n";
+  std::cout << "l1 val: " << l_sol(0).Evaluate(env) << "\n";
+  std::cout << "l2 val: " << l_sol(1).Evaluate(env) << "\n";
+  for (int i = 0; i < 6; ++i) {
+    std::cout << "p(" << i << ") val: " << p_sol(i).Evaluate(env) << "\n";
+  }
+  std::cout << "vdot_sos val: " << vdot_sos_sol.Evaluate(env) << "\n";
+
+  const double duration = 5;
+  Simulate(parameters, x, V_sol, u_max * 1.3, deriv_eps,
+           Eigen::Vector4d(M_PI + 0.2, 0, 0, 0), duration);
 }
 
 int DoMain() {
@@ -269,4 +505,7 @@ int DoMain() {
 }  // namespace systems
 }  // namespace drake
 
-int main() { return drake::systems::analysis::DoMain(); }
+int main() {
+  auto mosek_license = drake::solvers::MosekSolver::AcquireLicense();
+  return drake::systems::analysis::DoMain();
+}

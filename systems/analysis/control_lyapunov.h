@@ -272,7 +272,9 @@ class ControlLyapunov {
 };
 
 /**
- * Compute V̇(x, u) = ∂V/∂x * (f(x)+G(x)u)
+ * Compute V̇(x, u) = ∂V/∂x * (f(x)/n(x)+G(x)/n(x)*u)
+ * @param dynamics_numerator n(x) in the documentation above. If
+ * dynamics_numerator=std::nullopt, then n(x) = 1.
  */
 class VdotCalculator {
  public:
@@ -280,6 +282,7 @@ class VdotCalculator {
                  const symbolic::Polynomial& V,
                  const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
                  const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
+                 const std::optional<symbolic::Polynomial>& dynamics_numerator,
                  const Eigen::Ref<const Eigen::MatrixXd>& u_vertices);
 
   symbolic::Polynomial Calc(const Eigen::Ref<const Eigen::VectorXd>& u) const;
@@ -296,6 +299,7 @@ class VdotCalculator {
 
  private:
   VectorX<symbolic::Variable> x_;
+  std::optional<symbolic::Polynomial> dynamics_numerator_;
   Eigen::MatrixXd u_vertices_;
   symbolic::Polynomial dVdx_times_f_;
   RowVectorX<symbolic::Polynomial> dVdx_times_G_;
@@ -723,7 +727,7 @@ class ControlLyapunovBoxInputBound {
 /**
  * Computes the control action through the QP
  * min (u−u*)ᵀRᵤ(u−u*)
- * s.t ∂V/∂x*(f(x)+G(x)u)≤ −εV
+ * s.t ∂V/∂x*(f(x)/n(x)+G(x)/n(x)*u)≤ −εV
  *     Aᵤ*u ≤ bᵤ
  */
 class ClfController : public LeafSystem<double> {
@@ -731,11 +735,15 @@ class ClfController : public LeafSystem<double> {
   DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(ClfController)
 
   /**
+   * @param dynamics_numerator. n(x) in the documentation above. If
+   * dynamics_numerator = std::nullopt, then n(x)=1.
    * @param u_star If u_star=nullptr, then we use u in the previous step as u*
    */
   ClfController(const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
                 const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
                 const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
+                const std::optional<symbolic::Polynomial>& dynamics_numerator,
+
                 symbolic::Polynomial V, double deriv_eps,
                 const Eigen::Ref<const Eigen::MatrixXd>& Au,
                 const Eigen::Ref<const Eigen::VectorXd>& bu,
@@ -765,6 +773,7 @@ class ClfController : public LeafSystem<double> {
   VectorX<symbolic::Variable> x_;
   VectorX<symbolic::Polynomial> f_;
   MatrixX<symbolic::Polynomial> G_;
+  std::optional<symbolic::Polynomial> dynamics_numerator_;
   symbolic::Polynomial V_;
   double deriv_eps_;
   Eigen::MatrixXd Au_;

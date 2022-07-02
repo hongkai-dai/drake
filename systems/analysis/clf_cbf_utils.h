@@ -221,6 +221,25 @@ double SmallestCoeff(const solvers::MathematicalProgram& prog);
 
 double LargestCoeff(const solvers::MathematicalProgram& prog);
 
+enum class OptimizePolynomialMode {
+  kMinimizeMaximal,
+  kMaximizeMinimal,
+  kMinimizeSum,
+  kMaximizeSum,
+};
+
+/**
+ * For a polynomial p(x) whose coefficients are all linear expressions of
+ * decision variables in prog, optimize the value of p(x) evaluated at
+ * x_samples. Depending on the optimize_polynomial_mode, we choose diffent cost
+ * form.
+ */
+void OptimizePolynomialAtSamples(
+    solvers::MathematicalProgram* prog, const symbolic::Polynomial& p,
+    const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+    const Eigen::Ref<const Eigen::MatrixXd>& x_samples,
+    OptimizePolynomialMode optimize_polynomial_mode);
+
 namespace internal {
 /** The ellipsoid polynomial (x−x*)ᵀS(x−x*)−ρ
  */

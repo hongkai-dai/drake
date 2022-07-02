@@ -223,17 +223,17 @@ void SearchWTrigDynamics(const std::optional<std::string>& load_clf) {
     rho_sol = result.GetSolution(rho_var);
     std::cout << fmt::format("V_init(x) <= {}\n", rho_sol);
     // V_init = V_init / rho_sol;
-    V_init = V_init.RemoveTermsWithSmallCoefficients(1E-8);
+    V_init = V_init.RemoveTermsWithSmallCoefficients(1E-8) * 20;
     DRAKE_DEMAND(rho_sol > 0);
   }
   symbolic::Polynomial V_sol;
   {
     ControlLyapunov::SearchOptions search_options;
     search_options.rho_converge_tol = 0.;
-    search_options.bilinear_iterations = 10;
-    search_options.backoff_scale = 0.02;
-    search_options.lsol_tiny_coeff_tol = 1E-6;
-    search_options.lyap_tiny_coeff_tol = 1E-5;
+    search_options.bilinear_iterations = 15;
+    search_options.backoff_scale = 0.1;
+    // search_options.lsol_tiny_coeff_tol = 1E-5;
+    // search_options.lyap_tiny_coeff_tol = 1E-5;
     search_options.Vsol_tiny_coeff_tol = 1E-6;
     search_options.lagrangian_step_solver_options = solvers::SolverOptions();
     search_options.lagrangian_step_solver_options->SetOption(
@@ -241,13 +241,14 @@ void SearchWTrigDynamics(const std::optional<std::string>& load_clf) {
     search_options.lyap_step_solver_options = solvers::SolverOptions();
     search_options.lyap_step_solver_options->SetOption(
         solvers::CommonSolverOption::kPrintToConsole, 1);
-    search_options.rho = rho_sol * 0.98;
+    search_options.lyap_step_solver_options->SetOption(
+        solvers::MosekSolver::id(), "writedata", "lyapunov.task.gz");
+    search_options.rho = rho_sol * 2 * 20;
 
-    Eigen::MatrixXd state_samples(4, 4);
+    Eigen::MatrixXd state_samples(4, 3);
     state_samples.col(0) << 0, 0, 0, 0;
-    state_samples.col(1) << 1.1 * M_PI, 0, 0, 0;
-    state_samples.col(2) << 1.01 * M_PI, 0, 0, 0;
-    state_samples.col(3) << 1.0 * M_PI, 0.01 * M_PI, 0, 0;
+    state_samples.col(1) << 1.01 * M_PI, 0, 0, 0;
+    state_samples.col(2) << 1.0 * M_PI, 0.01 * M_PI, 0, 0;
     Eigen::MatrixXd x_samples(6, state_samples.cols());
     for (int i = 0; i < state_samples.cols(); ++i) {
       x_samples.col(i) = ToTrigState<double>(state_samples.col(i));
@@ -276,13 +277,13 @@ void SearchWTrigDynamics(const std::optional<std::string>& load_clf) {
     std::cout << "V(x_samples): "
               << V_sol.EvaluateIndeterminates(x, x_samples).transpose() << "\n";
     std::cout << "rho=" << search_options.rho << "\n";
-    Save(V_sol, "acrobot_trig_clf.txt");
+    Save(V_sol, "acrobot_trig_clf1.txt");
   }
 }
 
 int DoMain() {
-  // SearchWTrigDynamics(std::nullopt);
-  SearchWTrigDynamics("acrobot_trig_clf.txt");
+  SearchWTrigDynamics(std::nullopt);
+  // SearchWTrigDynamics("acrobot_trig_clf.txt");
   return 0;
 }
 }  // namespace analysis

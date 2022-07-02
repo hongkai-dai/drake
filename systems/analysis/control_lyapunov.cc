@@ -465,33 +465,10 @@ void ControlLyapunov::Search(
           *lambda0_sol, *l_sol, V_degree, search_options.rho, positivity_eps,
           positivity_d, positivity_eq_lagrangian_degrees, p_degrees, deriv_eps,
           &V_search, &positivity_eq_lagrangian, &p);
-      // Evaluate V at x_samples.
-      Eigen::MatrixXd A_coeff_samples;
-      VectorX<symbolic::Variable> decision_variables_samples;
-      Eigen::VectorXd b_samples;
-      V_search.EvaluateWithAffineCoefficients(x_, x_samples, &A_coeff_samples,
-                                              &decision_variables_samples,
-                                              &b_samples);
-      if (minimize_max) {
-        // Introduce a slack variable V_max_sample with the constraint
-        // V_max_sample >= A_coeff_samples * decision_variables_samples +
-        // b_samples.
-        const auto V_max_sample =
-            prog_lyapunov->NewContinuousVariables<1>("Vmax");
-        Eigen::MatrixXd A_V_max(A_coeff_samples.rows(),
-                                A_coeff_samples.cols() + 1);
-        A_V_max.leftCols(A_coeff_samples.cols()) = A_coeff_samples;
-        A_V_max.rightCols<1>() = -Eigen::VectorXd::Ones(A_V_max.rows());
-
-        prog_lyapunov->AddLinearConstraint(
-            A_V_max, Eigen::VectorXd::Constant(A_V_max.rows(), -kInf),
-            -b_samples, {decision_variables_samples, V_max_sample});
-        prog_lyapunov->AddLinearCost(Vector1d::Ones(), 0, V_max_sample);
-      } else {
-        prog_lyapunov->AddLinearCost(A_coeff_samples.colwise().sum(),
-                                     b_samples.sum(),
-                                     decision_variables_samples);
-      }
+      OptimizePolynomialAtSamples(prog_lyapunov.get(), V_search, x_, x_samples,
+                                  minimize_max
+                                      ? OptimizePolynomialMode::kMinimizeMaximal
+                                      : OptimizePolynomialMode::kMinimizeSum);
       RemoveTinyCoeff(prog_lyapunov.get(), search_options.lyap_tiny_coeff_tol);
       drake::log()->info("Search Lyapunov, Lyapunov program smallest coeff: {}",
                          SmallestCoeff(*prog_lyapunov));
@@ -527,6 +504,7 @@ void ControlLyapunov::Search(
         }
         prev_cost = cost;
       } else {
+        *V_sol = result_lyapunov.GetSolution(V_search);
         drake::log()->error("Failed to find Lyapunov");
         return;
       }
@@ -1345,6 +1323,7 @@ void ClfController::CalcControl(const Context<double>& context,
   if (!result.is_success()) {
     drake::log()->error("ClfController fails at t={} with x={}, V={}",
                         context.get_time(), x_val.transpose(), V_val);
+    DRAKE_DEMAND(result.is_success());
   }
   const Eigen::VectorXd u_val = result.GetSolution(u);
   output->get_mutable_value() = u_val;

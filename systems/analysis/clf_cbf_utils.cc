@@ -796,6 +796,58 @@ double LargestCoeff(const solvers::MathematicalProgram& prog) {
   return ret;
 }
 
+void OptimizePolynomialAtSamples(
+    solvers::MathematicalProgram* prog, const symbolic::Polynomial& p,
+    const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+    const Eigen::Ref<const Eigen::MatrixXd>& x_samples,
+    OptimizePolynomialMode optimize_polynomial_mode) {
+  // Evaluate p at x_samples.
+  Eigen::MatrixXd A_samples;
+  VectorX<symbolic::Variable> decision_variables_samples;
+  Eigen::VectorXd b_samples;
+  p.EvaluateWithAffineCoefficients(x, x_samples, &A_samples,
+                                   &decision_variables_samples, &b_samples);
+  switch (optimize_polynomial_mode) {
+    case OptimizePolynomialMode::kMinimizeMaximal: {
+      // Add a slack variable max_sample with the constraint
+      // A_samples * decision_variable_samples + b_samples <= max_sample.
+      const auto max_sample = prog->NewContinuousVariables<1>("p_max");
+      Eigen::MatrixXd A(A_samples.rows(), A_samples.cols() + 1);
+      A.leftCols(A_samples.cols()) = A_samples;
+      A.rightCols<1>() = -Eigen::VectorXd::Ones(A.rows());
+      prog->AddLinearConstraint(A, Eigen::VectorXd::Constant(A.rows(), -kInf),
+                                -b_samples,
+                                {decision_variables_samples, max_sample});
+      prog->AddLinearCost(Vector1d::Ones(), 0, max_sample);
+      break;
+    }
+    case OptimizePolynomialMode::kMinimizeSum: {
+      prog->AddLinearCost(A_samples.colwise().sum(), b_samples.sum(),
+                          decision_variables_samples);
+      break;
+    }
+    case OptimizePolynomialMode::kMaximizeMinimal: {
+      // Add a slack variable min_sample with the constraint
+      // A_samples * decision_variable_samples + b_samples >= min_sample.
+      const auto min_sample = prog->NewContinuousVariables<1>("p_min");
+      Eigen::MatrixXd A(A_samples.rows(), A_samples.cols() + 1);
+      A.leftCols(A_samples.cols()) = A_samples;
+      A.rightCols<1>() = -Eigen::VectorXd::Ones(A.rows());
+      prog->AddLinearConstraint(A, -b_samples,
+                                Eigen::VectorXd::Constant(A.rows(), kInf),
+
+                                {decision_variables_samples, min_sample});
+      prog->AddLinearCost(-Vector1d::Ones(), 0, min_sample);
+      break;
+    }
+    case OptimizePolynomialMode::kMaximizeSum: {
+      prog->AddLinearCost(-A_samples.colwise().sum(), -b_samples.sum(),
+                          decision_variables_samples);
+      break;
+    }
+  }
+}
+
 namespace internal {
 template <typename RhoType>
 symbolic::Polynomial EllipsoidPolynomial(

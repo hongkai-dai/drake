@@ -93,6 +93,33 @@ symbolic::Polynomial StateEqConstraint(
 controllers::LinearQuadraticRegulatorResult SynthesizeTrigLqr(
     const CartPoleParams& params,
     const Eigen::Ref<const Eigen::Matrix<double, 5, 5>>& Q, double R);
+
+template <typename T>
+Vector3<T> CalcQdot(const Eigen::Ref<const Eigen::Matrix<T, 5, 1>>& x) {
+  const T s = x(1);
+  const T c = x(2) - 1;
+  return Vector3<T>(x(3), c * x(4), -s * x(4));
+}
+
+template <typename T>
+class ToTrigStateConverter : public LeafSystem<T> {
+ public:
+  ToTrigStateConverter();
+
+  template <typename U>
+  explicit ToTrigStateConverter(const ToTrigStateConverter<U>&)
+      : ToTrigStateConverter<T>() {}
+
+  ~ToTrigStateConverter(){};
+
+ private:
+  void CalcTrigState(const Context<T>& context, BasicVector<T>* x_trig) const;
+};
+
+void Simulate(const CartPoleParams& parameters,
+              const Eigen::Matrix<symbolic::Variable, 5, 1>& x,
+              const symbolic::Polynomial& clf, double u_bound, double deriv_eps,
+              const Eigen::Vector4d& initial_state, double duration);
 }  // namespace analysis
 }  // namespace systems
 }  // namespace drake

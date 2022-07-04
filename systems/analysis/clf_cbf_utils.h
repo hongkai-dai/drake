@@ -81,8 +81,10 @@ void MaximizeInnerEllipsoidRho(
  *     max ρ
  *     s.t -f(x) - r(x)*(ρ-(x-x*)ᵀS(x-x*)) -t(x)ᵀ*c(x) is sos
  *         r(x) is sos.
+ *
+ * @return Whether we find an ellipsoid or not.
  */
-void MaximizeInnerEllipsoidRho(
+bool MaximizeInnerEllipsoidRho(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
     const Eigen::Ref<const Eigen::VectorXd>& x_star,
     const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& f,

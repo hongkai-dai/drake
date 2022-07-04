@@ -1046,12 +1046,13 @@ ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(
       options.lagrangian_step_solver_options, options.lsol_tiny_coeff_tol,
       &(ret.deriv_eps), &(ret.b), &(ret.l));
   // Solve a separate program to find the inscribed ellipsoid.
-  MaximizeInnerEllipsoidRho(
+  const bool found_inner_ellipsoid = MaximizeInnerEllipsoidRho(
       x_, x_star, S, V_init - 1, std::nullopt, r_degree, std::nullopt,
       rho_bisection_option.rho_max, rho_bisection_option.rho_min,
       options.lagrangian_step_solver, options.lagrangian_step_solver_options,
       rho_bisection_option.rho_tol, &(ret.rho), &(ret.ellipsoid_lagrangian),
       nullptr);
+  DRAKE_DEMAND(found_inner_ellipsoid);
 
   int iter = 0;
   bool converged = false;
@@ -1247,7 +1248,7 @@ ClfController::ClfController(
     const Eigen::Ref<const Eigen::MatrixXd>& Au,
     const Eigen::Ref<const Eigen::VectorXd>& bu,
     const std::optional<Eigen::VectorXd>& u_star,
-    const Eigen::Ref<const Eigen::MatrixXd>& Ru)
+    const Eigen::Ref<const Eigen::MatrixXd>& Ru, double vdot_cost)
     : LeafSystem<double>(),
       x_{x},
       f_{f},
@@ -1258,7 +1259,8 @@ ClfController::ClfController(
       Au_{Au},
       bu_{bu},
       u_star_{u_star},
-      Ru_{Ru} {
+      Ru_{Ru},
+      vdot_cost_{vdot_cost} {
   const int nx = f_.rows();
   const int nu = G_.cols();
   DRAKE_DEMAND(x_.rows() == nx);
@@ -1319,6 +1321,8 @@ void ClfController::CalcControl(const Context<double>& context,
   prog.AddLinearConstraint(
       dVdx_times_G_val, -kInf,
       -deriv_eps_ * V_val * dynamics_numerator_val - dVdx_times_f_val, u);
+  prog.AddLinearCost(dVdx_times_G_val / dynamics_numerator_val * vdot_cost_,
+                     dVdx_times_f_val / dynamics_numerator_val * vdot_cost_, u);
   const auto result = solvers::Solve(prog);
   if (!result.is_success()) {
     drake::log()->error("ClfController fails at t={} with x={}, V={}",

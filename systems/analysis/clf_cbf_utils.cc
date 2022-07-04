@@ -163,7 +163,7 @@ void MaximizeInnerEllipsoidRho(
   *s_sol = result.GetSolution(s);
 }
 
-void MaximizeInnerEllipsoidRho(
+bool MaximizeInnerEllipsoidRho(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
     const Eigen::Ref<const Eigen::VectorXd>& x_star,
     const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& f,
@@ -217,10 +217,11 @@ void MaximizeInnerEllipsoidRho(
   if (!is_feasible(rho_min)) {
     drake::log()->error("MaximizeEllipsoidRho: rho_min={} is infeasible",
                         rho_min);
+    return false;
   }
   if (is_feasible(rho_max)) {
     *rho_sol = rho_max;
-    return;
+    return true;
   }
   while (rho_max - rho_min > rho_tol) {
     const double rho_mid = (rho_max + rho_min) / 2;
@@ -231,6 +232,7 @@ void MaximizeInnerEllipsoidRho(
     }
   }
   *rho_sol = rho_min;
+  return true;
 }
 
 void GetPolynomialSolutions(const solvers::MathematicalProgramResult& result,
@@ -558,6 +560,9 @@ Eigen::MatrixXd Meshgrid(const std::vector<Eigen::VectorXd>& x) {
 void Save(const symbolic::Polynomial& p, const std::string& file_name) {
   std::ofstream outfile;
   outfile.open(file_name, std::ios::out);
+  if (outfile.fail()) {
+    throw std::runtime_error("Cannot save to " + file_name);
+  }
   std::unordered_map<symbolic::Variable::Id, int> var_to_index;
   int indeterminate_count = 0;
   for (const auto& x : p.indeterminates()) {
@@ -568,7 +573,7 @@ void Save(const symbolic::Polynomial& p, const std::string& file_name) {
   for (const auto& [monomial, coeff] : p.monomial_to_coefficient_map()) {
     DRAKE_DEMAND(symbolic::is_constant(coeff));
     std::string term;
-    term.append(fmt::format("{:.10f} ", symbolic::get_constant_value(coeff)));
+    term.append(fmt::format("{:.15f} ", symbolic::get_constant_value(coeff)));
     for (const auto& [var, degree] : monomial.get_powers()) {
       term.append(
           fmt::format("{} {}, ", var_to_index.at(var.get_id()), degree));
@@ -583,6 +588,9 @@ symbolic::Polynomial Load(const symbolic::Variables& indeterminates,
                           const std::string& file_name) {
   std::ifstream infile;
   infile.open(file_name);
+  if (infile.fail()) {
+    throw std::runtime_error("Cannot open file " + file_name);
+  }
 
   std::string line;
   std::getline(infile, line);

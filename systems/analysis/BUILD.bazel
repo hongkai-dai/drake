@@ -1075,10 +1075,20 @@ drake_cc_library(
     srcs = ["test/cart_pole.cc"],
     hdrs = ["test/cart_pole.h"],
     deps = [
+        ":control_lyapunov",
+        ":simulator",
+        ":simulator_config_functions",
         "//common:essential",
         "//common:symbolic",
+        "//geometry:scene_graph",
+        "//geometry:meshcat_visualizer",
+        "//math:geometric_transform",
         "//math:gradient",
+        "//multibody/plant",
+        "//multibody/parsing:parser",
+        "//solvers:solve",
         "//systems/controllers:linear_quadratic_regulator",
+        "//systems/primitives:vector_log_sink",
     ],
 )
 
@@ -1098,14 +1108,24 @@ drake_cc_googletest(
 drake_cc_binary(
     name = "cart_pole_trig_clf_demo",
     srcs = ["test/cart_pole_trig_clf_demo.cc"],
+    data = [
+        "//examples/multibody/cart_pole:models"
+    ],
     deps = [
         ":cart_pole",
         ":control_lyapunov",
-        ":simulator",
-        ":simulator_config_functions",
-        "//math:geometric_transform",
-        "//solvers:solve",
-        "//systems/primitives:vector_log_sink",
+    ],
+)
+
+drake_cc_binary(
+    name = "cart_pole_implicit_trig_clf_demo",
+    srcs = ["test/cart_pole_implicit_trig_clf_demo.cc"],
+    data = [
+        "//examples/multibody/cart_pole:models"
+    ],
+    deps = [
+        ":cart_pole",
+        ":control_lyapunov",
     ],
 )
 

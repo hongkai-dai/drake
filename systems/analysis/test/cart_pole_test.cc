@@ -72,6 +72,10 @@ GTEST_TEST(CartPole, Test) {
 
   const symbolic::Polynomial state_constraint = StateEqConstraint(x);
   EXPECT_EQ(state_constraint.Evaluate(env), 0);
+
+  // Test CalcQdot
+  EXPECT_TRUE(CompareMatrices(CalcQdot<double>(x_trig),
+                              x_trig_dot_expected.head<3>(), 1E-12));
 }
 }  // namespace analysis
 }  // namespace systems

@@ -726,7 +726,7 @@ class ControlLyapunovBoxInputBound {
 
 /**
  * Computes the control action through the QP
- * min (u−u*)ᵀRᵤ(u−u*)
+ * min (u−u*)ᵀRᵤ(u−u*) + k*∂V/∂x*(f(x)/n(x)+G(x)/n(x)*u)
  * s.t ∂V/∂x*(f(x)/n(x)+G(x)/n(x)*u)≤ −εV
  *     Aᵤ*u ≤ bᵤ
  */
@@ -738,6 +738,7 @@ class ClfController : public LeafSystem<double> {
    * @param dynamics_numerator. n(x) in the documentation above. If
    * dynamics_numerator = std::nullopt, then n(x)=1.
    * @param u_star If u_star=nullptr, then we use u in the previous step as u*
+   * @param vdot_cost k in the documentation above.
    */
   ClfController(const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
                 const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
@@ -748,7 +749,7 @@ class ClfController : public LeafSystem<double> {
                 const Eigen::Ref<const Eigen::MatrixXd>& Au,
                 const Eigen::Ref<const Eigen::VectorXd>& bu,
                 const std::optional<Eigen::VectorXd>& u_star,
-                const Eigen::Ref<const Eigen::MatrixXd>& Ru);
+                const Eigen::Ref<const Eigen::MatrixXd>& Ru, double Vdot_cost);
 
   ~ClfController() {}
 
@@ -780,6 +781,7 @@ class ClfController : public LeafSystem<double> {
   Eigen::VectorXd bu_;
   mutable std::optional<Eigen::VectorXd> u_star_;
   Eigen::MatrixXd Ru_;
+  double vdot_cost_;
   symbolic::Polynomial dVdx_times_f_;
   RowVectorX<symbolic::Polynomial> dVdx_times_G_;
   OutputPortIndex control_output_index_;

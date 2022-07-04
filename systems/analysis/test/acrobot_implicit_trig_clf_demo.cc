@@ -51,8 +51,10 @@ void Simulate(const examples::acrobot::AcrobotParams<double>& parameters,
   symbolic::Polynomial dynamics_numerator;
   TrigPolyDynamics(parameters, x, &f, &G, &dynamics_numerator);
 
+  const double vdot_cost = 0;
   auto clf_controller = builder.AddSystem<ClfController>(
-      x, f, G, dynamics_numerator, clf, deriv_eps, Au, bu, u_star, Ru);
+      x, f, G, dynamics_numerator, clf, deriv_eps, Au, bu, u_star, Ru,
+      vdot_cost);
   auto state_logger = LogVectorOutput(acrobot->get_output_port(0), &builder);
   auto clf_logger = LogVectorOutput(
       clf_controller->get_output_port(clf_controller->clf_output_index()),
@@ -306,11 +308,9 @@ void SearchWImplicitTrigDynamics() {
   int iter_count = 0;
   symbolic::Polynomial V_sol = V_init;
   const double rho = 0.05;
+  while (iter_count < max_iters) {
     symbolic::Polynomial lambda0_sol;
     Vector2<symbolic::Polynomial> l_sol;
-    Vector6<symbolic::Polynomial> p_sol;
-    symbolic::Polynomial vdot_sos_sol;
-  while (iter_count < max_iters) {
     // Find the Lagrangian multipliers
     {
       solvers::MathematicalProgram prog;
@@ -385,8 +385,9 @@ void SearchWImplicitTrigDynamics() {
         p(i) = prog.NewFreePolynomial(xz_set, p_degrees[i],
                                       "p" + std::to_string(i));
       }
-      const symbolic::Polynomial vdot_sos = AddControlLyapunovConstraint(&prog, x, z_poly, lambda0_sol, V, rho, l_sol,
-                                   qdot, deriv_eps, p, state_constraints);
+      const symbolic::Polynomial vdot_sos = AddControlLyapunovConstraint(
+          &prog, x, z_poly, lambda0_sol, V, rho, l_sol, qdot, deriv_eps, p,
+          state_constraints);
 
       // Now minimize V on x_samples.
       Eigen::Matrix<double, 6, 3> x_samples;
@@ -395,26 +396,8 @@ void SearchWImplicitTrigDynamics() {
           ToTrigState<double>(Eigen::Vector4d(M_PI + 0.1, 0, 0, 0));
       x_samples.col(2) =
           ToTrigState<double>(Eigen::Vector4d(M_PI + 0.1, 0.2, 0, 0));
-      // Evaluate V at x_samples.
-      Eigen::MatrixXd A_coeff_samples;
-      VectorX<symbolic::Variable> decision_variables_samples;
-      Eigen::VectorXd b_samples;
-      V.EvaluateWithAffineCoefficients(x, x_samples, &A_coeff_samples,
-                                       &decision_variables_samples, &b_samples);
-      // Introduce a slack variable V_max_sample with the constraint
-      // V_max_sample >= A_coeff_samples * decision_variables_samples +
-      // b_samples.
-      const auto V_max_sample = prog.NewContinuousVariables<1>("Vmax");
-      Eigen::MatrixXd A_V_max(A_coeff_samples.rows(),
-                              A_coeff_samples.cols() + 1);
-      A_V_max.leftCols(A_coeff_samples.cols()) = A_coeff_samples;
-      A_V_max.rightCols<1>() = -Eigen::VectorXd::Ones(A_V_max.rows());
-
-      prog.AddLinearConstraint(
-          A_V_max, Eigen::VectorXd::Constant(A_V_max.rows(), -kInf), -b_samples,
-          {decision_variables_samples, V_max_sample});
-      prog.AddLinearCost(Vector1d::Ones(), 0, V_max_sample);
-
+      OptimizePolynomialAtSamples(&prog, V, x, x_samples,
+                                  OptimizePolynomialMode::kMinimizeMaximal);
       solvers::SolverOptions solver_options;
       solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
       const double backoff_scale = 0.02;
@@ -427,11 +410,7 @@ void SearchWImplicitTrigDynamics() {
             V_sol.EvaluateIndeterminates(x, x_samples).maxCoeff());
 
         std::cout << "V_sol: " << V_sol.Expand() << "\n";
-        for (int i = 0; i < 6; ++i) {
-          p_sol(i) = result_lyapunov.GetSolution(p(i));
-        }
         Save(V_sol, "acrobot_implicit_trig_clf.txt");
-        vdot_sos_sol = result_lyapunov.GetSolution(vdot_sos);
         internal::PrintPsdConstraintStat(prog, result_lyapunov);
       } else {
         drake::log()->error("Failed to find Lyapunov");
@@ -450,51 +429,9 @@ void SearchWImplicitTrigDynamics() {
   const VdotCalculator vdot_calculator(x, V_sol, f_numerator, G_numerator,
                                        dynamics_denominator,
                                        Eigen::RowVector2d(-u_max, u_max));
-  Vector6d x_sample;
-  x_sample << -0.198681735072, 0.019935936712, -0.000014775703, -0.000000000109, 0.007937667033, -0.009265162853;
-  std::cout << "V(x) at sample: " << V_sol.EvaluateIndeterminates(x, x_sample) << "\n";
-  std::cout << "min Vdot(x, u) at samples: "
-            << vdot_calculator.CalcMin(x_sample).transpose() << "\n";
-  symbolic::Environment env;
-  env.insert(x, x_sample);
-  Eigen::Matrix2d M_val;
-  Eigen::Vector2d bias_val;
-  for (int i = 0; i < 2; ++i) {
-    bias_val(i) = bias_expr(i).Evaluate(env);
-    for (int j = 0; j < 2; ++j) {
-      M_val(i, j) = M_expr(i, j).Evaluate(env);
-    }
-  }
-  Eigen::LLT<Eigen::Matrix2d> llt_M(M_val);
-  const Eigen::Vector2d z1 = llt_M.solve(Eigen::Vector2d(0, u_max) - bias_val);
-  const Eigen::Vector2d z2 = llt_M.solve(Eigen::Vector2d(0, -u_max) - bias_val);
-  env.insert(z.head<2>(), z1);
-  env.insert(z.tail<2>(), z2);
-  Vector6d state_constraints_val;
-  for (int i = 0; i < state_constraints.rows(); ++i) {
-    state_constraints_val(i) = state_constraints(i).Evaluate(env);
-  }
-  std::cout << "state constraints: " << state_constraints_val.transpose() << "\n";
-  Vector6d n1_val;
-  double d1_val;
-  TrigDynamics<double>(parameters, x_sample, u_max, &n1_val, &d1_val);
-  std::cout << "z1: " << z1.transpose() << " expected " << n1_val.tail<2>().transpose() / d1_val << "\n";
-  Vector6d n2_val;
-  double d2_val;
-  TrigDynamics<double>(parameters, x_sample, -u_max, &n2_val, &d2_val);
-  std::cout << "z2: " << z2.transpose() << " expected " << n2_val.tail<2>().transpose() / d2_val << "\n";
-  std::cout << (V_sol.Jacobian(x.head<4>()).dot(qdot) + deriv_eps * V_sol).Evaluate(env) + V_sol.Jacobian(x.tail<2>()).dot(z1).Evaluate(env) << "\n";
-  std::cout << (V_sol.Jacobian(x.head<4>()).dot(qdot) + deriv_eps * V_sol).Evaluate(env) + V_sol.Jacobian(x.tail<2>()).dot(z2).Evaluate(env) << "\n";
-  std::cout << "l1 val: " << l_sol(0).Evaluate(env) << "\n";
-  std::cout << "l2 val: " << l_sol(1).Evaluate(env) << "\n";
-  for (int i = 0; i < 6; ++i) {
-    std::cout << "p(" << i << ") val: " << p_sol(i).Evaluate(env) << "\n";
-  }
-  std::cout << "vdot_sos val: " << vdot_sos_sol.Evaluate(env) << "\n";
-
   const double duration = 5;
-  Simulate(parameters, x, V_sol, u_max * 1.3, deriv_eps,
-           Eigen::Vector4d(M_PI + 0.2, 0, 0, 0), duration);
+  Simulate(parameters, x, V_sol, u_max, deriv_eps, Eigen::Vector4d(0, 0, 0, 0),
+           duration);
 }
 
 int DoMain() {

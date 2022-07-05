@@ -337,6 +337,40 @@ bool ControlLyapunov::SearchLagrangian(
   return true;
 }
 
+bool ControlLyapunov::FindRhoBinarySearch(
+    const symbolic::Polynomial& V, double rho_min, double rho_max,
+    double rho_tol, int lambda0_degree, const std::vector<int>& l_degrees,
+    const std::vector<int>& p_degrees, double deriv_eps,
+    const SearchOptions& search_options, double* rho_sol,
+    symbolic::Polynomial* lambda0, VectorX<symbolic::Polynomial>* l,
+    VectorX<symbolic::Polynomial>* p) const {
+  auto is_rho_feasible = [this, &V, lambda0_degree, &l_degrees, &p_degrees,
+                          deriv_eps, &search_options, lambda0, l,
+                          p](double rho) {
+    return this->SearchLagrangian(V, rho, lambda0_degree, l_degrees, p_degrees,
+                                  deriv_eps, search_options, lambda0, l, p);
+  };
+  DRAKE_DEMAND(rho_max >= rho_min);
+  DRAKE_DEMAND(rho_tol > 0);
+  if (is_rho_feasible(rho_max)) {
+    *rho_sol = rho_max;
+    return true;
+  }
+  if (!is_rho_feasible(rho_min)) {
+    *rho_sol = -kInf;
+    return false;
+  }
+  while (rho_max - rho_min > rho_tol) {
+    if (is_rho_feasible((rho_max + rho_min) / 2)) {
+      rho_min = (rho_max + rho_min) / 2;
+    } else {
+      rho_max = (rho_max + rho_min) / 2;
+    }
+  }
+  *rho_sol = rho_min;
+  return true;
+}
+
 void ControlLyapunov::Search(
     const symbolic::Polynomial& V_init, int lambda0_degree,
     const std::vector<int>& l_degrees, int V_degree, double positivity_eps,

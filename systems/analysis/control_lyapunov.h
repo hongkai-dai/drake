@@ -253,7 +253,6 @@ class ControlLyapunov {
     return u_vertices_;
   }
 
- private:
   bool SearchLagrangian(const symbolic::Polynomial& V, double rho,
                         int lambda0_degree, const std::vector<int>& l_degrees,
                         const std::vector<int>& p_degrees, double deriv_eps,
@@ -261,6 +260,22 @@ class ControlLyapunov {
                         symbolic::Polynomial* lambda0,
                         VectorX<symbolic::Polynomial>* l,
                         VectorX<symbolic::Polynomial>* p) const;
+
+  /**
+   * Fix V, find rho through binary search such that V(x)<=rho satisfies the
+   * control Lyapunov condition. Note that we don't check the positivity of V.
+   * @return found_rho A flag whether rho is found or not.
+   */
+  bool FindRhoBinarySearch(const symbolic::Polynomial& V, double rho_min,
+                           double rho_max, double rho_tol, int lambda0_degree,
+                           const std::vector<int>& l_degrees,
+                           const std::vector<int>& p_degrees, double deriv_eps,
+                           const SearchOptions& search_options, double* rho_sol,
+                           symbolic::Polynomial* lambda0,
+                           VectorX<symbolic::Polynomial>* l,
+                           VectorX<symbolic::Polynomial>* p) const;
+
+ private:
   // The indeterminates as the state.
   VectorX<symbolic::Variable> x_;
   symbolic::Variables x_set_;

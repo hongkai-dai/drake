@@ -103,22 +103,28 @@ TEST_F(SimpleLinearSystemTest, ControlBarrier) {
                 1, -1, 1, -1;
   // clang-format on
   u_vertices *= 10;
-  const ControlBarrier dut(f_, G_, x_, unsafe_regions, u_vertices);
+  const VectorX<symbolic::Polynomial> state_constraints(0);
+  const ControlBarrier dut(f_, G_, x_, unsafe_regions, u_vertices,
+                           state_constraints);
 
   const symbolic::Polynomial h_init(1 - x_(0) * x_(0) - x_(1) * x_(1));
   const double deriv_eps = 0.1;
   const int lambda0_degree = 2;
   const std::vector<int> l_degrees = {2, 2, 2, 2};
+  const std::vector<int> state_constraints_lagrangian_degrees{};
   symbolic::Polynomial lambda0;
   MatrixX<symbolic::Variable> lambda0_gram;
   VectorX<symbolic::Polynomial> l;
   std::vector<MatrixX<symbolic::Variable>> l_grams;
+  VectorX<symbolic::Polynomial> state_constraints_lagrangian;
   symbolic::Polynomial hdot_sos;
   VectorX<symbolic::Monomial> hdot_monomials;
   MatrixX<symbolic::Variable> hdot_gram;
   auto prog_lagrangian = dut.ConstructLagrangianProgram(
-      h_init, deriv_eps, lambda0_degree, l_degrees, &lambda0, &lambda0_gram, &l,
-      &l_grams, &hdot_sos, &hdot_monomials, &hdot_gram);
+      h_init, deriv_eps, lambda0_degree, l_degrees,
+      state_constraints_lagrangian_degrees, &lambda0, &lambda0_gram, &l,
+      &l_grams, &state_constraints_lagrangian, &hdot_sos, &hdot_monomials,
+      &hdot_gram);
   auto result_lagrangian = solvers::Solve(*prog_lagrangian);
   ASSERT_TRUE(result_lagrangian.is_success());
   const Eigen::MatrixXd lambda0_gram_sol =
@@ -146,15 +152,19 @@ TEST_F(SimpleLinearSystemTest, ControlBarrier) {
 
   const int t_degree = 0;
   const std::vector<int> s_degrees = {0, 0};
+  const std::vector<int> unsafe_state_constraints_lagrangian_degrees{};
   symbolic::Polynomial t;
   MatrixX<symbolic::Variable> t_gram;
   std::vector<VectorX<symbolic::Polynomial>> s(1);
   std::vector<std::vector<MatrixX<symbolic::Variable>>> s_grams(1);
+  VectorX<symbolic::Polynomial> unsafe_state_constraints_lagrangian;
   symbolic::Polynomial unsafe_sos_poly;
   MatrixX<symbolic::Variable> unsafe_sos_poly_gram;
   auto prog_unsafe = dut.ConstructUnsafeRegionProgram(
-      h_init, 0, t_degree, s_degrees, &t, &t_gram, &(s[0]), &(s_grams[0]),
-      &unsafe_sos_poly, &unsafe_sos_poly_gram);
+      h_init, 0, t_degree, s_degrees,
+      unsafe_state_constraints_lagrangian_degrees, &t, &t_gram, &(s[0]),
+      &(s_grams[0]), &unsafe_state_constraints_lagrangian, &unsafe_sos_poly,
+      &unsafe_sos_poly_gram);
   const auto result_unsafe = solvers::Solve(*prog_unsafe);
   ASSERT_TRUE(result_unsafe.is_success());
   const symbolic::Polynomial t_sol = result_unsafe.GetSolution(t);
@@ -180,6 +190,7 @@ TEST_F(SimpleLinearSystemTest, ControlBarrier) {
   SplitCandidateStates(h_init, x_, candidate_safe_states, &verified_safe_states,
                        &unverified_candidate_states);
 
+  const std::vector<int> hdot_state_constraints_lagrangian_degrees{};
   const int h_degree = 2;
   symbolic::Polynomial h;
   std::vector<symbolic::Polynomial> unsafe_sos_polys;
@@ -187,8 +198,9 @@ TEST_F(SimpleLinearSystemTest, ControlBarrier) {
   lambda0_sol = lambda0_sol.RemoveTermsWithSmallCoefficients(1e-10);
   const double eps = 1E-3;
   auto prog_barrier = dut.ConstructBarrierProgram(
-      lambda0_sol, l_sol, {t_sol}, h_degree, deriv_eps, {s_degrees}, &h,
-      &hdot_sos, &hdot_gram, &s, &s_grams, &unsafe_sos_polys,
+      lambda0_sol, l_sol, hdot_state_constraints_lagrangian_degrees, {t_sol},
+      {unsafe_state_constraints_lagrangian_degrees}, h_degree, deriv_eps,
+      {s_degrees}, &h, &hdot_sos, &hdot_gram, &s, &s_grams, &unsafe_sos_polys,
       &unsafe_sos_poly_grams);
   RemoveTinyCoeff(prog_barrier.get(), 1E-10);
   auto result_barrier = solvers::Solve(*prog_barrier);
@@ -239,12 +251,17 @@ TEST_F(SimpleLinearSystemTest, ControlBarrier) {
     auto prog_cost2 = prog_barrier->Clone();
     std::vector<ControlBarrier::Ellipsoid> ellipsoids;
     ellipsoids.emplace_back(Eigen::Vector2d(0.1, 0.5),
-                            Eigen::Matrix2d::Identity(), 0.5, 0.1, 1, 0.1, 0);
+                            Eigen::Matrix2d::Identity(), 0.5, 0.1, 1, 0.1, 0,
+                            std::vector<int>());
     ellipsoids.emplace_back(Eigen::Vector2d(0.1, -0.5),
-                            Eigen::Matrix2d::Identity(), 0.3, 0.1, 1, 0.1, 0);
+                            Eigen::Matrix2d::Identity(), 0.3, 0.1, 1, 0.1, 0,
+                            std::vector<int>());
     std::vector<symbolic::Polynomial> r;
     VectorX<symbolic::Variable> d;
-    dut.AddBarrierProgramCost(prog_cost2.get(), h, ellipsoids, &r, &d);
+    std::vector<VectorX<symbolic::Polynomial>>
+        ellipsoids_state_constraints_lagrangian;
+    dut.AddBarrierProgramCost(prog_cost2.get(), h, ellipsoids, &r, &d,
+                              &ellipsoids_state_constraints_lagrangian);
     Eigen::MatrixXd h_monomial_vals;
     VectorX<symbolic::Variable> h_coeff_vars;
     Eigen::Vector2d x_anchor(0.1, 0.2);
@@ -279,23 +296,31 @@ TEST_F(SimpleLinearSystemTest, ControlBarrierSearch) {
                 1, -1, 1, -1;
   // clang-format on
   u_vertices *= 10;
-  const ControlBarrier dut(f_, G_, x_, unsafe_regions, u_vertices);
+  const VectorX<symbolic::Polynomial> state_constraints(0);
+  const ControlBarrier dut(f_, G_, x_, unsafe_regions, u_vertices,
+                           state_constraints);
 
   const symbolic::Polynomial h_init(1 - x_(0) * x_(0) - x_(1) * x_(1));
   const int h_degree = 2;
   const double deriv_eps = 0.1;
   const int lambda0_degree = 2;
   const std::vector<int> l_degrees = {2, 2, 2, 2};
+  const std::vector<int> hdot_state_constraints_lagrangian_degrees{};
   const std::vector<int> t_degree = {0};
   const std::vector<std::vector<int>> s_degrees = {{0, 0}};
+  const std::vector<std::vector<int>>
+      unsafe_state_constraints_lagrangian_degrees = {{}};
 
   std::vector<ControlBarrier::Ellipsoid> ellipsoids;
   ellipsoids.emplace_back(Eigen::Vector2d(0.1, 0.2),
-                          Eigen::Matrix2d::Identity(), 0, 0, 2, 0.001, 0);
+                          Eigen::Matrix2d::Identity(), 0, 0, 2, 0.001, 0,
+                          std::vector<int>());
   ellipsoids.emplace_back(Eigen::Vector2d(0.5, -0.9),
-                          Eigen::Matrix2d::Identity(), 0, 0, 2, 0.001, 0);
+                          Eigen::Matrix2d::Identity(), 0, 0, 2, 0.001, 0,
+                          std::vector<int>());
   ellipsoids.emplace_back(Eigen::Vector2d(0.5, -1.9),
-                          Eigen::Matrix2d::Identity(), 0, 0, 2, 0.01, 0);
+                          Eigen::Matrix2d::Identity(), 0, 0, 2, 0.01, 0,
+                          std::vector<int>());
   const Eigen::Vector2d x_anchor(0.3, 0.5);
 
   ControlBarrier::SearchOptions search_options;
@@ -310,12 +335,18 @@ TEST_F(SimpleLinearSystemTest, ControlBarrierSearch) {
   symbolic::Polynomial h_sol;
   symbolic::Polynomial lambda0_sol;
   VectorX<symbolic::Polynomial> l_sol;
+  VectorX<symbolic::Polynomial> hdot_state_constraints_lagrangian;
   std::vector<symbolic::Polynomial> t_sol;
   std::vector<VectorX<symbolic::Polynomial>> s_sol;
+  std::vector<VectorX<symbolic::Polynomial>>
+      unsafe_state_constraints_lagrangian;
 
-  dut.Search(h_init, h_degree, deriv_eps, lambda0_degree, l_degrees, t_degree,
-             s_degrees, ellipsoids, x_anchor, search_options, &h_sol,
-             &lambda0_sol, &l_sol, &t_sol, &s_sol);
+  dut.Search(h_init, h_degree, deriv_eps, lambda0_degree, l_degrees,
+             hdot_state_constraints_lagrangian_degrees, t_degree, s_degrees,
+             unsafe_state_constraints_lagrangian_degrees, ellipsoids, x_anchor,
+             search_options, &h_sol, &lambda0_sol, &l_sol,
+             &hdot_state_constraints_lagrangian, &t_sol, &s_sol,
+             &unsafe_state_constraints_lagrangian);
 }
 
 TEST_F(SimpleLinearSystemTest, ConstructLagrangianAndBProgram) {

@@ -66,7 +66,9 @@ int DoMain() {
   u_vertices << 0, 0, thrust_max, thrust_max,
                 0, thrust_max, 0, thrust_max;
   // clang-format on
-  const ControlBarrier dut(f, G, x, unsafe_regions, u_vertices);
+  const VectorX<symbolic::Polynomial> state_constraints(0);
+  const ControlBarrier dut(f, G, x, unsafe_regions, u_vertices,
+                           state_constraints);
 
   // Construct h_init;
   const symbolic::Polynomial h_init(
@@ -75,11 +77,15 @@ int DoMain() {
   const double deriv_eps = 0.1;
   const int lambda0_degree = 4;
   const std::vector<int> l_degrees = {2, 2, 2, 2};
+  const std::vector<int> hdot_state_constraints_lagrangian_degrees{};
   const std::vector<int> t_degree = {0, 0};
   const std::vector<std::vector<int>> s_degrees = {{0}, {0}};
+  const std::vector<std::vector<int>>
+      unsafe_state_constraints_lagrangian_degrees{{}, {}};
   std::vector<ControlBarrier::Ellipsoid> ellipsoids;
-  ellipsoids.emplace_back(Vector6d::Zero(), Matrix6<double>::Identity(), 0., 0.,
-                          2, 0.001, 0);
+  ellipsoids.emplace_back(
+      Vector6d::Zero(), Matrix6<double>::Identity(), 0., 0., 2, 0.001, 0,
+      std::vector<int>() /* state_constraints_lagrangian_degree */);
   const Vector6d x_anchor = Vector6d::Zero();
   ControlBarrier::SearchOptions search_options;
   search_options.hsol_tiny_coeff_tol = 1E-8;
@@ -89,11 +95,17 @@ int DoMain() {
   symbolic::Polynomial h_sol;
   symbolic::Polynomial lambda0_sol;
   VectorX<symbolic::Polynomial> l_sol;
+  VectorX<symbolic::Polynomial> hdot_state_constraints_lagrangian_sol;
   std::vector<symbolic::Polynomial> t_sol;
   std::vector<VectorX<symbolic::Polynomial>> s_sol;
-  dut.Search(h_init, h_degree, deriv_eps, lambda0_degree, l_degrees, t_degree,
-             s_degrees, ellipsoids, x_anchor, search_options, &h_sol,
-             &lambda0_sol, &l_sol, &t_sol, &s_sol);
+  std::vector<VectorX<symbolic::Polynomial>>
+      unsafe_state_constraints_lagrangian_sol;
+  dut.Search(h_init, h_degree, deriv_eps, lambda0_degree, l_degrees,
+             hdot_state_constraints_lagrangian_degrees, t_degree, s_degrees,
+             unsafe_state_constraints_lagrangian_degrees, ellipsoids, x_anchor,
+             search_options, &h_sol, &lambda0_sol, &l_sol,
+             &hdot_state_constraints_lagrangian_sol, &t_sol, &s_sol,
+             &unsafe_state_constraints_lagrangian_sol);
   std::cout << "h_sol: " << h_sol << "\n";
   return 0;
 }

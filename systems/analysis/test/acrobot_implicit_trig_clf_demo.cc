@@ -1,4 +1,5 @@
 #include <iomanip>
+#include <iostream>
 #include <limits>
 
 #include "drake/examples/acrobot/acrobot_geometry.h"

@@ -1,4 +1,4 @@
-#include "examples/acrobot/gen/acrobot_params.h"
+#include <iostream>
 
 #include "drake/math/autodiff_gradient.h"
 #include "drake/solvers/common_solver_option.h"

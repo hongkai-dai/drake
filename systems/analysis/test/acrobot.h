@@ -5,6 +5,7 @@
  * This state = 0 when θ₁=π, θ₂=0, θ₁_dot=0, θ₂_dot=0
  */
 
+#include "drake/common/symbolic/polynomial.h"
 #include "drake/examples/acrobot/acrobot_plant.h"
 
 namespace drake {

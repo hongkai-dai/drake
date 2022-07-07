@@ -2,6 +2,8 @@
 
 #include <limits.h>
 
+#include <iostream>
+
 #include "drake/common/text_logging.h"
 #include "drake/math/matrix_util.h"
 #include "drake/solvers/choose_best_solver.h"

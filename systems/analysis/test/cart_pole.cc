@@ -1,6 +1,7 @@
 #include "drake/systems/analysis/test/cart_pole.h"
 
 #include <iomanip>
+#include <iostream>
 
 #include "drake/common/find_resource.h"
 #include "drake/geometry/meshcat_visualizer.h"

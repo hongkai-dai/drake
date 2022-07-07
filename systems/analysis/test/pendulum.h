@@ -1,7 +1,8 @@
 #pragma once
 
 #include "drake/common/drake_copyable.h"
-#include "drake/common/symbolic.h"
+#include "drake/common/symbolic/expression.h"
+#include "drake/common/symbolic/polynomial.h"
 #include "drake/examples/pendulum/pendulum_plant.h"
 #include "drake/systems/controllers/linear_quadratic_regulator.h"
 

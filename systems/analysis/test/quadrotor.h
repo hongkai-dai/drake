@@ -5,7 +5,8 @@
 #include "drake/common/default_scalars.h"
 #include "drake/common/drake_copyable.h"
 #include "drake/common/eigen_types.h"
-#include "drake/common/symbolic.h"
+#include "drake/common/symbolic/expression.h"
+#include "drake/common/symbolic/polynomial.h"
 #include "drake/math/roll_pitch_yaw.h"
 #include "drake/systems/framework/leaf_system.h"
 

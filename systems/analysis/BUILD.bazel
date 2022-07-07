@@ -117,7 +117,8 @@ drake_cc_library(
     srcs = ["clf_cbf_utils.cc"],
     hdrs = ["clf_cbf_utils.h"],
     deps = [
-        "//common:symbolic",
+        "//common/symbolic:expression",
+        "//common/symbolic:polynomial",
         "//math:gradient",
         "//solvers:mathematical_program",
         "//solvers:mathematical_program_result",
@@ -893,8 +894,10 @@ drake_cc_library(
     hdrs = ["test/pendulum.h"],
     deps = [
         "//common:essential",
-        "//common:symbolic",
+        "//common/symbolic:expression",
+        "//common/symbolic:polynomial",
         "//examples/pendulum:pendulum_plant",
+        "//math:gradient",
         "//systems/controllers:linear_quadratic_regulator",
         "//systems/framework:leaf_system",
     ],
@@ -919,8 +922,11 @@ drake_cc_library(
     hdrs = ["test/quadrotor2d.h"],
     deps = [
         "//common:essential",
-        "//common:symbolic",
+        "//common/symbolic:expression",
+        "//common/symbolic:polynomial",
+        "//math:geometric_transform",
         "//math:gradient",
+        "//systems/controllers:linear_quadratic_regulator",
         "//systems/framework:leaf_system",
         "//systems/controllers:linear_quadratic_regulator",
     ],
@@ -932,7 +938,9 @@ drake_cc_library(
     hdrs = ["test/quadrotor.h"],
     deps = [
         "//common:essential",
-        "//common:symbolic",
+        "//common/symbolic:expression",
+        "//common/symbolic:polynomial",
+        "//math:gradient",
         "//math:geometric_transform",
         "//systems/framework:leaf_system",
     ],
@@ -1078,7 +1086,7 @@ drake_cc_googletest(
     name = "quadrotor2d_test",
     deps = [
         ":quadrotor2d",
-        "//common:symbolic",
+        "//common/symbolic:polynomial",
         "//common/test_utilities:symbolic_test_util",
         "//common/test_utilities:eigen_matrix_compare",
     ],
@@ -1093,7 +1101,8 @@ drake_cc_library(
         ":simulator",
         ":simulator_config_functions",
         "//common:essential",
-        "//common:symbolic",
+        "//common/symbolic:expression",
+        "//common/symbolic:polynomial",
         "//geometry:scene_graph",
         "//geometry:meshcat_visualizer",
         "//math:geometric_transform",
@@ -1149,6 +1158,7 @@ drake_cc_library(
     hdrs = ["test/acrobot.h"],
     deps = [
         "//examples/acrobot:acrobot_plant",
+        "//common/symbolic:polynomial",
     ],
 )
 
@@ -1202,6 +1212,7 @@ drake_cc_library(
     hdrs = ["test/dubins_car.h"],
     srcs = ["test/dubins_car.cc"],
     deps = [
+        "//common/symbolic:polynomial",
         "//systems/framework:leaf_system",
     ],
 )

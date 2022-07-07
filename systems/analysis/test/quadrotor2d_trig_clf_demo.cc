@@ -1,5 +1,6 @@
 #include <math.h>
 
+#include <iostream>
 #include <limits>
 
 #include "drake/common/drake_copyable.h"

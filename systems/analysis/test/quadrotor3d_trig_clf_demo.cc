@@ -1,3 +1,5 @@
+#include <iostream>
+
 #include "drake/math/gray_code.h"
 #include "drake/solvers/mathematical_program.h"
 #include "drake/solvers/solve.h"

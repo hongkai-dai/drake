@@ -8,7 +8,8 @@
 #include <Eigen/Core>
 
 #include "drake/common/eigen_types.h"
-#include "drake/common/symbolic.h"
+#include "drake/common/symbolic/expression.h"
+#include "drake/common/symbolic/polynomial.h"
 #include "drake/systems/controllers/linear_quadratic_regulator.h"
 
 namespace drake {

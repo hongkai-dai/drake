@@ -4,7 +4,7 @@
 
 #include <gtest/gtest.h>
 
-#include "drake/common/symbolic_monomial_util.h"
+#include "drake/common/symbolic/monomial_util.h"
 #include "drake/common/test_utilities/symbolic_test_util.h"
 #include "drake/math/matrix_util.h"
 #include "drake/solvers/common_solver_option.h"

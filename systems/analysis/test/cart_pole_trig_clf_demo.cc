@@ -16,7 +16,6 @@ symbolic::Polynomial FindClfInit(
   lqr_Q_diag << 1, 1, 1, 10, 10;
   const Eigen::Matrix<double, 5, 5> lqr_Q = lqr_Q_diag.asDiagonal();
   const auto lqr_result = SynthesizeTrigLqr(params, lqr_Q, 10);
-
   const symbolic::Expression u_lqr = -lqr_result.K.row(0).dot(x);
   Eigen::Matrix<symbolic::Expression, 5, 1> n_expr;
   symbolic::Expression d_expr;
@@ -72,7 +71,6 @@ symbolic::Polynomial SearchWTrigDynamics(
     const Eigen::Matrix<symbolic::Variable, 5, 1>& x, double u_max,
     double deriv_eps, const std::optional<std::string>& load_V_init) {
   const int V_degree = 2;
-  symbolic::Polynomial V_init = FindClfInit(params, V_degree, x);
 
   Eigen::Matrix<symbolic::Polynomial, 5, 1> f;
   Eigen::Matrix<symbolic::Polynomial, 5, 1> G;
@@ -80,7 +78,6 @@ symbolic::Polynomial SearchWTrigDynamics(
   TrigPolyDynamics(params, x, &f, &G, &dynamics_denominator);
 
   const Vector1<symbolic::Polynomial> state_constraints(StateEqConstraint(x));
-  // Arbitrary maximal joint torque.
   const Eigen::RowVector2d u_vertices(-u_max, u_max);
   const ControlLyapunov dut(x, f, G, dynamics_denominator, u_vertices,
                             state_constraints);
@@ -91,29 +88,53 @@ symbolic::Polynomial SearchWTrigDynamics(
   symbolic::Polynomial lambda0;
   VectorX<symbolic::Polynomial> l;
   VectorX<symbolic::Polynomial> p;
+  symbolic::Polynomial V_init;
   if (load_V_init.has_value()) {
     V_init = Load(symbolic::Variables(x), load_V_init.value());
   } else {
+    V_init = FindClfInit(params, V_degree, x);
     // Now maximize rho to prove V(x)<=rho is an ROA
-    std::vector<MatrixX<symbolic::Variable>> l_grams;
-    symbolic::Variable rho_var;
-    symbolic::Polynomial vdot_sos;
-    VectorX<symbolic::Monomial> vdot_monomials;
-    MatrixX<symbolic::Variable> vdot_gram;
-    const int d_degree = lambda0_degree / 2 + 1;
-    auto prog = dut.ConstructLagrangianProgram(
-        V_init, symbolic::Polynomial(), d_degree, l_degrees, p_degrees,
-        deriv_eps, &l, &l_grams, &p, &rho_var, &vdot_sos, &vdot_monomials,
-        &vdot_gram);
-    solvers::SolverOptions solver_options;
-    solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
-    drake::log()->info("Maximize rho for the initial Clf");
-    const auto result = solvers::Solve(*prog, std::nullopt, solver_options);
-    DRAKE_DEMAND(result.is_success());
-    double rho_sol = result.GetSolution(rho_var);
-    std::cout << fmt::format("V_init(x) <= {}\n", rho_sol);
-    V_init = V_init / rho_sol;
-    V_init = V_init.RemoveTermsWithSmallCoefficients(1E-8);
+    const bool binary_search_rho = true;
+    if (binary_search_rho) {
+      double rho_sol;
+      symbolic::Polynomial lambda0_sol;
+      VectorX<symbolic::Polynomial> l_sol;
+      VectorX<symbolic::Polynomial> p_sol;
+      ControlLyapunov::SearchOptions search_options{};
+      search_options.lagrangian_step_solver_options = solvers::SolverOptions();
+      search_options.lagrangian_step_solver_options->SetOption(
+          solvers::CommonSolverOption::kPrintToConsole, 1);
+      search_options.lagrangian_tiny_coeff_tol = 1E-10;
+      bool found_rho = dut.FindRhoBinarySearch(
+          V_init, 0, 0.1, 5E-3, lambda0_degree, l_degrees, p_degrees, deriv_eps,
+          search_options, &rho_sol, &lambda0_sol, &l_sol, &p_sol);
+      if (found_rho) {
+        std::cout << "Binary search rho_sol: " << rho_sol << "\n";
+        V_init = V_init / rho_sol;
+      } else {
+        abort();
+      }
+    } else {
+      std::vector<MatrixX<symbolic::Variable>> l_grams;
+      symbolic::Variable rho_var;
+      symbolic::Polynomial vdot_sos;
+      VectorX<symbolic::Monomial> vdot_monomials;
+      MatrixX<symbolic::Variable> vdot_gram;
+      const int d_degree = lambda0_degree / 2 + 1;
+      auto prog = dut.ConstructLagrangianProgram(
+          V_init, symbolic::Polynomial(), d_degree, l_degrees, p_degrees,
+          deriv_eps, &l, &l_grams, &p, &rho_var, &vdot_sos, &vdot_monomials,
+          &vdot_gram);
+      solvers::SolverOptions solver_options;
+      solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
+      drake::log()->info("Maximize rho for the initial Clf");
+      const auto result = solvers::Solve(*prog, std::nullopt, solver_options);
+      DRAKE_DEMAND(result.is_success());
+      double rho_sol = result.GetSolution(rho_var);
+      std::cout << fmt::format("V_init(x) <= {}\n", rho_sol);
+      V_init = V_init / rho_sol;
+      V_init = V_init.RemoveTermsWithSmallCoefficients(1E-8);
+    }
   }
   symbolic::Polynomial V_sol;
   {
@@ -144,11 +165,11 @@ symbolic::Polynomial SearchWTrigDynamics(
     const bool search_inner_ellipsoid = true;
     if (search_inner_ellipsoid) {
       const double rho_min = 0.0001;
-      const double rho_max = 3;
+      const double rho_max = 2;
       const double rho_tol = 0.01;
       const std::vector<int> ellipsoid_c_lagrangian_degrees{{0}};
       Eigen::Matrix<double, 5, 1> x_star;
-      x_star << 0, 0, 0.2, 0, 0;
+      x_star << 0, 0, 0.0, 0, 0;
       Eigen::Matrix<double, 5, 5> S;
       S.setZero();
       S(0, 0) = 1;
@@ -171,7 +192,7 @@ symbolic::Polynomial SearchWTrigDynamics(
                  &rho_sol, &ellipsoid_c_lagrangian_sol);
     } else {
       Eigen::MatrixXd state_samples(4, 4);
-      state_samples.col(0) << 0, 1.1 * M_PI, 0, 0;
+      state_samples.col(0) << 0, 0, 0, 0;
       state_samples.col(1) << 0, 0.9 * M_PI, 0, 0;
       state_samples.col(2) << 0.2, 1.1 * M_PI, 0, 0;
       state_samples.col(3) << 0.2, 0.9 * M_PI, 0, 0;
@@ -208,8 +229,8 @@ int DoMain() {
   }
   const double u_max = 32;
   const double deriv_eps = 0.1;
-  const symbolic::Polynomial V_sol = SearchWTrigDynamics(
-      params, x, u_max, deriv_eps, "cart_pole_trig_clf1.txt");
+  const symbolic::Polynomial V_sol =
+      SearchWTrigDynamics(params, x, u_max, deriv_eps, std::nullopt);
   // const symbolic::Polynomial V_sol = Load(symbolic::Variables(x),
   // "cart_pole_trig_clf10.txt");
   const double duration = 200;
@@ -228,7 +249,8 @@ int DoMain() {
     x_samples.col(i) = ToTrigState<double>(state_samples.col(i));
   }
   std::cout << V_sol.EvaluateIndeterminates(x, x_samples) << "\n";
-  Simulate(params, x, V_sol, u_max, deriv_eps, state_samples.col(6), duration);
+  Simulate(params, x, V_sol, u_max, deriv_eps, Eigen::Vector4d::Zero(),
+           duration);
   // SearchWTrigDynamics("cart_pole_trig_clf.txt");
   return 0;
 }

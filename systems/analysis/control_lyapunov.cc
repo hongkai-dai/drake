@@ -331,7 +331,7 @@ bool ControlLyapunov::SearchLagrangian(
     GetPolynomialSolutions(result_lagrangian, p,
                            search_options.lsol_tiny_coeff_tol, p_sol);
   } else {
-    drake::log()->error("Faild to find Lagrangian.");
+    drake::log()->error("Failed to find Lagrangian.");
     return false;
   }
   return true;
@@ -361,10 +361,13 @@ bool ControlLyapunov::FindRhoBinarySearch(
     return false;
   }
   while (rho_max - rho_min > rho_tol) {
-    if (is_rho_feasible((rho_max + rho_min) / 2)) {
-      rho_min = (rho_max + rho_min) / 2;
+    const double rho_mid = (rho_max + rho_min) / 2;
+    drake::log()->info(fmt::format("rho_max={}, rho_min={}, rho_mid={}",
+                                   rho_max, rho_min, rho_mid));
+    if (is_rho_feasible(rho_mid)) {
+      rho_min = rho_mid;
     } else {
-      rho_max = (rho_max + rho_min) / 2;
+      rho_max = rho_mid;
     }
   }
   *rho_sol = rho_min;

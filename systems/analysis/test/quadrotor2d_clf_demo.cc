@@ -1,5 +1,6 @@
 #include <math.h>
 
+#include <iostream>
 #include <limits>
 
 #include "drake/common/drake_copyable.h"
@@ -36,8 +37,10 @@ const double kInf = std::numeric_limits<double>::infinity();
   const Eigen::Vector4d bu(thrust_max, thrust_max, 0, 0);
   const Eigen::Vector2d u_star(0, 0);
   const Eigen::Matrix2d Ru = Eigen::Matrix2d::Identity();
+  const double vdot_cost = 0;
   auto clf_controller = builder.AddSystem<ClfController>(
-      x, f, G, clf, deriv_eps, Au, bu, u_star, Ru);
+      x, f, G, std::nullopt /* dynamics numerator */, clf, deriv_eps, Au, bu,
+      u_star, Ru, vdot_cost);
 
   auto state_logger =
       LogVectorOutput(quadrotor->get_state_output_port(), &builder);

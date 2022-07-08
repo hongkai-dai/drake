@@ -1,5 +1,6 @@
 #include <math.h>
 
+#include <iostream>
 #include <limits>
 
 #include "drake/common/drake_copyable.h"
@@ -50,8 +51,10 @@ void Simulate(const Vector2<symbolic::Variable>& x, double theta_des,
   Vector2<symbolic::Polynomial> G;
   ControlAffineDynamics(*pendulum, x, theta_des, &f, &G);
 
+  const double vdot_cost = 0;
   auto clf_controller = builder.AddSystem<ClfController>(
-      x, f, G, clf, deriv_eps, Au, bu, u_star, Ru);
+      x, f, G, std::nullopt /* dynamics numerator */, clf, deriv_eps, Au, bu,
+      u_star, Ru, vdot_cost);
   auto state_logger =
       LogVectorOutput(pendulum->get_state_output_port(), &builder);
   auto clf_logger = LogVectorOutput(
@@ -111,9 +114,11 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
   Vector3<symbolic::Polynomial> G;
   TrigPolyDynamics(*pendulum, x, theta_des, &f, &G);
   Vector1d u_star(0);
+  const double vdot_cost = 0;
   auto clf_controller = builder.AddSystem<ClfController>(
-      x, f, G, clf, deriv_eps, Eigen::Vector2d(1, -1),
-      Eigen::Vector2d(u_bound, u_bound), u_star, Vector1d::Ones());
+      x, f, G, std::nullopt /* dynamics numerator */, clf, deriv_eps,
+      Eigen::Vector2d(1, -1), Eigen::Vector2d(u_bound, u_bound), u_star,
+      Vector1d::Ones(), vdot_cost);
 
   auto state_converter = builder.AddSystem<TrigStateConverter>(theta_des);
 

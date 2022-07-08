@@ -163,7 +163,7 @@ void MaximizeInnerEllipsoidRho(
   *s_sol = result.GetSolution(s);
 }
 
-void MaximizeInnerEllipsoidRho(
+bool MaximizeInnerEllipsoidRho(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
     const Eigen::Ref<const Eigen::VectorXd>& x_star,
     const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& f,
@@ -217,10 +217,11 @@ void MaximizeInnerEllipsoidRho(
   if (!is_feasible(rho_min)) {
     drake::log()->error("MaximizeEllipsoidRho: rho_min={} is infeasible",
                         rho_min);
+    return false;
   }
   if (is_feasible(rho_max)) {
     *rho_sol = rho_max;
-    return;
+    return true;
   }
   while (rho_max - rho_min > rho_tol) {
     const double rho_mid = (rho_max + rho_min) / 2;
@@ -231,6 +232,7 @@ void MaximizeInnerEllipsoidRho(
     }
   }
   *rho_sol = rho_min;
+  return true;
 }
 
 void GetPolynomialSolutions(const solvers::MathematicalProgramResult& result,
@@ -558,6 +560,9 @@ Eigen::MatrixXd Meshgrid(const std::vector<Eigen::VectorXd>& x) {
 void Save(const symbolic::Polynomial& p, const std::string& file_name) {
   std::ofstream outfile;
   outfile.open(file_name, std::ios::out);
+  if (outfile.fail()) {
+    throw std::runtime_error("Cannot save to " + file_name);
+  }
   std::unordered_map<symbolic::Variable::Id, int> var_to_index;
   int indeterminate_count = 0;
   for (const auto& x : p.indeterminates()) {
@@ -568,7 +573,7 @@ void Save(const symbolic::Polynomial& p, const std::string& file_name) {
   for (const auto& [monomial, coeff] : p.monomial_to_coefficient_map()) {
     DRAKE_DEMAND(symbolic::is_constant(coeff));
     std::string term;
-    term.append(fmt::format("{:.10f} ", symbolic::get_constant_value(coeff)));
+    term.append(fmt::format("{:.15f} ", symbolic::get_constant_value(coeff)));
     for (const auto& [var, degree] : monomial.get_powers()) {
       term.append(
           fmt::format("{} {}, ", var_to_index.at(var.get_id()), degree));
@@ -583,6 +588,9 @@ symbolic::Polynomial Load(const symbolic::Variables& indeterminates,
                           const std::string& file_name) {
   std::ifstream infile;
   infile.open(file_name);
+  if (infile.fail()) {
+    throw std::runtime_error("Cannot open file " + file_name);
+  }
 
   std::string line;
   std::getline(infile, line);
@@ -767,13 +775,85 @@ double SmallestCoeff(const solvers::Binding<C>& binding) {
   return ret;
 }
 
-[[maybe_unused]] double SmallestCoeff(
-    const solvers::MathematicalProgram& prog) {
+double SmallestCoeff(const solvers::MathematicalProgram& prog) {
   double ret = kInf;
   for (const auto& binding : prog.linear_equality_constraints()) {
     ret = std::min(ret, std::abs(SmallestCoeff(binding)));
   }
   return ret;
+}
+
+template <typename C>
+double LargestCoeff(const solvers::Binding<C>& binding) {
+  double ret = 0;
+  const Eigen::SparseMatrix<double>& A = binding.evaluator()->get_sparse_A();
+  for (int i = 0; i < A.cols(); ++i) {
+    for (Eigen::SparseMatrix<double>::InnerIterator it(A, i); it; ++it) {
+      if (std::abs(it.value()) > std::abs(ret) && it.value() != 0) {
+        ret = it.value();
+      }
+    }
+  }
+  return ret;
+}
+double LargestCoeff(const solvers::MathematicalProgram& prog) {
+  double ret = 0;
+  for (const auto& binding : prog.linear_equality_constraints()) {
+    ret = std::max(ret, std::abs(LargestCoeff(binding)));
+  }
+  return ret;
+}
+
+void OptimizePolynomialAtSamples(
+    solvers::MathematicalProgram* prog, const symbolic::Polynomial& p,
+    const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+    const Eigen::Ref<const Eigen::MatrixXd>& x_samples,
+    OptimizePolynomialMode optimize_polynomial_mode) {
+  // Evaluate p at x_samples.
+  Eigen::MatrixXd A_samples;
+  VectorX<symbolic::Variable> decision_variables_samples;
+  Eigen::VectorXd b_samples;
+  p.EvaluateWithAffineCoefficients(x, x_samples, &A_samples,
+                                   &decision_variables_samples, &b_samples);
+  switch (optimize_polynomial_mode) {
+    case OptimizePolynomialMode::kMinimizeMaximal: {
+      // Add a slack variable max_sample with the constraint
+      // A_samples * decision_variable_samples + b_samples <= max_sample.
+      const auto max_sample = prog->NewContinuousVariables<1>("p_max");
+      Eigen::MatrixXd A(A_samples.rows(), A_samples.cols() + 1);
+      A.leftCols(A_samples.cols()) = A_samples;
+      A.rightCols<1>() = -Eigen::VectorXd::Ones(A.rows());
+      prog->AddLinearConstraint(A, Eigen::VectorXd::Constant(A.rows(), -kInf),
+                                -b_samples,
+                                {decision_variables_samples, max_sample});
+      prog->AddLinearCost(Vector1d::Ones(), 0, max_sample);
+      break;
+    }
+    case OptimizePolynomialMode::kMinimizeSum: {
+      prog->AddLinearCost(A_samples.colwise().sum(), b_samples.sum(),
+                          decision_variables_samples);
+      break;
+    }
+    case OptimizePolynomialMode::kMaximizeMinimal: {
+      // Add a slack variable min_sample with the constraint
+      // A_samples * decision_variable_samples + b_samples >= min_sample.
+      const auto min_sample = prog->NewContinuousVariables<1>("p_min");
+      Eigen::MatrixXd A(A_samples.rows(), A_samples.cols() + 1);
+      A.leftCols(A_samples.cols()) = A_samples;
+      A.rightCols<1>() = -Eigen::VectorXd::Ones(A.rows());
+      prog->AddLinearConstraint(A, -b_samples,
+                                Eigen::VectorXd::Constant(A.rows(), kInf),
+
+                                {decision_variables_samples, min_sample});
+      prog->AddLinearCost(-Vector1d::Ones(), 0, min_sample);
+      break;
+    }
+    case OptimizePolynomialMode::kMaximizeSum: {
+      prog->AddLinearCost(-A_samples.colwise().sum(), -b_samples.sum(),
+                          decision_variables_samples);
+      break;
+    }
+  }
 }
 
 namespace internal {

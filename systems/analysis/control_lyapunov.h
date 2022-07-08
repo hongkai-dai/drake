@@ -253,7 +253,6 @@ class ControlLyapunov {
     return u_vertices_;
   }
 
- private:
   bool SearchLagrangian(const symbolic::Polynomial& V, double rho,
                         int lambda0_degree, const std::vector<int>& l_degrees,
                         const std::vector<int>& p_degrees, double deriv_eps,
@@ -261,6 +260,22 @@ class ControlLyapunov {
                         symbolic::Polynomial* lambda0,
                         VectorX<symbolic::Polynomial>* l,
                         VectorX<symbolic::Polynomial>* p) const;
+
+  /**
+   * Fix V, find rho through binary search such that V(x)<=rho satisfies the
+   * control Lyapunov condition. Note that we don't check the positivity of V.
+   * @return found_rho A flag whether rho is found or not.
+   */
+  bool FindRhoBinarySearch(const symbolic::Polynomial& V, double rho_min,
+                           double rho_max, double rho_tol, int lambda0_degree,
+                           const std::vector<int>& l_degrees,
+                           const std::vector<int>& p_degrees, double deriv_eps,
+                           const SearchOptions& search_options, double* rho_sol,
+                           symbolic::Polynomial* lambda0,
+                           VectorX<symbolic::Polynomial>* l,
+                           VectorX<symbolic::Polynomial>* p) const;
+
+ private:
   // The indeterminates as the state.
   VectorX<symbolic::Variable> x_;
   symbolic::Variables x_set_;
@@ -272,7 +287,9 @@ class ControlLyapunov {
 };
 
 /**
- * Compute V̇(x, u) = ∂V/∂x * (f(x)+G(x)u)
+ * Compute V̇(x, u) = ∂V/∂x * (f(x)/n(x)+G(x)/n(x)*u)
+ * @param dynamics_numerator n(x) in the documentation above. If
+ * dynamics_numerator=std::nullopt, then n(x) = 1.
  */
 class VdotCalculator {
  public:
@@ -280,6 +297,7 @@ class VdotCalculator {
                  const symbolic::Polynomial& V,
                  const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
                  const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
+                 const std::optional<symbolic::Polynomial>& dynamics_numerator,
                  const Eigen::Ref<const Eigen::MatrixXd>& u_vertices);
 
   symbolic::Polynomial Calc(const Eigen::Ref<const Eigen::VectorXd>& u) const;
@@ -296,6 +314,7 @@ class VdotCalculator {
 
  private:
   VectorX<symbolic::Variable> x_;
+  std::optional<symbolic::Polynomial> dynamics_numerator_;
   Eigen::MatrixXd u_vertices_;
   symbolic::Polynomial dVdx_times_f_;
   RowVectorX<symbolic::Polynomial> dVdx_times_G_;
@@ -722,8 +741,8 @@ class ControlLyapunovBoxInputBound {
 
 /**
  * Computes the control action through the QP
- * min (u−u*)ᵀRᵤ(u−u*)
- * s.t ∂V/∂x*(f(x)+G(x)u)≤ −εV
+ * min (u−u*)ᵀRᵤ(u−u*) + k*∂V/∂x*(f(x)/n(x)+G(x)/n(x)*u)
+ * s.t ∂V/∂x*(f(x)/n(x)+G(x)/n(x)*u)≤ −εV
  *     Aᵤ*u ≤ bᵤ
  */
 class ClfController : public LeafSystem<double> {
@@ -731,16 +750,21 @@ class ClfController : public LeafSystem<double> {
   DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(ClfController)
 
   /**
+   * @param dynamics_numerator. n(x) in the documentation above. If
+   * dynamics_numerator = std::nullopt, then n(x)=1.
    * @param u_star If u_star=nullptr, then we use u in the previous step as u*
+   * @param vdot_cost k in the documentation above.
    */
   ClfController(const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
                 const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
                 const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
+                const std::optional<symbolic::Polynomial>& dynamics_numerator,
+
                 symbolic::Polynomial V, double deriv_eps,
                 const Eigen::Ref<const Eigen::MatrixXd>& Au,
                 const Eigen::Ref<const Eigen::VectorXd>& bu,
                 const std::optional<Eigen::VectorXd>& u_star,
-                const Eigen::Ref<const Eigen::MatrixXd>& Ru);
+                const Eigen::Ref<const Eigen::MatrixXd>& Ru, double Vdot_cost);
 
   ~ClfController() {}
 
@@ -765,12 +789,14 @@ class ClfController : public LeafSystem<double> {
   VectorX<symbolic::Variable> x_;
   VectorX<symbolic::Polynomial> f_;
   MatrixX<symbolic::Polynomial> G_;
+  std::optional<symbolic::Polynomial> dynamics_numerator_;
   symbolic::Polynomial V_;
   double deriv_eps_;
   Eigen::MatrixXd Au_;
   Eigen::VectorXd bu_;
   mutable std::optional<Eigen::VectorXd> u_star_;
   Eigen::MatrixXd Ru_;
+  double vdot_cost_;
   symbolic::Polynomial dVdx_times_f_;
   RowVectorX<symbolic::Polynomial> dVdx_times_G_;
   OutputPortIndex control_output_index_;

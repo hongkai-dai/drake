@@ -44,7 +44,9 @@ class ControlBarrier {
                  const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
                  const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
                  std::vector<VectorX<symbolic::Polynomial>> unsafe_regions,
-                 const Eigen::Ref<const Eigen::MatrixXd>& u_vertices);
+                 const Eigen::Ref<const Eigen::MatrixXd>& u_vertices,
+                 const Eigen::Ref<const VectorX<symbolic::Polynomial>>&
+                     state_eq_constraints);
 
   /**
    * A helper function to add the constraint
@@ -52,14 +54,13 @@ class ControlBarrier {
    * @param[out] monomials The monomial basis of this sos constraint.
    * @param[out] gram The Gram matrix of this sos constraint.
    */
-  void AddControlBarrierConstraint(solvers::MathematicalProgram* prog,
-                                   const symbolic::Polynomial& lambda0,
-                                   const VectorX<symbolic::Polynomial>& l,
-                                   const symbolic::Polynomial& h,
-                                   double deriv_eps,
-                                   symbolic::Polynomial* hdot_poly,
-                                   VectorX<symbolic::Monomial>* monomials,
-                                   MatrixX<symbolic::Variable>* gram) const;
+  void AddControlBarrierConstraint(
+      solvers::MathematicalProgram* prog, const symbolic::Polynomial& lambda0,
+      const VectorX<symbolic::Polynomial>& l,
+      const VectorX<symbolic::Polynomial>& state_constraints_lagrangian,
+      const symbolic::Polynomial& h, double deriv_eps,
+      symbolic::Polynomial* hdot_poly, VectorX<symbolic::Monomial>* monomials,
+      MatrixX<symbolic::Variable>* gram) const;
 
   /**
    * Given the CBF h(x), constructs the program to find the Lagrangian λ₀(x) and
@@ -71,28 +72,33 @@ class ControlBarrier {
    */
   std::unique_ptr<solvers::MathematicalProgram> ConstructLagrangianProgram(
       const symbolic::Polynomial& h, double deriv_eps, int lambda0_degree,
-      const std::vector<int>& l_degrees, symbolic::Polynomial* lambda0,
-      MatrixX<symbolic::Variable>* lambda0_gram,
+      const std::vector<int>& l_degrees,
+      const std::vector<int>& state_constraints_lagrangian_degrees,
+      symbolic::Polynomial* lambda0, MatrixX<symbolic::Variable>* lambda0_gram,
       VectorX<symbolic::Polynomial>* l,
       std::vector<MatrixX<symbolic::Variable>>* l_grams,
+      VectorX<symbolic::Polynomial>* state_constraints_lagrangian,
       symbolic::Polynomial* hdot_sos,
       VectorX<symbolic::Monomial>* hdot_monomials,
       MatrixX<symbolic::Variable>* hdot_gram) const;
 
   /**
-   * Given h(x), find the Lagrangian t(x) and sⱼ(x) to prove that the j'th
+   * Given h(x), find the Lagrangian tⱼ(x) and sⱼ(x) to prove that the j'th
    * unsafe region is within the sub-level set {x | h(x)<=0}
    * <pre>
-   * (1 + t(x))*(-h(x)) + sⱼ(x)ᵀpⱼ(x) is sos
+   * (1 + tⱼ(x))*(-h(x)) + sⱼ(x)ᵀpⱼ(x) is sos
    * t(x) is sos
    * sⱼ(x) is sos.
    * </pre>
    */
   std::unique_ptr<solvers::MathematicalProgram> ConstructUnsafeRegionProgram(
       const symbolic::Polynomial& h, int region_index, int t_degree,
-      const std::vector<int>& s_degrees, symbolic::Polynomial* t,
-      MatrixX<symbolic::Variable>* t_gram, VectorX<symbolic::Polynomial>* s,
+      const std::vector<int>& s_degrees,
+      const std::vector<int>& unsafe_state_constraints_lagrangian_degrees,
+      symbolic::Polynomial* t, MatrixX<symbolic::Variable>* t_gram,
+      VectorX<symbolic::Polynomial>* s,
       std::vector<MatrixX<symbolic::Variable>>* s_grams,
+      VectorX<symbolic::Polynomial>* unsafe_state_constraints_lagrangian,
       symbolic::Polynomial* sos_poly,
       MatrixX<symbolic::Variable>* sos_poly_gram) const;
 
@@ -102,7 +108,7 @@ class ControlBarrier {
    * <pre>
    * max ∑ᵢ min(h(xⁱ), eps),   xⁱ ∈ unverified_candidate_states
    * s.t (1+λ₀(x))(−1 − h(x)) −∑ᵢlᵢ(x)(−εh − ∂h/∂xf(x)−∂h/∂xG(x)uⁱ) is sos
-   *     (1 + t(x))*(-h(x)) + sⱼ(x)ᵀpⱼ(x) is sos
+   *     (1 + tⱼ(x))*(-h(x)) + sⱼ(x)ᵀpⱼ(x) is sos
    *     sⱼ(x) is sos.
    *     h(xʲ) >= 0, xʲ ∈ verified_safe_states
    * </pre>
@@ -111,9 +117,13 @@ class ControlBarrier {
   std::unique_ptr<solvers::MathematicalProgram> ConstructBarrierProgram(
       const symbolic::Polynomial& lambda0,
       const VectorX<symbolic::Polynomial>& l,
-      const std::vector<symbolic::Polynomial>& t, int h_degree,
-      double deriv_eps, const std::vector<std::vector<int>>& s_degrees,
-      symbolic::Polynomial* h, symbolic::Polynomial* hdot_sos,
+      const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
+      const std::vector<symbolic::Polynomial>& t,
+      const std::vector<std::vector<int>>&
+          unsafe_state_constraints_lagrangian_degrees,
+      int h_degree, double deriv_eps,
+      const std::vector<std::vector<int>>& s_degrees, symbolic::Polynomial* h,
+      symbolic::Polynomial* hdot_sos,
       MatrixX<symbolic::Variable>* hdot_sos_gram,
       std::vector<VectorX<symbolic::Polynomial>>* s,
       std::vector<std::vector<MatrixX<symbolic::Variable>>>* s_grams,
@@ -141,14 +151,17 @@ class ControlBarrier {
     Ellipsoid(const Eigen::Ref<const Eigen::VectorXd>& m_c,
               const Eigen::Ref<const Eigen::MatrixXd>& m_S, double m_rho,
               double m_rho_min, double m_rho_max, double m_rho_tol,
-              int m_r_degree)
+              int m_r_degree,
+              std::vector<int> m_state_constraints_lagrangian_degrees)
         : c{m_c},
           S{m_S},
           rho{m_rho},
           rho_min{m_rho_min},
           rho_max{m_rho_max},
           rho_tol{m_rho_tol},
-          r_degree{m_r_degree} {
+          r_degree{m_r_degree},
+          state_constraints_lagrangian_degrees{
+              std::move(m_state_constraints_lagrangian_degrees)} {
       DRAKE_DEMAND(c.rows() == S.rows());
       DRAKE_DEMAND(c.rows() == S.cols());
       DRAKE_DEMAND(rho_min <= rho);
@@ -163,6 +176,7 @@ class ControlBarrier {
     double rho_max;
     double rho_tol;
     int r_degree;
+    std::vector<int> state_constraints_lagrangian_degrees;
   };
 
   /**
@@ -176,7 +190,9 @@ class ControlBarrier {
                              const symbolic::Polynomial& h,
                              const std::vector<Ellipsoid>& inner_ellipsoids,
                              std::vector<symbolic::Polynomial>* r,
-                             VectorX<symbolic::Variable>* d) const;
+                             VectorX<symbolic::Variable>* d,
+                             std::vector<VectorX<symbolic::Polynomial>>*
+                                 ellipsoids_state_constraints_lagrangian) const;
 
   struct SearchOptions {
     solvers::SolverId barrier_step_solver{solvers::MosekSolver::id()};
@@ -210,15 +226,21 @@ class ControlBarrier {
   void Search(const symbolic::Polynomial& h_init, int h_degree,
               double deriv_eps, int lambda0_degree,
               const std::vector<int>& l_degrees,
+              const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
               const std::vector<int>& t_degree,
               const std::vector<std::vector<int>>& s_degrees,
+              const std::vector<std::vector<int>>&
+                  unsafe_state_constraints_lagrangian_degrees,
               const std::vector<ControlBarrier::Ellipsoid>& ellipsoids,
               const Eigen::Ref<const Eigen::VectorXd>& x_anchor,
               const SearchOptions& search_options, symbolic::Polynomial* h_sol,
               symbolic::Polynomial* lambda0_sol,
               VectorX<symbolic::Polynomial>* l_sol,
+              VectorX<symbolic::Polynomial>* hdot_state_constraints_lagrangian,
               std::vector<symbolic::Polynomial>* t_sol,
-              std::vector<VectorX<symbolic::Polynomial>>* s_sol) const;
+              std::vector<VectorX<symbolic::Polynomial>>* s_sol,
+              std::vector<VectorX<symbolic::Polynomial>>*
+                  unsafe_state_constraints_lagrangian) const;
 
   /**
    * Search Lagrangian multiplier λ₀(x), l(x), t(x), s(x) to prove that h(x) is
@@ -227,12 +249,19 @@ class ControlBarrier {
    */
   bool SearchLagrangian(
       const symbolic::Polynomial& h, double deriv_eps, int lambda0_degree,
-      const std::vector<int>& l_degrees, const std::vector<int>& t_degree,
+      const std::vector<int>& l_degrees,
+      const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
+      const std::vector<int>& t_degree,
       const std::vector<std::vector<int>>& s_degrees,
+      const std::vector<std::vector<int>>&
+          unsafe_state_constraints_lagrangian_degrees,
       const SearchOptions& search_options, symbolic::Polynomial* lambda0_sol,
       VectorX<symbolic::Polynomial>* l_sol,
+      VectorX<symbolic::Polynomial>* hdot_state_constraints_lagrangian,
       std::vector<symbolic::Polynomial>* t_sol,
-      std::vector<VectorX<symbolic::Polynomial>>* s_sol) const;
+      std::vector<VectorX<symbolic::Polynomial>>* s_sol,
+      std::vector<VectorX<symbolic::Polynomial>>*
+          unsafe_state_constraints_lagrangian) const;
 
  private:
   VectorX<symbolic::Polynomial> f_;
@@ -243,6 +272,7 @@ class ControlBarrier {
   symbolic::Variables x_set_;
   std::vector<VectorX<symbolic::Polynomial>> unsafe_regions_;
   Eigen::MatrixXd u_vertices_;
+  VectorX<symbolic::Polynomial> state_eq_constraints_;
 };
 
 /**

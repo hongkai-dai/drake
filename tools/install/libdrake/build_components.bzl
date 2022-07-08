@@ -13,6 +13,7 @@ LIBDRAKE_COMPONENTS = [
     "//common",
     "//common/proto",
     "//common/schema",
+    "//common/symbolic",
     "//common/trajectories",
     "//common/yaml",
     "//common:drake_marker_shared_library",  # unpackaged
@@ -44,6 +45,7 @@ LIBDRAKE_COMPONENTS = [
     "//geometry/query_results",
     "//geometry/render/gl_renderer",
     "//geometry/render/shaders",
+    "//geometry/render_gl",
     "//geometry/render_gltf_client",
     "//geometry/render_vtk",
     "//lcm",

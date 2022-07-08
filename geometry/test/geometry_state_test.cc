@@ -22,7 +22,7 @@
 #include "drake/geometry/geometry_set.h"
 #include "drake/geometry/geometry_version.h"
 #include "drake/geometry/internal_frame.h"
-#include "drake/geometry/make_mesh_for_deformable.h"
+#include "drake/geometry/proximity/make_sphere_mesh.h"
 #include "drake/geometry/render/render_label.h"
 #include "drake/geometry/shape_specification.h"
 #include "drake/geometry/test_utilities/dummy_render_engine.h"
@@ -104,23 +104,36 @@ class GeometryStateTester {
   }
 
   const IdPoseMap<T>& get_geometry_world_poses() const {
-    return state_->X_WGs_;
+    return state_->kinematics_data_.X_WGs;
   }
 
   const vector<RigidTransform<T>>& get_frame_world_poses() const {
-    return state_->X_WF_;
+    return state_->kinematics_data_.X_WFs;
   }
 
   const vector<RigidTransform<T>>& get_frame_parent_poses() const {
-    return state_->X_PF_;
+    return state_->kinematics_data_.X_PFs;
   }
 
-  void SetFramePoses(SourceId source_id, const FramePoseVector<T>& poses) {
-    state_->SetFramePoses(source_id, poses);
+  internal::KinematicsData<T>& mutable_kinematics_data() const {
+    return state_->mutable_kinematics_data();
+  }
+
+  void SetFramePoses(SourceId source_id, const FramePoseVector<T>& poses,
+     internal::KinematicsData<T>* kinematics_data) {
+    state_->SetFramePoses(source_id, poses, kinematics_data);
+  }
+
+  void SetGeometryConfiguration(
+      SourceId source_id, const GeometryConfigurationVector<T>& configuration,
+      internal::KinematicsData<T>* kinematics_data) {
+    state_->SetGeometryConfiguration(source_id, configuration, kinematics_data);
   }
 
   void FinalizePoseUpdate() {
-    state_->FinalizePoseUpdate();
+    state_->FinalizePoseUpdate(state_->kinematics_data_,
+                               &state_->mutable_proximity_engine(),
+                               state_->GetMutableRenderEngines());
   }
 
   template <typename ValueType>
@@ -1031,7 +1044,8 @@ TEST_F(GeometryStateTest, ValidateSingleSourceTree) {
     for (int f = 0; f < static_cast<int>(frames_.size()); ++f) {
       poses.set_value(frames_[f], X_PFs_[f]);
     }
-    gs_tester_.SetFramePoses(s_id, poses);
+    gs_tester_.SetFramePoses(
+        s_id, poses, &gs_tester_.mutable_kinematics_data());
     gs_tester_.FinalizePoseUpdate();
 
     test_frame(0, gs_tester_.get_world_frame(), 0);
@@ -1389,7 +1403,7 @@ TEST_F(GeometryStateTest, AddGeometryUpdatesX_WG) {
   for (int f = 0; f < static_cast<int>(frames_.size()); ++f) {
     poses.set_value(frames_[f], X_PFs_[f]);
   }
-  gs_tester_.SetFramePoses(s_id, poses);
+  gs_tester_.SetFramePoses(s_id, poses, &gs_tester_.mutable_kinematics_data());
   gs_tester_.FinalizePoseUpdate();
 
   // Registering a geometry to a frame F should report X_WG = X_WF * X_FG.
@@ -1607,7 +1621,10 @@ TEST_F(GeometryStateTest, RegisterDeformableGeometry) {
   const FrameId f_id = geometry_state_.RegisterFrame(s_id, *frame_);
   const Sphere sphere(1.0);
   constexpr double kRezHint = 0.5;
-  VolumeMesh<double> mesh = internal::MakeMeshForDeformable(sphere, kRezHint);
+  const VolumeMesh<double> expected_mesh =
+      internal::MakeSphereVolumeMesh<double>(
+          sphere, kRezHint,
+          internal::TessellationStrategy::kDenseInteriorVertices);
 
   /* Adding a deformable geometry to non-world frame throws. */
   auto instance1 = make_unique<GeometryInstance>(
@@ -1637,7 +1654,7 @@ TEST_F(GeometryStateTest, RegisterDeformableGeometry) {
   const VolumeMesh<double>* reference_mesh =
       geometry_state_.GetReferenceMesh(g_id);
   ASSERT_NE(reference_mesh, nullptr);
-  EXPECT_TRUE(reference_mesh->Equal(mesh));
+  EXPECT_TRUE(reference_mesh->Equal(expected_mesh));
 
   // Verify querying pose on deformable geometry throws. (Deformable geometries
   // are characterized by vertex positions.)
@@ -1649,11 +1666,12 @@ TEST_F(GeometryStateTest, RegisterDeformableGeometry) {
   // TODO(xuchenhan-tri): Strengthen this test when we can set vertex positions.
   const VectorX<double>& q_WG =
       geometry_state_.get_configurations_in_world(g_id);
-  EXPECT_EQ(q_WG.size(), mesh.num_vertices() * 3);
+  EXPECT_EQ(q_WG.size(), expected_mesh.num_vertices() * 3);
 
   // Verify that deformable geometries are dynamic (One deformable and one
   // dynamic non-deformable).
   EXPECT_EQ(geometry_state_.NumDynamicGeometries(), 2);
+  EXPECT_EQ(geometry_state_.NumDeformableGeometries(), 1);
 
   // Verifies that GetAllDeformableGeometryIds() collect all deformable
   // geometry ids and _none_ of the non-deformable geometry ids.
@@ -1661,6 +1679,27 @@ TEST_F(GeometryStateTest, RegisterDeformableGeometry) {
       geometry_state_.GetAllDeformableGeometryIds();
   ASSERT_EQ(deformable_ids.size(), 1);
   EXPECT_EQ(deformable_ids[0], g_id);
+}
+
+TEST_F(GeometryStateTest, SetGeometryConfiguration) {
+  const SourceId s_id = NewSource("new source");
+  auto instance = make_unique<GeometryInstance>(
+      RigidTransformd::Identity(), make_unique<Sphere>(1.0), "sphere");
+  const auto g_id = geometry_state_.RegisterDeformableGeometry(
+      s_id, InternalFrame::world_frame_id(), move(instance),
+      /* resolution_hint */ 0.5);
+  const VectorX<double> default_configuration =
+      geometry_state_.get_configurations_in_world(g_id);
+  VectorX<double> new_configuration(default_configuration.size());
+  new_configuration.setZero();
+  EXPECT_FALSE(CompareMatrices(default_configuration, new_configuration, 0.1));
+
+  GeometryConfigurationVector<double> configurations;
+  configurations.set_value(g_id, new_configuration);
+  gs_tester_.SetGeometryConfiguration(
+      s_id, configurations, &gs_tester_.mutable_kinematics_data());
+  EXPECT_EQ(new_configuration,
+            geometry_state_.get_configurations_in_world(g_id));
 }
 
 // Tests the RemoveGeometry() functionality. This action will have several
@@ -1681,7 +1720,7 @@ TEST_F(GeometryStateTest, RemoveGeometry) {
   for (int f = 0; f < static_cast<int>(frames_.size()); ++f) {
     poses.set_value(frames_[f], X_PFs_[f]);
   }
-  gs_tester_.SetFramePoses(s_id, poses);
+  gs_tester_.SetFramePoses(s_id, poses, &gs_tester_.mutable_kinematics_data());
   gs_tester_.FinalizePoseUpdate();
 
   // The geometry to remove and  its parent frame.
@@ -1741,7 +1780,7 @@ TEST_F(GeometryStateTest, RemoveGeometryTree) {
   for (int f = 0; f < static_cast<int>(frames_.size()); ++f) {
     poses.set_value(frames_[f], X_PFs_[f]);
   }
-  gs_tester_.SetFramePoses(s_id, poses);
+  gs_tester_.SetFramePoses(s_id, poses, &gs_tester_.mutable_kinematics_data());
   gs_tester_.FinalizePoseUpdate();
 
   // The geometry to remove and its parent frame.
@@ -2051,7 +2090,7 @@ TEST_F(GeometryStateTest, SetFramePoses) {
   // Case 1: Set all frames to identity poses. The world pose of all the
   // geometry should be that of the geometry in its frame.
   FramePoseVector<double> poses1 = make_pose_vector();
-  gs_tester_.SetFramePoses(s_id, poses1);
+  gs_tester_.SetFramePoses(s_id, poses1, &gs_tester_.mutable_kinematics_data());
   const auto& world_poses = gs_tester_.get_geometry_world_poses();
   for (int i = 0; i < total_geom; ++i) {
     const GeometryId id = geometries_[i];
@@ -2066,7 +2105,7 @@ TEST_F(GeometryStateTest, SetFramePoses) {
   frame_poses[0] = offset;
   frame_poses[1] = offset;
   FramePoseVector<double> poses2 = make_pose_vector();
-  gs_tester_.SetFramePoses(s_id, poses2);
+  gs_tester_.SetFramePoses(s_id, poses2, &gs_tester_.mutable_kinematics_data());
   for (int i = 0; i < total_geom; ++i) {
     const GeometryId id = geometries_[i];
     EXPECT_TRUE(CompareMatrices(world_poses.at(id).GetAsMatrix34(),
@@ -2077,7 +2116,7 @@ TEST_F(GeometryStateTest, SetFramePoses) {
   // 0, 1, 2, & 3 moved up 1, and geometries 4 & 5 moved up two.
   frame_poses[2] = offset;
   FramePoseVector<double> poses3 = make_pose_vector();
-  gs_tester_.SetFramePoses(s_id, poses3);
+  gs_tester_.SetFramePoses(s_id, poses3, &gs_tester_.mutable_kinematics_data());
   for (int i = 0; i < total_geom; ++i) {
     const GeometryId id = geometries_[i];
     if (i < (kFrameCount - 1) * kGeometryCount) {
@@ -2114,7 +2153,7 @@ TEST_F(GeometryStateTest, QueryFrameProperties) {
   // Set the frame poses to query geometry and frame poses.
   FramePoseVector<double> poses;
   for (int i = 0; i < kFrameCount; ++i) poses.set_value(frames_[i], X_PFs_[i]);
-  gs_tester_.SetFramePoses(s_id, poses);
+  gs_tester_.SetFramePoses(s_id, poses, &gs_tester_.mutable_kinematics_data());
 
   EXPECT_TRUE(CompareMatrices(
       geometry_state_.get_pose_in_world(frames_[0]).GetAsMatrix34(),
@@ -2227,7 +2266,8 @@ TEST_F(GeometryStateTest, NonProximityRoleInCollisionFilter) {
   for (int f = 0; f < static_cast<int>(frames_.size()); ++f) {
     poses.set_value(frames_[f], X_PFs_[f]);
   }
-  gs_tester_.SetFramePoses(source_id_, poses);
+  gs_tester_.SetFramePoses(
+      source_id_, poses, &gs_tester_.mutable_kinematics_data());
   gs_tester_.FinalizePoseUpdate();
 
   // This is *non* const; we'll decrement it as we filter more and more
@@ -3525,7 +3565,8 @@ TEST_F(GeometryStateTest, RendererPoseUpdate) {
   for (int f = 0; f < static_cast<int>(frames_.size()); ++f) {
     poses.set_value(frames_[f], X_PFs_[f]);
   }
-  gs_tester_.SetFramePoses(source_id_, poses);
+  gs_tester_.SetFramePoses(
+      source_id_, poses, &gs_tester_.mutable_kinematics_data());
   gs_tester_.FinalizePoseUpdate();
 
   // Confirm poses between two GeometryId -> Pose maps.
@@ -3566,7 +3607,8 @@ TEST_F(GeometryStateTest, RendererPoseUpdate) {
   }
   EXPECT_EQ(second_engine->updated_ids().size(), 0u);
   EXPECT_EQ(render_engine_->updated_ids().size(), 0u);
-  gs_tester_.SetFramePoses(source_id_, poses);
+  gs_tester_.SetFramePoses(
+      source_id_, poses, &gs_tester_.mutable_kinematics_data());
   gs_tester_.FinalizePoseUpdate();
 
   // Confirm poses.

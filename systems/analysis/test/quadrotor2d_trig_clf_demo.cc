@@ -1,5 +1,6 @@
 #include <math.h>
 
+#include <iostream>
 #include <limits>
 
 #include "drake/common/drake_copyable.h"
@@ -267,7 +268,8 @@ void ValidateTrigClfInit(
                    .sum()
                    .maxCoeff()
             << "\n";
-  VdotCalculator vdot_calculator(x, V_init, f, G, u_vertices);
+  VdotCalculator vdot_calculator(
+      x, V_init, f, G, std::nullopt /* dynamics numerator */, u_vertices);
   const Eigen::VectorXd Vdot_validate = vdot_calculator.CalcMin(x_validate);
   std::cout << "Vdot CLF max by sample: " << Vdot_validate.maxCoeff() << "\n";
   symbolic::Variable max_Vdot;

@@ -1,7 +1,8 @@
 #pragma once
 
 #include "drake/common/drake_copyable.h"
-#include "drake/common/symbolic.h"
+#include "drake/common/symbolic/expression.h"
+#include "drake/common/symbolic/polynomial.h"
 #include "drake/solvers/mathematical_program.h"
 #include "drake/solvers/mathematical_program_result.h"
 
@@ -81,8 +82,10 @@ void MaximizeInnerEllipsoidRho(
  *     max ρ
  *     s.t -f(x) - r(x)*(ρ-(x-x*)ᵀS(x-x*)) -t(x)ᵀ*c(x) is sos
  *         r(x) is sos.
+ *
+ * @return Whether we find an ellipsoid or not.
  */
-void MaximizeInnerEllipsoidRho(
+bool MaximizeInnerEllipsoidRho(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
     const Eigen::Ref<const Eigen::VectorXd>& x_star,
     const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& f,
@@ -218,6 +221,27 @@ std::unique_ptr<solvers::MathematicalProgram> ConstructMaxVdotProgram(
 void CheckPolynomialsPassOrigin(const VectorX<symbolic::Polynomial>& p);
 
 double SmallestCoeff(const solvers::MathematicalProgram& prog);
+
+double LargestCoeff(const solvers::MathematicalProgram& prog);
+
+enum class OptimizePolynomialMode {
+  kMinimizeMaximal,
+  kMaximizeMinimal,
+  kMinimizeSum,
+  kMaximizeSum,
+};
+
+/**
+ * For a polynomial p(x) whose coefficients are all linear expressions of
+ * decision variables in prog, optimize the value of p(x) evaluated at
+ * x_samples. Depending on the optimize_polynomial_mode, we choose diffent cost
+ * form.
+ */
+void OptimizePolynomialAtSamples(
+    solvers::MathematicalProgram* prog, const symbolic::Polynomial& p,
+    const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+    const Eigen::Ref<const Eigen::MatrixXd>& x_samples,
+    OptimizePolynomialMode optimize_polynomial_mode);
 
 namespace internal {
 /** The ellipsoid polynomial (x−x*)ᵀS(x−x*)−ρ

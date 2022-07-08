@@ -1,0 +1,60 @@
+# -*- python -*-
+
+load(
+    "//tools/skylark:drake_cc.bzl",
+    "drake_cc_binary",
+    "drake_cc_googletest",
+    "drake_cc_library",
+)
+load("//tools/install:install_data.bzl", "install_data")
+load("//tools/lint:lint.bzl", "add_lint_tests")
+load("//tools/workspace:forward_files.bzl", "forward_files")
+load("//tools/workspace/models_internal:files.bzl", "skydio_2_mesh_files")
+
+package(
+    default_visibility = [
+        "//visibility:public",
+    ],
+)
+
+_SKYDIO_2_MESHES = forward_files(
+    srcs = ["@models_internal//:" + x for x in skydio_2_mesh_files()],
+    dest_prefix = "",
+    strip_prefix = "@models_internal//:skydio_2/",
+    visibility = ["//visibility:private"],
+)
+
+install_data(
+    extra_prod_models = _SKYDIO_2_MESHES,
+)
+
+drake_cc_library(
+    name = "quadrotor",
+    srcs = ["quadrotor.cc"],
+    hdrs = ["quadrotor.h"],
+    deps = [
+        "//common:default_scalars",
+        "//common:essential",
+        "//common:symbolic",
+        "//math:geometric_transform",
+        "//systems/controllers:linear_quadratic_regulator",
+        "//systems/framework:leaf_system",
+        "//systems/primitives:affine_system",
+    ],
+)
+
+drake_cc_binary(
+    name = "quadrotor3d_trig_clf_demo",
+    srcs = ["quadrotor3d_trig_clf_demo.cc"],
+    deps = [
+        ":quadrotor",
+        "//math:gray_code",
+        "//solvers:mathematical_program",
+        "//solvers:solve",
+        "//systems:clf_cbf_utils",
+        "//systems:control_lyapunov",
+        "//systems/controllers:linear_quadratic_regulator",
+    ],
+)
+
+add_lint_tests()

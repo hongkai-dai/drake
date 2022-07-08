@@ -33,6 +33,7 @@ LIBDRAKE_COMPONENTS = [
     "//examples/pendulum:pendulum_vector_types",  # unpackaged
     "//examples/quadrotor:quadrotor_geometry",  # unpackaged
     "//examples/quadrotor:quadrotor_plant",  # unpackaged
+    "//examples/quadrotor_trig:quadrotor",  # unpackaged
     "//examples/rimless_wheel:rimless_wheel",  # unpackaged
     "//examples/rimless_wheel:rimless_wheel_geometry",  # unpackaged
     "//examples/rimless_wheel:rimless_wheel_vector_types",  # unpackaged

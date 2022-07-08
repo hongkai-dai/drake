@@ -23,6 +23,7 @@ from pydrake.examples import (
     manipulation_station,
     pendulum,
     quadrotor,
+    quadrotor_trig,
     rimless_wheel,
     van_der_pol,
 )

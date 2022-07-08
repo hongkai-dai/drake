@@ -829,8 +829,8 @@ void OptimizePolynomialAtSamples(
       prog->AddLinearCost(Vector1d::Ones(), 0, max_sample);
       break;
     }
-    case OptimizePolynomialMode::kMinimizeSum: {
-      prog->AddLinearCost(A_samples.colwise().sum(), b_samples.sum(),
+    case OptimizePolynomialMode::kMinimizeAverage: {
+      prog->AddLinearCost(A_samples.colwise().mean(), b_samples.mean(),
                           decision_variables_samples);
       break;
     }
@@ -848,8 +848,8 @@ void OptimizePolynomialAtSamples(
       prog->AddLinearCost(-Vector1d::Ones(), 0, min_sample);
       break;
     }
-    case OptimizePolynomialMode::kMaximizeSum: {
-      prog->AddLinearCost(-A_samples.colwise().sum(), -b_samples.sum(),
+    case OptimizePolynomialMode::kMaximizeAverage: {
+      prog->AddLinearCost(-A_samples.colwise().mean(), -b_samples.mean(),
                           decision_variables_samples);
       break;
     }

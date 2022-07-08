@@ -397,13 +397,13 @@ void ControlLyapunov::Search(
   while (iter_count < search_options.bilinear_iterations) {
     {
       MaximizeInnerEllipsoidRho(
-          x_, x_star, S, *V_sol - 1, state_constraints_, r_degree,
+          x_, x_star, S, *V_sol - search_options.rho, state_constraints_, r_degree,
           ellipsoid_c_lagrangian_degrees, rho_bisection_option.rho_max,
           rho_bisection_option.rho_min, search_options.ellipsoid_step_solver,
           search_options.ellipsoid_step_solver_options,
           rho_bisection_option.rho_tol, rho_sol, r_sol,
           ellipsoid_c_lagrangian_sol);
-      drake::log()->info("iter {}, rho={}", iter_count, *rho_sol);
+      drake::log()->info("iter {}, ellipsoid rho={}", iter_count, *rho_sol);
       if (*rho_sol - rho_prev < search_options.rho_converge_tol) {
         return;
       } else {
@@ -435,7 +435,7 @@ void ControlLyapunov::Search(
           prog_lyapunov.get(), x_, d(0), V_search, x_star, S, *rho_sol,
           r_degree, state_constraints_, ellipsoid_c_lagrangian_degrees, &r,
           &c_lagrangian);
-      prog_lyapunov->AddBoundingBoxConstraint(-kInf, 1, d);
+      prog_lyapunov->AddBoundingBoxConstraint(-kInf, search_options.rho, d);
       prog_lyapunov->AddLinearCost(Vector1d(1), 0, d);
       RemoveTinyCoeff(prog_lyapunov.get(), search_options.lyap_tiny_coeff_tol);
       drake::log()->info("Search Lyapunov, Lyapunov program smallest coeff: {}",
@@ -507,7 +507,7 @@ void ControlLyapunov::Search(
       OptimizePolynomialAtSamples(prog_lyapunov.get(), V_search, x_, x_samples,
                                   minimize_max
                                       ? OptimizePolynomialMode::kMinimizeMaximal
-                                      : OptimizePolynomialMode::kMinimizeSum);
+                                      : OptimizePolynomialMode::kMinimizeAverage);
       RemoveTinyCoeff(prog_lyapunov.get(), search_options.lyap_tiny_coeff_tol);
       drake::log()->info("Search Lyapunov, Lyapunov program smallest coeff: {}",
                          SmallestCoeff(*prog_lyapunov));
@@ -651,7 +651,7 @@ void AddControlLyapunovBoxInputBoundConstraints(
 }
 
 // Add the constraint
-// (1+t(x))((x−x*)ᵀS(x−x*)−ρ) − s(x)(V(x)−1) is sos
+// (1+t(x))((x−x*)ᵀS(x−x*)−ρ) − s(x)(V(x)−V_level) is sos
 template <typename RhoType>
 std::pair<MatrixX<symbolic::Variable>, VectorX<symbolic::Monomial>>
 AddEllipsoidInRoaConstraintHelper(
@@ -659,10 +659,10 @@ AddEllipsoidInRoaConstraintHelper(
     const VectorX<symbolic::Variable>& x,
     const Eigen::Ref<const Eigen::VectorXd>& x_star,
     const Eigen::Ref<const Eigen::MatrixXd>& S, const RhoType& rho,
-    const symbolic::Polynomial& s, const symbolic::Polynomial& V) {
+    const symbolic::Polynomial& s, const symbolic::Polynomial& V, double V_level) {
   const symbolic::Polynomial ellipsoid_poly =
       internal::EllipsoidPolynomial<RhoType>(x, x_star, S, rho);
-  const symbolic::Polynomial sos_poly = (1 + t) * ellipsoid_poly - s * (V - 1);
+  const symbolic::Polynomial sos_poly = (1 + t) * ellipsoid_poly - s * (V - V_level);
   return prog->AddSosConstraint(sos_poly);
 }
 }  // namespace
@@ -885,7 +885,7 @@ void ControlLyapunovBoxInputBound::SearchLyapunov(
   const auto rho = prog->NewContinuousVariables<1>("rho")(0);
   auto [ellipsoid_constraint_gram, ellipsoid_constraint_monomials] =
       AddEllipsoidInRoaConstraintHelper<symbolic::Variable>(
-          prog.get(), t, x_, x_star, S, rho, s, V);
+          prog.get(), t, x_, x_star, S, rho, s, V, 1);
   prog->AddLinearCost(-rho);
   RemoveTinyCoeff(prog.get(), lyap_tiny_coeff_tol);
   drake::log()->info("Smallest coeff in Lyapunov program: {}",

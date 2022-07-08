@@ -94,7 +94,7 @@ symbolic::Polynomial SearchWTrigDynamics(
   } else {
     V_init = FindClfInit(params, V_degree, x);
     // Now maximize rho to prove V(x)<=rho is an ROA
-    const bool binary_search_rho = true;
+    const bool binary_search_rho = false;
     if (binary_search_rho) {
       double rho_sol;
       symbolic::Polynomial lambda0_sol;
@@ -106,8 +106,8 @@ symbolic::Polynomial SearchWTrigDynamics(
           solvers::CommonSolverOption::kPrintToConsole, 1);
       search_options.lagrangian_tiny_coeff_tol = 1E-10;
       bool found_rho = dut.FindRhoBinarySearch(
-          V_init, 0, 0.1, 5E-3, lambda0_degree, l_degrees, p_degrees, deriv_eps,
-          search_options, &rho_sol, &lambda0_sol, &l_sol, &p_sol);
+          V_init, 0, 0.03, 1E-3, lambda0_degree, l_degrees, p_degrees,
+          deriv_eps, search_options, &rho_sol, &lambda0_sol, &l_sol, &p_sol);
       if (found_rho) {
         std::cout << "Binary search rho_sol: " << rho_sol << "\n";
         V_init = V_init / rho_sol;
@@ -140,9 +140,10 @@ symbolic::Polynomial SearchWTrigDynamics(
   {
     ControlLyapunov::SearchOptions search_options;
     search_options.rho_converge_tol = 0.;
-    search_options.bilinear_iterations = 30;
-    search_options.backoff_scale = 0.01;
-    search_options.lsol_tiny_coeff_tol = 1E-6;
+    search_options.bilinear_iterations = 50;
+    search_options.backoff_scale = 0.02;
+    search_options.lagrangian_tiny_coeff_tol = 1E-6;
+    search_options.lsol_tiny_coeff_tol = 1E-5;
     search_options.lyap_tiny_coeff_tol = 1E-6;
     search_options.Vsol_tiny_coeff_tol = 1E-8;
     search_options.lagrangian_step_solver_options = solvers::SolverOptions();
@@ -165,18 +166,18 @@ symbolic::Polynomial SearchWTrigDynamics(
     const bool search_inner_ellipsoid = true;
     if (search_inner_ellipsoid) {
       const double rho_min = 0.0001;
-      const double rho_max = 2;
-      const double rho_tol = 0.01;
+      const double rho_max = 0.03;
+      const double rho_tol = 0.0001;
       const std::vector<int> ellipsoid_c_lagrangian_degrees{{0}};
-      Eigen::Matrix<double, 5, 1> x_star;
-      x_star << 0, 0, 0.0, 0, 0;
+      const Eigen::Matrix<double, 5, 1> x_star =
+          ToTrigState<double>(Eigen::Vector4d(0, 1.05 * M_PI, 0, 0));
       Eigen::Matrix<double, 5, 5> S;
       S.setZero();
       S(0, 0) = 1;
-      S(1, 1) = 10;
-      S(2, 2) = 10;
-      S(3, 3) = 10;
-      S(4, 4) = 10;
+      S(1, 1) = 1;
+      S(2, 2) = 1;
+      S(3, 3) = 1;
+      S(4, 4) = 1;
       const int r_degree = 0;
       const ControlLyapunov::RhoBisectionOption rho_bisection_option(
           rho_min, rho_max, rho_tol);
@@ -191,32 +192,29 @@ symbolic::Polynomial SearchWTrigDynamics(
                  &l_sol, &r_sol, &p_sol, &positivity_eq_lagrangian_sol,
                  &rho_sol, &ellipsoid_c_lagrangian_sol);
     } else {
-      Eigen::MatrixXd state_samples(4, 4);
+      Eigen::MatrixXd state_samples = Eigen::MatrixXd::Random(4, 10000);
       state_samples.col(0) << 0, 0, 0, 0;
-      state_samples.col(1) << 0, 0.9 * M_PI, 0, 0;
-      state_samples.col(2) << 0.2, 1.1 * M_PI, 0, 0;
-      state_samples.col(3) << 0.2, 0.9 * M_PI, 0, 0;
       Eigen::MatrixXd x_samples(5, state_samples.cols());
       for (int i = 0; i < state_samples.cols(); ++i) {
         x_samples.col(i) = ToTrigState<double>(state_samples.col(i));
       }
 
-      const bool minimize_max = true;
+      const bool minimize_max = false;
       symbolic::Environment env;
       env.insert(x, x_samples.col(0));
       std::cout << "V_init: " << V_init << "\n";
-      std::cout << "V_init(x_samples): "
-                << V_init.EvaluateIndeterminates(x, x_samples).transpose()
-                << "\n";
+      // std::cout << "V_init(x_samples): "
+      //          << V_init.EvaluateIndeterminates(x, x_samples).transpose()
+      //          << "\n";
       dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
                  positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
                  deriv_eps, x_samples, minimize_max, search_options, &V_sol,
                  &positivity_eq_lagrangian, &lambda0_sol, &l_sol, &p_sol);
-      std::cout << "V(x_samples): "
-                << V_sol.EvaluateIndeterminates(x, x_samples).transpose()
-                << "\n";
+      // std::cout << "V(x_samples): "
+      //          << V_sol.EvaluateIndeterminates(x, x_samples).transpose()
+      //          << "\n";
     }
-    Save(V_sol, "cart_pole_trig_clf2.txt");
+    Save(V_sol, "cart_pole_trig_clf5.txt");
   }
   return V_sol;
 }
@@ -227,15 +225,15 @@ int DoMain() {
   for (int i = 0; i < 5; ++i) {
     x(i) = symbolic::Variable("x" + std::to_string(i));
   }
-  const double u_max = 32;
+  const double u_max = 48;
   const double deriv_eps = 0.1;
-  const symbolic::Polynomial V_sol =
-      SearchWTrigDynamics(params, x, u_max, deriv_eps, std::nullopt);
-  // const symbolic::Polynomial V_sol = Load(symbolic::Variables(x),
-  // "cart_pole_trig_clf10.txt");
+  const symbolic::Polynomial V_sol = SearchWTrigDynamics(
+      params, x, u_max, deriv_eps, "cart_pole_trig_clf4.txt");
+  //const symbolic::Polynomial V_sol = Load(symbolic::Variables(x),
+  //"cart_pole_trig_clf4.txt");
   const double duration = 200;
-  Eigen::Matrix<double, 4, 10> state_samples;
-  state_samples.col(0) << 0.1, 0.5, 0.2, 0.4;
+  Eigen::Matrix<double, 4, 11> state_samples;
+  state_samples.col(0) << 0., 0., 0., 0.;
   state_samples.col(1) << 0.8, 1.2 * M_PI, 0.4, -0.5;
   state_samples.col(2) << 0.4, 1.05 * M_PI, 0, 0.1;
   state_samples.col(3) << 0.2, 0.5 * M_PI, -0.2, 1.5;
@@ -244,12 +242,14 @@ int DoMain() {
   state_samples.col(6) << 0.2, 1.05 * M_PI, 0, 0;
   state_samples.col(7) << 0.2, 1.1 * M_PI, 0, 0;
   state_samples.col(8) << 0.2, 1.2 * M_PI, 0, 0;
+  state_samples.col(9) << 0., 1.07 * M_PI, 0, 0;
+  state_samples.col(10) << 0., 1.1 * M_PI, 0, 0;
   Eigen::Matrix<double, 5, Eigen::Dynamic> x_samples(5, state_samples.cols());
   for (int i = 0; i < state_samples.cols(); ++i) {
     x_samples.col(i) = ToTrigState<double>(state_samples.col(i));
   }
   std::cout << V_sol.EvaluateIndeterminates(x, x_samples) << "\n";
-  Simulate(params, x, V_sol, u_max, deriv_eps, Eigen::Vector4d::Zero(),
+  Simulate(params, x, V_sol, u_max, deriv_eps, Eigen::Vector4d(0.2, 1.1 * M_PI, 0, 0),
            duration);
   // SearchWTrigDynamics("cart_pole_trig_clf.txt");
   return 0;

@@ -227,8 +227,8 @@ double LargestCoeff(const solvers::MathematicalProgram& prog);
 enum class OptimizePolynomialMode {
   kMinimizeMaximal,
   kMaximizeMinimal,
-  kMinimizeSum,
-  kMaximizeSum,
+  kMinimizeAverage,
+  kMaximizeAverage,
 };
 
 /**

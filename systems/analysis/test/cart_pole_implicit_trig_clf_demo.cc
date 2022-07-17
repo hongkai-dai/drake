@@ -1,15 +1,51 @@
 #include <iostream>
 #include <limits>
 
+#include "drake/common/find_resource.h"
+#include "drake/multibody/parsing/parser.h"
+#include "drake/multibody/plant/multibody_plant.h"
 #include "drake/solvers/solve.h"
 #include "drake/systems/analysis/clf_cbf_utils.h"
 #include "drake/systems/analysis/control_lyapunov.h"
 #include "drake/systems/analysis/test/cart_pole.h"
+#include "drake/systems/trajectory_optimization/direct_collocation.h"
 
 namespace drake {
 namespace systems {
 namespace analysis {
 const double kInf = std::numeric_limits<double>::infinity();
+
+[[maybe_unused]] void SwingUpTrajectoryOptimization(Eigen::MatrixXd* x_traj,
+                                                    Eigen::MatrixXd* u_traj) {
+  // Swing up cart pole.
+  multibody::MultibodyPlant<double> cart_pole(0.);
+  multibody::Parser(&cart_pole)
+      .AddModelFromFile(FindResourceOrThrow(
+          "drake/examples/multibody/cart_pole/cart_pole.sdf"));
+  cart_pole.Finalize();
+  auto context = cart_pole.CreateDefaultContext();
+  const int num_time_samples = 30;
+  const double minimum_timestep = 0.02;
+  const double maximum_timestep = 0.06;
+  trajectory_optimization::DirectCollocation dircol(
+      &cart_pole, *context, num_time_samples, minimum_timestep,
+      maximum_timestep, cart_pole.get_actuation_input_port().get_index());
+  dircol.prog().AddBoundingBoxConstraint(
+      Eigen::Vector4d::Zero(), Eigen::Vector4d::Zero(), dircol.state(0));
+  dircol.prog().AddBoundingBoxConstraint(Eigen::Vector4d(0, M_PI, 0, 0),
+                                         Eigen::Vector4d(0, M_PI, 0, 0),
+                                         dircol.state(num_time_samples - 1));
+  // for (int i = 0; i < num_time_samples; ++i) {
+  //  dircol.prog().AddBoundingBoxConstraint(-110, 110, dircol.input(i)(0));
+  //}
+  dircol.AddRunningCost(
+      dircol.input().cast<symbolic::Expression>().dot(dircol.input()));
+  const auto result = solvers::Solve(dircol.prog());
+  DRAKE_DEMAND(result.is_success());
+  *x_traj = dircol.GetStateSamples(result);
+  *u_traj = dircol.GetInputSamples(result);
+  std::cout << "swingup u: " << *u_traj << "\n";
+}
 
 symbolic::Polynomial FindClfInit(
     const CartPoleParams& params, int V_degree,
@@ -17,7 +53,7 @@ symbolic::Polynomial FindClfInit(
   Eigen::Matrix<double, 5, 1> lqr_Q_diag;
   lqr_Q_diag << 1, 1, 1, 10, 10;
   const Eigen::Matrix<double, 5, 5> lqr_Q = lqr_Q_diag.asDiagonal();
-  const auto lqr_result = SynthesizeTrigLqr(params, lqr_Q, 10);
+  const auto lqr_result = SynthesizeTrigLqr(params, lqr_Q, 20);
 
   const symbolic::Expression u_lqr = -lqr_result.K.row(0).dot(x);
   Eigen::Matrix<symbolic::Expression, 5, 1> n_expr;
@@ -75,30 +111,33 @@ symbolic::Polynomial AddControlLyapunovConstraint(
     solvers::MathematicalProgram* prog,
     const Eigen::Matrix<symbolic::Variable, 5, 1>& x,
     const Vector2<symbolic::Polynomial>& z1_poly,
-    const Vector2<symbolic::Polynomial>& z2_poly,
+    const Vector2<symbolic::Polynomial>& z2_poly, double z_factor,
     const symbolic::Polynomial& lambda0, const symbolic::Polynomial& V,
     double rho, const Vector2<symbolic::Polynomial>& l,
     const Vector3<symbolic::Polynomial>& qdot, double deriv_eps,
     const Eigen::Matrix<symbolic::Polynomial, 5, 1>& p,
-    const Eigen::Matrix<symbolic::Polynomial, 5, 1>& state_constraints) {
+    const Eigen::Matrix<symbolic::Polynomial, 5, 1>& state_constraints,
+    MatrixX<symbolic::Variable>* vdot_sos_gram,
+    VectorX<symbolic::Monomial>* vdot_sos_monomials) {
   symbolic::Polynomial vdot_sos =
       (1 + lambda0) *
       symbolic::Polynomial(x.cast<symbolic::Expression>().dot(x)) * (V - rho);
   const RowVector3<symbolic::Polynomial> dVdq = V.Jacobian(x.head<3>());
   vdot_sos -= l.sum() * (dVdq.dot(qdot) + deriv_eps * V);
   const RowVector2<symbolic::Polynomial> dVdv = V.Jacobian(x.tail<2>());
-  vdot_sos -= l(0) * dVdv.dot(z1_poly);
-  vdot_sos -= l(1) * dVdv.dot(z2_poly);
+  vdot_sos -= l(0) * dVdv.dot(z1_poly) * z_factor;
+  vdot_sos -= l(1) * dVdv.dot(z2_poly) * z_factor;
   vdot_sos -= p.dot(state_constraints);
-  prog->AddSosConstraint(vdot_sos);
+  std::tie(*vdot_sos_gram, *vdot_sos_monomials) =
+      prog->AddSosConstraint(vdot_sos);
   return vdot_sos;
 }
 
 bool FindLagrangian(const Eigen::Matrix<symbolic::Variable, 5, 1>& x,
                     const Vector2<symbolic::Variable>& z1,
-                    const Vector2<symbolic::Variable>& z2, int lambda0_degree,
-                    const symbolic::Polynomial& V, double rho,
-                    const std::vector<int>& l_degrees,
+                    const Vector2<symbolic::Variable>& z2, double z_factor,
+                    int lambda0_degree, const symbolic::Polynomial& V,
+                    double rho, const std::vector<int>& l_degrees,
                     const std::vector<int>& p_degrees,
                     const Vector3<symbolic::Polynomial>& qdot, double deriv_eps,
                     Eigen::Matrix<symbolic::Polynomial, 5, 1> state_constraints,
@@ -133,8 +172,11 @@ bool FindLagrangian(const Eigen::Matrix<symbolic::Variable, 5, 1>& x,
     z1_poly(i) = symbolic::Polynomial(z1(i));
     z2_poly(i) = symbolic::Polynomial(z2(i));
   }
-  AddControlLyapunovConstraint(&prog, x, z1_poly, z2_poly, lambda0, V, rho, l,
-                               qdot, deriv_eps, p, state_constraints);
+  MatrixX<symbolic::Variable> vdot_sos_gram;
+  VectorX<symbolic::Monomial> vdot_sos_monomials;
+  AddControlLyapunovConstraint(&prog, x, z1_poly, z2_poly, z_factor, lambda0, V,
+                               rho, l, qdot, deriv_eps, p, state_constraints,
+                               &vdot_sos_gram, &vdot_sos_monomials);
   solvers::SolverOptions solver_options;
   solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
   RemoveTinyCoeff(&prog, 1E-9);
@@ -160,19 +202,20 @@ bool FindLagrangian(const Eigen::Matrix<symbolic::Variable, 5, 1>& x,
   }
 }
 
-void Search(const std::optional<std::string>& load_V_init) {
+void Search(const std::optional<std::string>& load_V_init,
+            const std::optional<std::string>& save_clf_file) {
   const CartPoleParams params;
   Eigen::Matrix<symbolic::Variable, 5, 1> x;
   for (int i = 0; i < 5; ++i) {
     x(i) = symbolic::Variable("x" + std::to_string(i));
   }
   const int V_degree = 2;
-  symbolic::Polynomial V_init = FindClfInit(params, V_degree, x);
   const Vector2<symbolic::Variable> z1(symbolic::Variable("z1(0)"),
                                        symbolic::Variable("z1(1)"));
   const Vector2<symbolic::Variable> z2(symbolic::Variable("z2(0)"),
                                        symbolic::Variable("z2(1)"));
-  const double u_max = 40;
+  const double u_max = 170;
+  const double z_factor = 10;
   const Eigen::Matrix<symbolic::Expression, 5, 1> x_expr =
       x.cast<symbolic::Expression>();
   const Matrix2<symbolic::Expression> M_expr =
@@ -183,9 +226,10 @@ void Search(const std::optional<std::string>& load_V_init) {
   Eigen::Matrix<symbolic::Polynomial, 5, 1> state_constraints;
   state_constraints(0) = StateEqConstraint(x);
   const Vector2<symbolic::Expression> constraint_expr1 =
-      M_expr * z1 - Eigen::Vector2d(u_max, 0) + bias_expr;
+      M_expr * z1 - Eigen::Vector2d(u_max, 0) / z_factor + bias_expr / z_factor;
   const Vector2<symbolic::Expression> constraint_expr2 =
-      M_expr * z2 - Eigen::Vector2d(-u_max, 0) + bias_expr;
+      M_expr * z2 - Eigen::Vector2d(-u_max, 0) / z_factor +
+      bias_expr / z_factor;
   for (int i = 0; i < 2; ++i) {
     state_constraints(1 + i) = symbolic::Polynomial(constraint_expr1(i));
     state_constraints(3 + i) = symbolic::Polynomial(constraint_expr2(i));
@@ -208,28 +252,30 @@ void Search(const std::optional<std::string>& load_V_init) {
   const symbolic::Variables x_set{x};
 
   const double deriv_eps = 0.01;
-  int lambda0_degree = 4;
-  const std::vector<int> l_degrees{{4, 4}};
+  int lambda0_degree = 2;
+  const std::vector<int> l_degrees{{2, 2}};
   const std::vector<int> p_degrees{{6, 6, 6, 6, 6}};
 
+  symbolic::Polynomial V_init;
   double rho_sol;
   if (load_V_init.has_value()) {
     V_init = Load(symbolic::Variables(x), load_V_init.value());
     rho_sol = 1;
   } else {
-    const bool binary_search_rho = true;
+    V_init = FindClfInit(params, V_degree, x);
+    const bool binary_search_rho = false;
     // Maximize rho
     if (binary_search_rho) {
       double rho_max = 0.01;
-      double rho_min = 1E-4;
-      double rho_tol = 1E-5;
+      double rho_min = 1E-5;
+      double rho_tol = 3E-4;
 
-      auto is_rho_feasible = [&x, &z1, &z2, lambda0_degree, &V_init, &l_degrees,
-                              &p_degrees, &qdot, deriv_eps,
+      auto is_rho_feasible = [&x, &z1, &z2, z_factor, lambda0_degree, &V_init,
+                              &l_degrees, &p_degrees, &qdot, deriv_eps,
                               &state_constraints](double rho) {
         symbolic::Polynomial lambda0_sol;
         Vector2<symbolic::Polynomial> l_sol;
-        return FindLagrangian(x, z1, z2, lambda0_degree, V_init / rho, 1,
+        return FindLagrangian(x, z1, z2, z_factor, lambda0_degree, V_init, rho,
                               l_degrees, p_degrees, qdot, deriv_eps,
                               state_constraints, &lambda0_sol, &l_sol);
       };
@@ -252,6 +298,8 @@ void Search(const std::optional<std::string>& load_V_init) {
           }
         }
         rho_sol = rho_min;
+        V_init = V_init / rho_sol;
+        rho_sol = 1;
       }
     } else {
       solvers::MathematicalProgram prog;
@@ -273,7 +321,8 @@ void Search(const std::optional<std::string>& load_V_init) {
       const RowVector2<symbolic::Polynomial> dVdv =
           V_init.Jacobian(x.tail<2>());
       vdot_sos -= l.sum() * (dVdq.dot(qdot) + deriv_eps * V_init);
-      vdot_sos -= l(0) * dVdv.dot(z1_poly) + l(1) * dVdv.dot(z2_poly);
+      vdot_sos -= l(0) * dVdv.dot(z1_poly) * z_factor +
+                  l(1) * dVdv.dot(z2_poly) * z_factor;
       Eigen::Matrix<symbolic::Polynomial, 5, 1> p;
       for (int i = 0; i < 5; ++i) {
         p(i) = prog.NewFreePolynomial(xz_set, p_degrees[i],
@@ -302,14 +351,23 @@ void Search(const std::optional<std::string>& load_V_init) {
   symbolic::Polynomial V_sol = V_init;
   const double rho = rho_sol;
   double prev_cost = kInf;
+  Eigen::MatrixXd state_swingup;
+  Eigen::MatrixXd control_swingup;
+  SwingUpTrajectoryOptimization(&state_swingup, &control_swingup);
   std::cout << "start bilinear alternation\n";
+  symbolic::Polynomial lambda0_sol;
+  Vector2<symbolic::Polynomial> l_sol;
+  Eigen::Matrix<symbolic::Polynomial, 5, 1> p_sol;
+  MatrixX<symbolic::Variable> vdot_sos_gram;
+  VectorX<symbolic::Monomial> vdot_sos_monomials;
+  symbolic::Polynomial vdot_sos;
+  Eigen::MatrixXd vdot_sos_gram_val;
+  symbolic::Polynomial vdot_sos_sol;
   while (iter_count < max_iters) {
-    symbolic::Polynomial lambda0_sol;
-    Vector2<symbolic::Polynomial> l_sol;
     {
       const bool found_lagrangian = FindLagrangian(
-          x, z1, z2, lambda0_degree, V_sol, rho, l_degrees, p_degrees, qdot,
-          deriv_eps, state_constraints, &lambda0_sol, &l_sol);
+          x, z1, z2, z_factor, lambda0_degree, V_sol, rho, l_degrees, p_degrees,
+          qdot, deriv_eps, state_constraints, &lambda0_sol, &l_sol);
       if (!found_lagrangian) {
         std::cout << "rho=" << rho_sol << "\n";
         return;
@@ -342,24 +400,57 @@ void Search(const std::optional<std::string>& load_V_init) {
         p(i) = prog.NewFreePolynomial(xz_set, p_degrees[i],
                                       "p" + std::to_string(i));
       }
-      const symbolic::Polynomial vdot_sos = AddControlLyapunovConstraint(
-          &prog, x, z1_poly, z2_poly, lambda0_sol, V, rho, l_sol, qdot,
-          deriv_eps, p, state_constraints);
+      vdot_sos = AddControlLyapunovConstraint(
+          &prog, x, z1_poly, z2_poly, z_factor, lambda0_sol, V, rho, l_sol,
+          qdot, deriv_eps, p, state_constraints, &vdot_sos_gram,
+          &vdot_sos_monomials);
 
       // Now minimize V on x_samples.
-      Eigen::Matrix<double, 5, 4> x_samples;
-      x_samples.col(0) = ToTrigState<double>(Eigen::Vector4d(0, 0, 0, 0));
-      x_samples.col(1) =
-          ToTrigState<double>(Eigen::Vector4d(0, M_PI * 1.05, 0, 0));
-      x_samples.col(2) =
-          ToTrigState<double>(Eigen::Vector4d(0, M_PI * 1.1, 0, 0));
-      x_samples.col(3) =
-          ToTrigState<double>(Eigen::Vector4d(0, M_PI * 0.1, 0, 0));
+      Eigen::Matrix<double, 5, Eigen::Dynamic> x_swingup(5,
+                                                         state_swingup.cols());
+      for (int i = 0; i < x_swingup.cols(); ++i) {
+        x_swingup.col(i) = ToTrigState<double>(state_swingup.col(i));
+      }
+      std::cout << "V_init at x_swingup "
+                << V_init.EvaluateIndeterminates(x, x_swingup).transpose()
+                << "\n";
+      std::vector<int> x_indices = {13, 14, 19, 20, 21, 22,
+                                    23, 24, 25, 26, 27, 28};
+      Eigen::Matrix4Xd state_samples(4, x_indices.size());
+      for (int i = 0; i < static_cast<int>(x_indices.size()); ++i) {
+        state_samples.col(i) = state_swingup.col(x_indices[i]);
+      }
+      std::cout << "state samples:\n" << state_samples.transpose() << "\n";
+      Eigen::MatrixXd x_samples(5, state_samples.cols());
+      for (int i = 0; i < state_samples.cols(); ++i) {
+        x_samples.col(i) = ToTrigState<double>(state_samples.col(i));
+      }
+
+      std::optional<Eigen::MatrixXd> in_roa_samples;
+      in_roa_samples.emplace(Eigen::Matrix<double, 5, 3>());
+      in_roa_samples->col(0) = x_samples.col(1);
+      in_roa_samples->col(1) = x_samples.col(2);
+      in_roa_samples->col(2) = x_samples.col(3);
+      if (in_roa_samples.has_value()) {
+        // Add the constraint V(in_roa_samples) <= rho
+        Eigen::MatrixXd A_in_roa_samples;
+        VectorX<symbolic::Variable> variables_in_roa_samples;
+        Eigen::VectorXd b_in_roa_samples;
+        V.EvaluateWithAffineCoefficients(
+            x, in_roa_samples.value(), &A_in_roa_samples,
+            &variables_in_roa_samples, &b_in_roa_samples);
+        prog.AddLinearConstraint(
+            A_in_roa_samples,
+            Eigen::VectorXd::Constant(b_in_roa_samples.rows(), -kInf),
+            Eigen::VectorXd::Constant(b_in_roa_samples.rows(), rho) -
+                b_in_roa_samples,
+            variables_in_roa_samples);
+      }
       OptimizePolynomialAtSamples(&prog, V, x, x_samples,
                                   OptimizePolynomialMode::kMinimizeMaximal);
       solvers::SolverOptions solver_options;
       solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
-      const double backoff_scale = 0.;
+      const double backoff_scale = 0.1;
       std::cout << "Smallest coeff: " << SmallestCoeff(prog) << "\n";
       const auto result_lyapunov = SearchWithBackoff(
           &prog, solvers::MosekSolver::id(), solver_options, backoff_scale);
@@ -369,7 +460,15 @@ void Search(const std::optional<std::string>& load_V_init) {
             "Optimal cost = {}",
             V_sol.EvaluateIndeterminates(x, x_samples).maxCoeff());
 
-        Save(V_sol, "cart_pole_implicit_trig_clf.txt");
+        if (save_clf_file.has_value()) {
+          Save(V_sol,
+               save_clf_file.value() + ".iter" + std::to_string(iter_count));
+        }
+        for (int i = 0; i < p_sol.rows(); ++i) {
+          p_sol(i) = result_lyapunov.GetSolution(p(i));
+        }
+        vdot_sos_gram_val = result_lyapunov.GetSolution(vdot_sos_gram);
+        vdot_sos_sol = result_lyapunov.GetSolution(vdot_sos);
         const Eigen::VectorXd V_at_samples =
             V_sol.EvaluateIndeterminates(x, x_samples);
         std::cout << "V at samples: " << V_at_samples.transpose() << "\n";
@@ -388,10 +487,69 @@ void Search(const std::optional<std::string>& load_V_init) {
     }
     iter_count++;
   }
+  if (save_clf_file.has_value()) {
+    Save(V_sol, save_clf_file.value());
+  }
+
+  Eigen::Vector4d state_val = state_swingup.col(13);
+  const Eigen::Matrix<double, 5, 1> x_val = ToTrigState<double>(state_val);
+  symbolic::Environment env;
+  env.insert(x, x_val);
+  const double V_val = V_sol.Evaluate(env);
+  Eigen::Matrix<symbolic::Polynomial, 5, 1> f_numerator;
+  Eigen::Matrix<symbolic::Polynomial, 5, 1> G_numerator;
+  symbolic::Polynomial dynamics_denominator;
+  TrigPolyDynamics(params, x, &f_numerator, &G_numerator,
+                   &dynamics_denominator);
+  const VdotCalculator vdot_calculator(x, V_sol, f_numerator, G_numerator,
+                                       dynamics_denominator,
+                                       Eigen::RowVector2d(-u_max, u_max));
+  const double Vdot_val = vdot_calculator.CalcMin(x_val)(0);
+  std::cout << "V_val: " << V_val << "\n";
+  std::cout << "Vdot_val: " << Vdot_val << "\n";
+  std::cout << "Vdot_val + deriv_eps * V_val" << Vdot_val + deriv_eps * V_val
+            << "\n";
+  Eigen::Matrix<double, 5, 1> n_val1;
+  Eigen::Matrix<double, 5, 1> n_val2;
+  double d_val1, d_val2;
+  TrigDynamics<double>(params, x_val, u_max, &n_val1, &d_val1);
+  TrigDynamics<double>(params, x_val, -u_max, &n_val2, &d_val2);
+  const Eigen::Matrix<double, 5, 1> xdot_val1 = n_val1 / d_val1;
+  const Eigen::Matrix<double, 5, 1> xdot_val2 = n_val2 / d_val2;
+  const Eigen::Vector2d z1_val = xdot_val1.tail<2>() / z_factor;
+  const Eigen::Vector2d z2_val = xdot_val2.tail<2>() / z_factor;
+  std::cout << "z1_val: " << z1_val.transpose() << "\n";
+  std::cout << "z2_val: " << z2_val.transpose() << "\n";
+  env.insert(z1, z1_val);
+  env.insert(z2, z2_val);
+  Eigen::Matrix<double, 5, 1> state_constraints_val;
+  for (int i = 0; i < state_constraints.rows(); ++i) {
+    state_constraints_val(i) = state_constraints(i).Evaluate(env);
+  }
+  std::cout << "state_constraints_val: " << state_constraints_val.transpose()
+            << "\n";
+  Eigen::Matrix<double, 5, 1> p_sol_val;
+  for (int i = 0; i < p_sol.rows(); ++i) {
+    p_sol_val(i) = p_sol(i).Evaluate(env);
+  }
+  std::cout << "p_sol_val: " << p_sol_val.transpose() << "\n";
+  std::cout << "vdot_sos_sol_val: " << vdot_sos_sol.Evaluate(env) << "\n";
+  Eigen::VectorXd vdot_sos_monomials_val(vdot_sos_monomials.rows());
+  for (int i = 0; i < vdot_sos_monomials.rows(); ++i) {
+    vdot_sos_monomials_val(i) = vdot_sos_monomials(i).Evaluate(env);
+  }
+  std::cout << "vdot_sos evaluate with monomial and gram: "
+            << vdot_sos_monomials_val.dot(vdot_sos_gram_val *
+                                          vdot_sos_monomials_val)
+            << "\n";
+
+  const double duration = 20;
+  Simulate(params, x, V_sol, u_max, deriv_eps, state_swingup.col(12), duration);
 }
 
 int DoMain() {
-  Search(std::nullopt);
+  Search("/home/hongkaidai/Dropbox/sos_clf_cbf/cart_pole_trig_clf_last16_1.txt",
+         "cart_pole_implicit_trig_clf0.txt");
   return 0;
 }
 }  // namespace analysis

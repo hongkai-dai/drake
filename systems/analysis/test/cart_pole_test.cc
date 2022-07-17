@@ -7,6 +7,8 @@
 #include "drake/common/test_utilities/eigen_matrix_compare.h"
 #include "drake/multibody/parsing/parser.h"
 #include "drake/multibody/plant/multibody_plant.h"
+#include "drake/solvers/solve.h"
+#include "drake/systems/trajectory_optimization/direct_collocation.h"
 
 namespace drake {
 namespace systems {
@@ -76,6 +78,32 @@ GTEST_TEST(CartPole, Test) {
   // Test CalcQdot
   EXPECT_TRUE(CompareMatrices(CalcQdot<double>(x_trig),
                               x_trig_dot_expected.head<3>(), 1E-12));
+}
+
+GTEST_TEST(CartPole, SwingUp) {
+  // Swing up cart pole.
+  multibody::MultibodyPlant<double> cart_pole(0.);
+  multibody::Parser(&cart_pole)
+      .AddModelFromFile(FindResourceOrThrow(
+          "drake/examples/multibody/cart_pole/cart_pole.sdf"));
+  cart_pole.Finalize();
+  auto context = cart_pole.CreateDefaultContext();
+  const int num_time_samples = 30;
+  const double minimum_timestep = 0.01;
+  const double maximum_timestep = 0.1;
+  trajectory_optimization::DirectCollocation dircol(
+      &cart_pole, *context, num_time_samples, minimum_timestep,
+      maximum_timestep, cart_pole.get_actuation_input_port().get_index());
+  dircol.prog().AddBoundingBoxConstraint(
+      Eigen::Vector4d::Zero(), Eigen::Vector4d::Zero(), dircol.state(0));
+  dircol.prog().AddBoundingBoxConstraint(Eigen::Vector4d(0, M_PI, 0, 0),
+                                         Eigen::Vector4d(0, M_PI, 0, 0),
+                                         dircol.state(num_time_samples - 1));
+  dircol.AddRunningCost(
+      dircol.input().cast<symbolic::Expression>().dot(dircol.input()));
+  const auto result = solvers::Solve(dircol.prog());
+  EXPECT_TRUE(result.is_success());
+  std::cout << dircol.GetInputSamples(result) << "\n";
 }
 }  // namespace analysis
 }  // namespace systems

@@ -9,10 +9,40 @@
 #include "drake/systems/analysis/control_lyapunov.h"
 #include "drake/systems/analysis/test/acrobot.h"
 #include "drake/systems/controllers/linear_quadratic_regulator.h"
+#include "drake/systems/trajectory_optimization/direct_collocation.h"
 
 namespace drake {
 namespace systems {
 namespace analysis {
+
+[[maybe_unused]] void SwingUpTrajectoryOptimization(
+    Eigen::MatrixXd* state_traj, Eigen::MatrixXd* control_traj) {
+  // Swing up acrobot.
+  examples::acrobot::AcrobotPlant<double> acrobot;
+  auto context = acrobot.CreateDefaultContext();
+  const int num_time_samples = 30;
+  const double minimum_timestep = 0.02;
+  const double maximum_timestep = 0.08;
+  trajectory_optimization::DirectCollocation dircol(
+      &acrobot, *context, num_time_samples, minimum_timestep, maximum_timestep,
+      acrobot.get_input_port().get_index());
+  dircol.prog().AddBoundingBoxConstraint(
+      Eigen::Vector4d::Zero(), Eigen::Vector4d::Zero(), dircol.state(0));
+  dircol.prog().AddBoundingBoxConstraint(Eigen::Vector4d(M_PI, 0, 0, 0),
+                                         Eigen::Vector4d(M_PI, 0, 0, 0),
+                                         dircol.state(num_time_samples - 1));
+  for (int i = 0; i < num_time_samples; ++i) {
+    dircol.prog().AddBoundingBoxConstraint(-30, 30, dircol.input(i)(0));
+  }
+  dircol.AddRunningCost(
+      dircol.input().cast<symbolic::Expression>().dot(dircol.input()));
+  const auto result = solvers::Solve(dircol.prog());
+  DRAKE_DEMAND(result.is_success());
+  *state_traj = dircol.GetStateSamples(result);
+  *control_traj = dircol.GetInputSamples(result);
+  std::cout << "swingup control traj: " << *control_traj << "\n";
+}
+
 controllers::LinearQuadraticRegulatorResult SynthesizeTrigLqr(
     const examples::acrobot::AcrobotParams<double>& p) {
   const Eigen::Matrix<double, 7, 1> xu_des =
@@ -165,7 +195,9 @@ symbolic::Polynomial FindClfInit(
   return V_sol;
 }
 
-void SearchWTrigDynamics(const std::optional<std::string>& load_clf) {
+void SearchWTrigDynamics(double u_max,
+                         const std::optional<std::string>& load_clf,
+                         const std::optional<std::string>& save_clf) {
   examples::acrobot::AcrobotPlant<double> acrobot;
   auto context = acrobot.CreateDefaultContext();
   // examples::acrobot::AcrobotParams<double>& mutable_parameters =
@@ -176,13 +208,6 @@ void SearchWTrigDynamics(const std::optional<std::string>& load_clf) {
     x(i) = symbolic::Variable("x" + std::to_string(i));
   }
   const int V_degree = 2;
-  symbolic::Polynomial V_init;
-  if (load_clf.has_value()) {
-    V_init = Load(symbolic::Variables(x), load_clf.value());
-  } else {
-    V_init = FindClfInit(parameters, V_degree, x);
-  }
-
   Vector6<symbolic::Polynomial> f;
   Vector6<symbolic::Polynomial> G;
   symbolic::Polynomial dynamics_denominator;
@@ -190,7 +215,6 @@ void SearchWTrigDynamics(const std::optional<std::string>& load_clf) {
   const Vector2<symbolic::Polynomial> state_constraints = StateEqConstraints(x);
 
   // Arbitrary maximal joint torque.
-  const double u_max = 15;
   const Eigen::RowVector2d u_vertices(-u_max, u_max);
   const ControlLyapunov dut(x, f, G, dynamics_denominator, u_vertices,
                             state_constraints);
@@ -201,39 +225,69 @@ void SearchWTrigDynamics(const std::optional<std::string>& load_clf) {
   symbolic::Polynomial lambda0;
   VectorX<symbolic::Polynomial> l;
   VectorX<symbolic::Polynomial> p;
-  const double deriv_eps = 0.01;
-  double rho_sol;
-  {
-    // Now maximize rho to prove V(x)<=rho is an ROA
-    std::vector<MatrixX<symbolic::Variable>> l_grams;
-    symbolic::Variable rho_var;
-    symbolic::Polynomial vdot_sos;
-    VectorX<symbolic::Monomial> vdot_monomials;
-    MatrixX<symbolic::Variable> vdot_gram;
-    const int d_degree = lambda0_degree / 2 + 1;
-    auto prog = dut.ConstructLagrangianProgram(
-        V_init, symbolic::Polynomial(), d_degree, l_degrees, p_degrees,
-        deriv_eps, &l, &l_grams, &p, &rho_var, &vdot_sos, &vdot_monomials,
-        &vdot_gram);
-    solvers::SolverOptions solver_options;
-    solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
-    drake::log()->info("Maximize rho for the initial Clf");
-    const auto result = solvers::Solve(*prog, std::nullopt, solver_options);
-    DRAKE_DEMAND(result.is_success());
-    rho_sol = result.GetSolution(rho_var);
-    std::cout << fmt::format("V_init(x) <= {}\n", rho_sol);
-    // V_init = V_init / rho_sol;
-    V_init = V_init.RemoveTermsWithSmallCoefficients(1E-8) * 20;
-    DRAKE_DEMAND(rho_sol > 0);
+  const double deriv_eps = 0.1;
+  symbolic::Polynomial V_init;
+  double rho_val = 0.1;
+  if (load_clf.has_value()) {
+    V_init = Load(symbolic::Variables(x), load_clf.value());
+  } else {
+    V_init = FindClfInit(parameters, V_degree, x);
+    const bool binary_search_rho = true;
+    if (binary_search_rho) {
+      symbolic::Polynomial lambda0_sol;
+      VectorX<symbolic::Polynomial> l_sol;
+      VectorX<symbolic::Polynomial> p_sol;
+      ControlLyapunov::SearchOptions search_options{};
+      search_options.lagrangian_step_solver_options = solvers::SolverOptions();
+      search_options.lagrangian_step_solver_options->SetOption(
+          solvers::CommonSolverOption::kPrintToConsole, 1);
+      search_options.lagrangian_tiny_coeff_tol = 1E-10;
+      double rho_sol;
+      bool found_rho = dut.FindRhoBinarySearch(
+          V_init, 0, 0.00125, 5E-4, lambda0_degree, l_degrees, p_degrees,
+          deriv_eps, search_options, &rho_sol, &lambda0_sol, &l_sol, &p_sol);
+      if (found_rho) {
+        std::cout << "Binary search rho_sol: " << rho_sol << "\n";
+        V_init =
+            V_init.RemoveTermsWithSmallCoefficients(1E-8) * (rho_val / rho_sol);
+      } else {
+        abort();
+      }
+    } else {
+      // Now maximize rho to prove V(x)<=rho is an ROA
+      std::vector<MatrixX<symbolic::Variable>> l_grams;
+      symbolic::Variable rho_var;
+      symbolic::Polynomial vdot_sos;
+      VectorX<symbolic::Monomial> vdot_monomials;
+      MatrixX<symbolic::Variable> vdot_gram;
+      const int d_degree = lambda0_degree / 2 + 1;
+      auto prog = dut.ConstructLagrangianProgram(
+          V_init, symbolic::Polynomial(), d_degree, l_degrees, p_degrees,
+          deriv_eps, &l, &l_grams, &p, &rho_var, &vdot_sos, &vdot_monomials,
+          &vdot_gram);
+      solvers::SolverOptions solver_options;
+      solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
+      drake::log()->info("Maximize rho for the initial Clf");
+      const auto result = solvers::Solve(*prog, std::nullopt, solver_options);
+      DRAKE_DEMAND(result.is_success());
+      const double rho_sol = result.GetSolution(rho_var);
+      std::cout << fmt::format("V_init(x) <= {}\n", rho_sol);
+      // V_init = V_init / rho_sol;
+      V_init =
+          V_init.RemoveTermsWithSmallCoefficients(1E-8) * rho_val / rho_sol;
+      DRAKE_DEMAND(rho_sol > 0);
+    }
   }
+
   symbolic::Polynomial V_sol;
   {
     ControlLyapunov::SearchOptions search_options;
     search_options.rho_converge_tol = 0.;
     search_options.bilinear_iterations = 15;
-    search_options.backoff_scale = 0.1;
-    // search_options.lsol_tiny_coeff_tol = 1E-5;
-    // search_options.lyap_tiny_coeff_tol = 1E-5;
+    search_options.backoff_scale = 0.04;
+    search_options.lagrangian_tiny_coeff_tol = 1E-6;
+    search_options.lsol_tiny_coeff_tol = 1E-5;
+    search_options.lyap_tiny_coeff_tol = 1E-5;
     search_options.Vsol_tiny_coeff_tol = 1E-6;
     search_options.lagrangian_step_solver_options = solvers::SolverOptions();
     search_options.lagrangian_step_solver_options->SetOption(
@@ -241,19 +295,30 @@ void SearchWTrigDynamics(const std::optional<std::string>& load_clf) {
     search_options.lyap_step_solver_options = solvers::SolverOptions();
     search_options.lyap_step_solver_options->SetOption(
         solvers::CommonSolverOption::kPrintToConsole, 1);
-    search_options.lyap_step_solver_options->SetOption(
-        solvers::MosekSolver::id(), "writedata", "lyapunov.task.gz");
-    search_options.rho = rho_sol * 2 * 20;
+    // search_options.lyap_step_solver_options->SetOption(
+    //    solvers::MosekSolver::id(), "writedata", "lyapunov.task.gz");
+    search_options.rho = rho_val;
 
-    Eigen::MatrixXd state_samples(4, 3);
-    state_samples.col(0) << 0, 0, 0, 0;
-    state_samples.col(1) << 1.01 * M_PI, 0, 0, 0;
-    state_samples.col(2) << 1.0 * M_PI, 0.01 * M_PI, 0, 0;
+    Eigen::MatrixXd state_swingup;
+    Eigen::MatrixXd control_swingup;
+    SwingUpTrajectoryOptimization(&state_swingup, &control_swingup);
+    Eigen::Matrix<double, 6, Eigen::Dynamic> x_swingup(6, state_swingup.cols());
+    for (int i = 0; i < x_swingup.cols(); ++i) {
+      x_swingup.col(i) = ToTrigState<double>(state_swingup.col(i));
+    }
+    std::cout << "V_init at x_swingup "
+              << V_init.EvaluateIndeterminates(x, x_swingup).transpose()
+              << "\n";
+    std::vector<int> x_indices = {28};
+    Eigen::Matrix4Xd state_samples(4, x_indices.size());
+    for (int i = 0; i < static_cast<int>(x_indices.size()); ++i) {
+      state_samples.col(i) = state_swingup.col(x_indices[i]);
+    }
+    std::cout << "state samples:\n" << state_samples.transpose() << "\n";
     Eigen::MatrixXd x_samples(6, state_samples.cols());
     for (int i = 0; i < state_samples.cols(); ++i) {
       x_samples.col(i) = ToTrigState<double>(state_samples.col(i));
     }
-    std::cout << "x_samples:\n" << x_samples.transpose() << "\n";
 
     const double positivity_eps = 0.0001;
     const int positivity_d = V_degree / 2;
@@ -270,19 +335,25 @@ void SearchWTrigDynamics(const std::optional<std::string>& load_clf) {
     std::cout << "V_init(x_samples): "
               << V_init.EvaluateIndeterminates(x, x_samples).transpose()
               << "\n";
+    SearchResultDetails search_result_details;
     dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
                positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
-               deriv_eps, x_samples, minimize_max, search_options, &V_sol,
-               &positivity_eq_lagrangian, &lambda0_sol, &l_sol, &p_sol);
+               deriv_eps, x_samples, std::nullopt /* in_roa_samples */,
+               minimize_max, search_options, &V_sol, &positivity_eq_lagrangian,
+               &lambda0_sol, &l_sol, &p_sol, &search_result_details);
     std::cout << "V(x_samples): "
               << V_sol.EvaluateIndeterminates(x, x_samples).transpose() << "\n";
     std::cout << "rho=" << search_options.rho << "\n";
-    Save(V_sol, "acrobot_trig_clf1.txt");
+    if (save_clf.has_value()) {
+      Save(V_sol, save_clf.value());
+    }
   }
 }
 
 int DoMain() {
-  SearchWTrigDynamics(std::nullopt);
+  const double u_max = 40;
+  std::optional<std::string> load_clf = "acrobot_trig_clf1.txt";
+  SearchWTrigDynamics(u_max, load_clf, "acrobot_trig_clf2.txt");
   // SearchWTrigDynamics("acrobot_trig_clf.txt");
   return 0;
 }

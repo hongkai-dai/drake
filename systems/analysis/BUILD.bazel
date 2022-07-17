@@ -25,6 +25,7 @@ drake_cc_package_library(
         ":dense_output",
         ":explicit_euler_integrator",
         ":hermitian_dense_output",
+        ":hjb",
         ":implicit_euler_integrator",
         ":implicit_integrator",
         ":initial_value_problem",
@@ -193,6 +194,19 @@ drake_cc_library(
         "//common:extract_double",
         "//common/trajectories:piecewise_polynomial",
         "//systems/framework:vector",
+    ],
+)
+
+drake_cc_library(
+    name = "hjb",
+    hdrs = ["hjb.h"],
+    srcs = ["hjb.cc"],
+    deps = [
+        ":clf_cbf_utils",
+        "//common/symbolic:polynomial",
+        "//solvers:mathematical_program",
+        "//solvers:solve",
+        "//systems/framework:leaf_system",
     ],
 )
 
@@ -1125,6 +1139,19 @@ drake_cc_googletest(
         "//multibody/plant",
         "//multibody/parsing:parser",
         "//common/test_utilities:eigen_matrix_compare",
+        "//systems/trajectory_optimization:direct_collocation",
+    ],
+)
+
+drake_cc_binary(
+    name = "cart_pole_hjb_demo",
+    srcs = ["test/cart_pole_hjb_demo.cc"],
+    data = [
+        "//examples/multibody/cart_pole:models",
+    ],
+    deps = [
+        ":cart_pole",
+        ":hjb",
     ],
 )
 
@@ -1137,6 +1164,11 @@ drake_cc_binary(
     deps = [
         ":cart_pole",
         ":control_lyapunov",
+        ":hjb",
+        "//systems/trajectory_optimization:direct_collocation",
+        "//common:find_resource",
+        "//multibody/parsing:parser",
+        "//multibody/plant",
     ],
 )
 
@@ -1149,6 +1181,7 @@ drake_cc_binary(
     deps = [
         ":cart_pole",
         ":control_lyapunov",
+        "//systems/trajectory_optimization:direct_collocation",
     ],
 )
 
@@ -1167,6 +1200,8 @@ drake_cc_googletest(
     deps = [
         ":acrobot",
         "//common/test_utilities:eigen_matrix_compare",
+        "//solvers:solve",
+        "//systems/trajectory_optimization:direct_collocation",
     ],
 )
 
@@ -1183,6 +1218,7 @@ drake_cc_binary(
         "//solvers:solve",
         "//systems/controllers:linear_quadratic_regulator",
         "//systems/primitives:vector_log_sink",
+        "//systems/trajectory_optimization:direct_collocation",
     ],
 )
 
@@ -1204,6 +1240,7 @@ drake_cc_binary(
         "//systems/controllers:linear_quadratic_regulator",
         "//systems/framework:diagram_builder",
         "//systems/primitives:vector_log_sink",
+        "//systems/trajectory_optimization:direct_collocation",
     ],
 )
 

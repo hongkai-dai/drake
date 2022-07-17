@@ -293,10 +293,12 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
     symbolic::Polynomial lambda0_sol;
     VectorX<symbolic::Polynomial> l_sol;
     VectorX<symbolic::Polynomial> p_sol;
+    SearchResultDetails search_result_details;
     dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
                positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
-               deriv_eps, x_samples, true, search_options, &V_sol,
-               &positivity_eq_lagrangian_sol, &lambda0_sol, &l_sol, &p_sol);
+               deriv_eps, x_samples, std::nullopt /* in_roa_samples */, true,
+               search_options, &V_sol, &positivity_eq_lagrangian_sol,
+               &lambda0_sol, &l_sol, &p_sol, &search_result_details);
   }
   const double theta0 = 0.0;
   const double thetadot0 = 0.0;

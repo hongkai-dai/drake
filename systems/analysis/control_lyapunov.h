@@ -5,6 +5,7 @@
 #include "drake/solvers/mathematical_program.h"
 #include "drake/solvers/mathematical_program_result.h"
 #include "drake/solvers/mosek_solver.h"
+#include "drake/systems/analysis/clf_cbf_utils.h"
 #include "drake/systems/framework/leaf_system.h"
 
 namespace drake {
@@ -230,6 +231,8 @@ class ControlLyapunov {
    * @param positivity_d d1 in the documentation above.
    * @param positivity_eq_lagrangian_degrees Degrees of r(x).
    * @param deriv_eps ε₂ in the documentation above.
+   * @param in_roa_samples. For each column of in_roa_samples, we will impose
+   * the constraint V(in_roa_samples.col(i)) <= rho.
    */
   void Search(const symbolic::Polynomial& V_init, int lambda0_degree,
               const std::vector<int>& l_degrees, int V_degree,
@@ -237,11 +240,13 @@ class ControlLyapunov {
               const std::vector<int>& positivity_eq_lagrangian_degrees,
               const std::vector<int>& p_degrees, double deriv_eps,
               const Eigen::Ref<const Eigen::MatrixXd>& x_samples,
+              const std::optional<Eigen::MatrixXd>& in_roa_samples,
               bool minimize_max, const SearchOptions& search_options,
               symbolic::Polynomial* V,
               VectorX<symbolic::Polynomial>* positivity_eq_lagrangian,
               symbolic::Polynomial* lambda0, VectorX<symbolic::Polynomial>* l,
-              VectorX<symbolic::Polynomial>* p) const;
+              VectorX<symbolic::Polynomial>* p,
+              SearchResultDetails* search_result_details) const;
 
   [[nodiscard]] const VectorX<symbolic::Variable>& x() const { return x_; }
 

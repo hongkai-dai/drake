@@ -419,7 +419,7 @@ GTEST_TEST(SaveLoadPolynomial, Test) {
   EXPECT_PRED2(symbolic::test::PolyEqual, p1, Load(x_set, file));
 
   const symbolic::Polynomial p2{3 * x0 + 4 * x1 + 2 * x0 * x1 +
-                                3 * x0 * x1 * x1};
+                                3 * x0 * x1 * x1 + 1};
   Save(p2, file);
   EXPECT_PRED2(symbolic::test::PolyEqual, p2, Load(x_set, file));
 }

@@ -3,6 +3,8 @@
 #include <gtest/gtest.h>
 
 #include "drake/common/test_utilities/eigen_matrix_compare.h"
+#include "drake/solvers/solve.h"
+#include "drake/systems/trajectory_optimization/direct_collocation.h"
 
 namespace drake {
 namespace systems {
@@ -74,6 +76,28 @@ GTEST_TEST(Acrobot, DynamicsTest) {
   TestAcrobotDynamics(acrobot, Eigen::Vector4d(0, 0, 0, 0), 0);
   TestAcrobotDynamics(acrobot, Eigen::Vector4d(M_PI, 0, 0, 0), 2);
   TestAcrobotDynamics(acrobot, Eigen::Vector4d(0.5, -0.9, 1.2, 3.1), 2);
+}
+
+GTEST_TEST(Acrobot, SwingUp) {
+  // Swing up acrobot.
+  examples::acrobot::AcrobotPlant<double> acrobot;
+  auto context = acrobot.CreateDefaultContext();
+  const int num_time_samples = 30;
+  const double minimum_timestep = 0.01;
+  const double maximum_timestep = 0.1;
+  trajectory_optimization::DirectCollocation dircol(
+      &acrobot, *context, num_time_samples, minimum_timestep, maximum_timestep,
+      acrobot.get_input_port().get_index());
+  dircol.prog().AddBoundingBoxConstraint(
+      Eigen::Vector4d::Zero(), Eigen::Vector4d::Zero(), dircol.state(0));
+  dircol.prog().AddBoundingBoxConstraint(Eigen::Vector4d(M_PI, 0, 0, 0),
+                                         Eigen::Vector4d(M_PI, 0, 0, 0),
+                                         dircol.state(num_time_samples - 1));
+  dircol.AddRunningCost(
+      dircol.input().cast<symbolic::Expression>().dot(dircol.input()));
+  const auto result = solvers::Solve(dircol.prog());
+  EXPECT_TRUE(result.is_success());
+  std::cout << dircol.GetInputSamples(result) << "\n";
 }
 }  // namespace analysis
 }  // namespace systems

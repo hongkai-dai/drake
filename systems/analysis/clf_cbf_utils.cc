@@ -106,10 +106,10 @@ solvers::MathematicalProgramResult SearchWithBackoff(
   if (!result.is_success()) {
     drake::log()->error("Failed before backoff with solution_result={}\n",
                         result.get_solution_result());
-    return result;
+    // return result;
   }
   // PrintPsdConstraintStat(*prog, result);
-  DRAKE_DEMAND(backoff_scale >= 0 && backoff_scale <= 1);
+  DRAKE_DEMAND(backoff_scale >= 0);
   if (backoff_scale > 0) {
     drake::log()->info("backoff");
     auto cost = prog->linear_costs()[0];
@@ -573,7 +573,7 @@ void Save(const symbolic::Polynomial& p, const std::string& file_name) {
   for (const auto& [monomial, coeff] : p.monomial_to_coefficient_map()) {
     DRAKE_DEMAND(symbolic::is_constant(coeff));
     std::string term;
-    term.append(fmt::format("{:.15f} ", symbolic::get_constant_value(coeff)));
+    term.append(fmt::format("{:.20f} ", symbolic::get_constant_value(coeff)));
     for (const auto& [var, degree] : monomial.get_powers()) {
       term.append(
           fmt::format("{} {}, ", var_to_index.at(var.get_id()), degree));
@@ -830,8 +830,8 @@ void OptimizePolynomialAtSamples(
       break;
     }
     case OptimizePolynomialMode::kMinimizeAverage: {
-      prog->AddLinearCost(A_samples.colwise().mean(), b_samples.mean(),
-                          decision_variables_samples);
+      prog->AddLinearCost(A_samples.colwise().mean().transpose(),
+                          b_samples.mean(), decision_variables_samples);
       break;
     }
     case OptimizePolynomialMode::kMaximizeMinimal: {
@@ -849,8 +849,8 @@ void OptimizePolynomialAtSamples(
       break;
     }
     case OptimizePolynomialMode::kMaximizeAverage: {
-      prog->AddLinearCost(-A_samples.colwise().mean(), -b_samples.mean(),
-                          decision_variables_samples);
+      prog->AddLinearCost(-A_samples.colwise().mean().transpose(),
+                          -b_samples.mean(), decision_variables_samples);
       break;
     }
   }

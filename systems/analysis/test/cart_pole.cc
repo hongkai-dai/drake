@@ -34,9 +34,9 @@ void TrigPolyDynamics(
                             M_expr(1, 0) * M_expr(0, 1));
   const symbolic::Polynomial s(x(1));
   const symbolic::Polynomial c(x(2) - 1);
-  (*f)(0) = x(3) * (*d);
-  (*f)(1) = c * x(4) * (*d);
-  (*f)(2) = -s * x(4) * (*d);
+  (*f)(0) = symbolic::Polynomial(x(3)) * (*d);
+  (*f)(1) = c * symbolic::Polynomial(x(4)) * (*d);
+  (*f)(2) = -s * symbolic::Polynomial(x(4)) * (*d);
 
   Matrix2<symbolic::Expression> M_adj_expr;
   M_adj_expr << M_expr(1, 1), -M_expr(1, 0), -M_expr(0, 1), M_expr(0, 0);
@@ -121,7 +121,7 @@ void Simulate(const CartPoleParams& parameters,
   symbolic::Polynomial dynamics_numerator;
   TrigPolyDynamics(parameters, x, &f, &G, &dynamics_numerator);
 
-  const double vdot_cost = 10;
+  const double vdot_cost = 100;
   auto clf_controller = builder.AddSystem<ClfController>(
       x, f, G, dynamics_numerator, clf, deriv_eps, Au, bu, u_star, Ru,
       vdot_cost);

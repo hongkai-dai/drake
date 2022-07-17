@@ -186,10 +186,12 @@ void SearchWTrigDynamics() {
     VectorX<symbolic::Polynomial> l_sol;
     VectorX<symbolic::Polynomial> p_sol;
     const bool minimize_max = true;
+    SearchResultDetails search_result_details;
     dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
                positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
-               deriv_eps, x_samples, minimize_max, search_options, &V_sol,
-               &positivity_eq_lagrangian, &lambda0_sol, &l_sol, &p_sol);
+               deriv_eps, x_samples, std::nullopt /* in_roa_samples */,
+               minimize_max, search_options, &V_sol, &positivity_eq_lagrangian,
+               &lambda0_sol, &l_sol, &p_sol, &search_result_details);
     std::cout << "V(x_samples): "
               << V_sol.EvaluateIndeterminates(x, x_samples).transpose() << "\n";
     Save(V_sol, "quadrotor3d_trig_clf_sol.txt");

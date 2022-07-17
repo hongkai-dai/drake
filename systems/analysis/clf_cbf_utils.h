@@ -243,6 +243,20 @@ void OptimizePolynomialAtSamples(
     const Eigen::Ref<const Eigen::MatrixXd>& x_samples,
     OptimizePolynomialMode optimize_polynomial_mode);
 
+enum BilinearIterationStatus {
+  kIterationLimit,
+  kFailLagrangian,
+  kFailLyapunov,
+  kInsufficientDecrease,
+  kUnknown,
+};
+
+struct SearchResultDetails {
+  int num_bilinear_iterations = 0;
+  BilinearIterationStatus bilinear_iteration_status{
+      BilinearIterationStatus::kUnknown};
+};
+
 namespace internal {
 /** The ellipsoid polynomial (x−x*)ᵀS(x−x*)−ρ
  */

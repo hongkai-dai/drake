@@ -7,11 +7,11 @@
 #include "drake/common/text_logging.h"
 #include "drake/math/matrix_util.h"
 #include "drake/solvers/choose_best_solver.h"
+#include "drake/solvers/common_solver_option.h"
 #include "drake/solvers/mathematical_program.h"
 #include "drake/solvers/mathematical_program_result.h"
 #include "drake/solvers/solve.h"
 #include "drake/solvers/sos_basis_generator.h"
-#include "drake/systems/analysis/clf_cbf_utils.h"
 
 namespace drake {
 namespace systems {
@@ -397,9 +397,10 @@ void ControlLyapunov::Search(
   while (iter_count < search_options.bilinear_iterations) {
     {
       MaximizeInnerEllipsoidRho(
-          x_, x_star, S, *V_sol - search_options.rho, state_constraints_, r_degree,
-          ellipsoid_c_lagrangian_degrees, rho_bisection_option.rho_max,
-          rho_bisection_option.rho_min, search_options.ellipsoid_step_solver,
+          x_, x_star, S, *V_sol - search_options.rho, state_constraints_,
+          r_degree, ellipsoid_c_lagrangian_degrees,
+          rho_bisection_option.rho_max, rho_bisection_option.rho_min,
+          search_options.ellipsoid_step_solver,
           search_options.ellipsoid_step_solver_options,
           rho_bisection_option.rho_tol, rho_sol, r_sol,
           ellipsoid_c_lagrangian_sol);
@@ -472,19 +473,33 @@ void ControlLyapunov::Search(
   }
 }
 
+double EvaluateClfCost(const symbolic::Polynomial& V,
+                       const VectorX<symbolic::Variable>& x,
+                       const Eigen::Ref<const Eigen::MatrixXd>& x_samples,
+                       bool minimize_max) {
+  const Eigen::VectorXd V_samples = V.EvaluateIndeterminates(x, x_samples);
+  if (minimize_max) {
+    return V_samples.maxCoeff();
+  } else {
+    return V_samples.mean();
+  }
+}
+
 void ControlLyapunov::Search(
     const symbolic::Polynomial& V_init, int lambda0_degree,
     const std::vector<int>& l_degrees, int V_degree, double positivity_eps,
     int positivity_d, const std::vector<int>& positivity_eq_lagrangian_degrees,
     const std::vector<int>& p_degrees, double deriv_eps,
-    const Eigen::Ref<const Eigen::MatrixXd>& x_samples, bool minimize_max,
+    const Eigen::Ref<const Eigen::MatrixXd>& x_samples,
+    const std::optional<Eigen::MatrixXd>& in_roa_samples, bool minimize_max,
     const SearchOptions& search_options, symbolic::Polynomial* V_sol,
     VectorX<symbolic::Polynomial>* positivity_eq_lagrangian_sol,
     symbolic::Polynomial* lambda0_sol, VectorX<symbolic::Polynomial>* l_sol,
-    VectorX<symbolic::Polynomial>* p_sol) const {
+    VectorX<symbolic::Polynomial>* p_sol,
+    SearchResultDetails* search_result_details) const {
   DRAKE_DEMAND(x_samples.rows() == x_.rows());
   int iter_count = 0;
-  double prev_cost = kInf;
+  double prev_cost = EvaluateClfCost(V_init, x_, x_samples, minimize_max);
   *V_sol = V_init;
   while (iter_count < search_options.bilinear_iterations) {
     drake::log()->info("Iteration {}", iter_count);
@@ -492,6 +507,10 @@ void ControlLyapunov::Search(
         *V_sol, search_options.rho, lambda0_degree, l_degrees, p_degrees,
         deriv_eps, search_options, lambda0_sol, l_sol, p_sol);
     if (!found_lagrangian) {
+      drake::log()->error("Failed to find Lagrangian in iter {}", iter_count);
+      search_result_details->bilinear_iteration_status =
+          BilinearIterationStatus::kFailLagrangian;
+      search_result_details->num_bilinear_iterations = iter_count;
       return;
     }
 
@@ -504,10 +523,26 @@ void ControlLyapunov::Search(
           *lambda0_sol, *l_sol, V_degree, search_options.rho, positivity_eps,
           positivity_d, positivity_eq_lagrangian_degrees, p_degrees, deriv_eps,
           &V_search, &positivity_eq_lagrangian, &p);
-      OptimizePolynomialAtSamples(prog_lyapunov.get(), V_search, x_, x_samples,
-                                  minimize_max
-                                      ? OptimizePolynomialMode::kMinimizeMaximal
-                                      : OptimizePolynomialMode::kMinimizeAverage);
+      if (in_roa_samples.has_value()) {
+        // Add the constraint V_search(in_roa_samples) <= rho.
+        Eigen::MatrixXd A_in_roa_samples;
+        Eigen::VectorXd b_in_roa_samples;
+        VectorX<symbolic::Variable> variables_in_roa_samples;
+        V_search.EvaluateWithAffineCoefficients(
+            x_, in_roa_samples.value(), &A_in_roa_samples,
+            &variables_in_roa_samples, &b_in_roa_samples);
+        prog_lyapunov->AddLinearConstraint(
+            A_in_roa_samples,
+            Eigen::VectorXd::Constant(b_in_roa_samples.rows(), -kInf),
+            Eigen::VectorXd::Constant(b_in_roa_samples.rows(),
+                                      search_options.rho) -
+                b_in_roa_samples,
+            variables_in_roa_samples);
+      }
+      OptimizePolynomialAtSamples(
+          prog_lyapunov.get(), V_search, x_, x_samples,
+          minimize_max ? OptimizePolynomialMode::kMinimizeMaximal
+                       : OptimizePolynomialMode::kMinimizeAverage);
       RemoveTinyCoeff(prog_lyapunov.get(), search_options.lyap_tiny_coeff_tol);
       drake::log()->info("Search Lyapunov, Lyapunov program smallest coeff: {}",
                          SmallestCoeff(*prog_lyapunov));
@@ -516,40 +551,53 @@ void ControlLyapunov::Search(
           search_options.lyap_step_solver_options,
           search_options.backoff_scale);
       if (result_lyapunov.is_success()) {
-        *V_sol = result_lyapunov.GetSolution(V_search);
+        // First check if the cost decreases. If not, return directly. Otherwise
+        // update V_sol;
+        double cost;
+        const symbolic::Polynomial V_sol_tmp =
+            result_lyapunov.GetSolution(V_search);
+        cost = EvaluateClfCost(V_sol_tmp, x_, x_samples, minimize_max);
+        drake::log()->info("Optimal cost = {}, cost decreases by {}", cost,
+                           prev_cost - cost);
+        if (prev_cost - cost < search_options.rho_converge_tol) {
+          drake::log()->info("Cost decreases by {}, less than {} in iter {}",
+                             prev_cost - cost, search_options.rho_converge_tol,
+                             iter_count);
+          search_result_details->num_bilinear_iterations = iter_count;
+          search_result_details->bilinear_iteration_status =
+              BilinearIterationStatus::kInsufficientDecrease;
+          return;
+        }
+        prev_cost = cost;
+        *V_sol = V_sol_tmp;
         if (search_options.Vsol_tiny_coeff_tol > 0) {
           *V_sol = V_sol->RemoveTermsWithSmallCoefficients(
               search_options.Vsol_tiny_coeff_tol);
         }
         if (search_options.save_clf_file.has_value()) {
-          Save(*V_sol, search_options.save_clf_file.value());
+          Save(*V_sol, search_options.save_clf_file.value() +
+                           fmt::format(".iter{}", iter_count));
         }
         GetPolynomialSolutions(result_lyapunov, positivity_eq_lagrangian,
                                search_options.lsol_tiny_coeff_tol,
                                positivity_eq_lagrangian_sol);
         GetPolynomialSolutions(result_lyapunov, p,
                                search_options.lsol_tiny_coeff_tol, p_sol);
-        double cost;
-        const Eigen::VectorXd V_samples =
-            V_sol->EvaluateIndeterminates(x_, x_samples);
-        if (minimize_max) {
-          cost = V_samples.maxCoeff();
-        } else {
-          cost = V_samples.sum();
-        }
-        drake::log()->info("Optimal cost = {}", cost);
-        if (prev_cost - cost < search_options.rho_converge_tol) {
-          return;
-        }
-        prev_cost = cost;
       } else {
-        *V_sol = result_lyapunov.GetSolution(V_search);
-        drake::log()->error("Failed to find Lyapunov");
+        drake::log()->error("Failed to find Lyapunov in iter {}", iter_count);
+        search_result_details->bilinear_iteration_status =
+            BilinearIterationStatus::kFailLyapunov;
+        search_result_details->num_bilinear_iterations = iter_count;
         return;
       }
     }
     iter_count++;
   }
+  drake::log()->info("Finished {} iterations of bilinear alternation",
+                     search_options.bilinear_iterations);
+  search_result_details->bilinear_iteration_status =
+      BilinearIterationStatus::kIterationLimit;
+  search_result_details->num_bilinear_iterations = iter_count;
 }
 
 VdotCalculator::VdotCalculator(
@@ -659,10 +707,12 @@ AddEllipsoidInRoaConstraintHelper(
     const VectorX<symbolic::Variable>& x,
     const Eigen::Ref<const Eigen::VectorXd>& x_star,
     const Eigen::Ref<const Eigen::MatrixXd>& S, const RhoType& rho,
-    const symbolic::Polynomial& s, const symbolic::Polynomial& V, double V_level) {
+    const symbolic::Polynomial& s, const symbolic::Polynomial& V,
+    double V_level) {
   const symbolic::Polynomial ellipsoid_poly =
       internal::EllipsoidPolynomial<RhoType>(x, x_star, S, rho);
-  const symbolic::Polynomial sos_poly = (1 + t) * ellipsoid_poly - s * (V - V_level);
+  const symbolic::Polynomial sos_poly =
+      (1 + t) * ellipsoid_poly - s * (V - V_level);
   return prog->AddSosConstraint(sos_poly);
 }
 }  // namespace
@@ -1364,6 +1414,10 @@ void ClfController::CalcControl(const Context<double>& context,
                      dVdx_times_f_val / dynamics_numerator_val * vdot_cost_, u);
   const auto result = solvers::Solve(prog);
   if (!result.is_success()) {
+    drake::log()->info(
+        "dVdx*f+eps*V={}, dVdx*G={}",
+        dVdx_times_f_val / dynamics_numerator_val + deriv_eps_ * V_val,
+        dVdx_times_G_val / dynamics_numerator_val);
     drake::log()->error("ClfController fails at t={} with x={}, V={}",
                         context.get_time(), x_val.transpose(), V_val);
     DRAKE_DEMAND(result.is_success());

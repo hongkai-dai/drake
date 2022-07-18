@@ -169,8 +169,8 @@ symbolic::Polynomial SearchClfNoInputBound(
     const CartPoleParams& params,
     const Eigen::Matrix<symbolic::Variable, 5, 1>& x, double deriv_eps) {
   const std::optional<std::string> load_file =
-      "cart_pole_trig_clf_no_limit5.txt.iter12";
-  const std::string save_file_name = "cart_pole_trig_clf_no_limit6.txt";
+      "cart_pole_trig_clf_no_limit6.txt.iter5";
+  const std::string save_file_name = "cart_pole_trig_clf_no_limit7.txt";
   Eigen::Matrix<symbolic::Polynomial, 5, 1> f;
   Eigen::Matrix<symbolic::Polynomial, 5, 1> G;
   symbolic::Polynomial dynamics_denominator;
@@ -180,7 +180,7 @@ symbolic::Polynomial SearchClfNoInputBound(
                                         state_constraints);
   const symbolic::Variables x_set(x);
 
-  const int V_degree = 2;
+  const int V_degree = 4;
   symbolic::Polynomial V_init;
   if (load_file.has_value()) {
     V_init = Load(x_set, load_file.value());
@@ -199,7 +199,7 @@ symbolic::Polynomial SearchClfNoInputBound(
 
   const int lambda0_degree = 2;
   const std::vector<int> l_degrees = {4};
-  const std::vector<int> eq_lagrangian_degrees = {4};
+  const std::vector<int> eq_lagrangian_degrees = {6};
   const std::vector<int> ineq_lagrangian_degrees = {
       6};  //{6, 6, 6, 6, 6, 6, 6, 6, 6};
 
@@ -217,6 +217,8 @@ symbolic::Polynomial SearchClfNoInputBound(
   for (int i = 0; i < state_swingup.cols(); ++i) {
     x_swingup.col(i) = ToTrigState<double>(state_swingup.col(i));
   }
+  drake::log()->info("Before bilinear alternation, V(x_swingup)={}",
+                     V_sol.EvaluateIndeterminates(x, x_swingup).transpose());
   while (iter_count < iter_max) {
     drake::log()->info("Iter {}", iter_count);
     {
@@ -284,7 +286,7 @@ symbolic::Polynomial SearchClfNoInputBound(
                                        ineq_lagrangian_sol, &vdot_sos,
                                        &vdot_sos_monomials, &vdot_sos_gram);
       // The cost is to minimize max(V(x_samples));
-      std::vector<int> x_indices = {0,  11, 12, 13, 18, 19, 20, 21,
+      std::vector<int> x_indices = {14, 15, 16, 17, 18, 19, 20, 21,
                                     22, 23, 24, 25, 26, 27, 28};
       Eigen::MatrixXd x_samples(5, x_indices.size());
       for (int i = 0; i < x_samples.cols(); ++i) {
@@ -308,7 +310,7 @@ symbolic::Polynomial SearchClfNoInputBound(
       }
       solvers::SolverOptions solver_options;
       solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
-      const double backoff_scale = 0.001;
+      const double backoff_scale = 0.00;
 
       const double prev_cost =
           V_sol.EvaluateIndeterminates(x, x_samples).maxCoeff();

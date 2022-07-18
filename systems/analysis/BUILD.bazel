@@ -942,7 +942,6 @@ drake_cc_library(
         "//math:gradient",
         "//systems/controllers:linear_quadratic_regulator",
         "//systems/framework:leaf_system",
-        "//systems/controllers:linear_quadratic_regulator",
     ],
 )
 
@@ -1018,6 +1017,7 @@ drake_cc_binary(
         ":control_barrier",
         ":quadrotor2d",
         ":simulator",
+        ":simulator_config_functions",
         "//solvers:solve",
         "//systems/controllers:linear_quadratic_regulator",
         "//systems/primitives:vector_log_sink",

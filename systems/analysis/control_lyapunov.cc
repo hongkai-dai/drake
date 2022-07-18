@@ -12,6 +12,7 @@
 #include "drake/solvers/mathematical_program_result.h"
 #include "drake/solvers/solve.h"
 #include "drake/solvers/sos_basis_generator.h"
+#include "drake/systems/analysis/clf_cbf_utils.h"
 
 namespace drake {
 namespace systems {
@@ -1424,6 +1425,109 @@ void ClfController::CalcControl(const Context<double>& context,
   }
   const Eigen::VectorXd u_val = result.GetSolution(u);
   output->get_mutable_value() = u_val;
+}
+
+ControlLyapunovNoInputBound::ControlLyapunovNoInputBound(
+    const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+    const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
+    const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
+    const std::optional<symbolic::Polynomial>& dynamics_denominator,
+    const Eigen::Ref<const VectorX<symbolic::Polynomial>>& state_constraints)
+    : x_{x},
+      x_set_{x_},
+      f_{f},
+      G_{G},
+      dynamics_denominator_{dynamics_denominator},
+      state_constraints_{state_constraints} {
+  DRAKE_ASSERT(f.rows() == G.rows());
+  const symbolic::Variables x_set(x_);
+  for (int i = 0; i < f.rows(); ++i) {
+    DRAKE_DEMAND(f(i).indeterminates().IsSubsetOf(x_set));
+    for (int j = 0; j < G.cols(); ++j) {
+      DRAKE_DEMAND(G(i, j).indeterminates().IsSubsetOf(x_set));
+    }
+  }
+  CheckPolynomialsPassOrigin(state_constraints_);
+}
+
+void ControlLyapunovNoInputBound::AddControlLyapunovConstraint(
+    solvers::MathematicalProgram* prog, const symbolic::Polynomial& lambda0,
+    const VectorX<symbolic::Polynomial>& l, const symbolic::Polynomial& V,
+    double deriv_eps, const VectorX<symbolic::Polynomial>& eq_lagrangian,
+    const VectorX<symbolic::Polynomial>& ineq_constraints,
+    const VectorX<symbolic::Polynomial>& ineq_lagrangian,
+    symbolic::Polynomial* vdot_sos,
+    VectorX<symbolic::Monomial>* vdot_sos_monomials,
+    MatrixX<symbolic::Variable>* vdot_sos_gram) const {
+  const RowVectorX<symbolic::Polynomial> dVdx = V.Jacobian(x_);
+  *vdot_sos = (1 + lambda0) *
+              -(dVdx.dot(f_) +
+                deriv_eps * V *
+                    dynamics_denominator_.value_or(symbolic::Polynomial(1)));
+  const RowVectorX<symbolic::Polynomial> dVdx_times_G = dVdx * G_;
+  *vdot_sos -= l.dot(dVdx_times_G);
+  *vdot_sos -= eq_lagrangian.dot(state_constraints_);
+  *vdot_sos += ineq_lagrangian.dot(ineq_constraints);
+  std::tie(*vdot_sos_gram, *vdot_sos_monomials) =
+      prog->AddSosConstraint(*vdot_sos);
+}
+
+bool ControlLyapunovNoInputBound::SearchLagrangian(
+    const symbolic::Polynomial& V, int lambda0_degree,
+    const std::vector<int>& l_degrees, double deriv_eps,
+    const std::vector<int>& eq_lagrangian_degrees,
+    const VectorX<symbolic::Polynomial>& ineq_constraints,
+    const std::vector<int>& ineq_lagrangian_degrees,
+    const solvers::SolverOptions& solver_options, double lsol_tiny_coeff_tol,
+    symbolic::Polynomial* lambda0_sol, VectorX<symbolic::Polynomial>* l_sol,
+    VectorX<symbolic::Polynomial>* eq_lagrangian_sol,
+    VectorX<symbolic::Polynomial>* ineq_lagrangian_sol) const {
+  solvers::MathematicalProgram prog;
+  prog.AddIndeterminates(x_);
+  symbolic::Polynomial lambda0;
+  std::tie(lambda0, std::ignore) =
+      prog.NewSosPolynomial(x_set_, lambda0_degree);
+  const int nu = G_.cols();
+  VectorX<symbolic::Polynomial> l(nu);
+  DRAKE_DEMAND(static_cast<int>(l_degrees.size()) == nu);
+  for (int i = 0; i < nu; ++i) {
+    l(i) = prog.NewFreePolynomial(x_set_, l_degrees[i]);
+  }
+  VectorX<symbolic::Polynomial> eq_lagrangian(state_constraints_.rows());
+  DRAKE_DEMAND(static_cast<int>(eq_lagrangian_degrees.size()) ==
+               state_constraints_.rows());
+  for (int i = 0; i < eq_lagrangian.rows(); ++i) {
+    eq_lagrangian(i) = prog.NewFreePolynomial(x_set_, eq_lagrangian_degrees[i]);
+  }
+  VectorX<symbolic::Polynomial> ineq_lagrangian(ineq_constraints.rows());
+  DRAKE_DEMAND(ineq_constraints.rows() ==
+               static_cast<int>(ineq_lagrangian_degrees.size()));
+  for (int i = 0; i < ineq_lagrangian.rows(); ++i) {
+    std::tie(ineq_lagrangian(i), std::ignore) =
+        prog.NewSosPolynomial(x_set_, ineq_lagrangian_degrees[i]);
+  }
+  symbolic::Polynomial vdot_sos;
+  VectorX<symbolic::Monomial> vdot_sos_monomials;
+  MatrixX<symbolic::Variable> vdot_sos_gram;
+  this->AddControlLyapunovConstraint(
+      &prog, lambda0, l, V, deriv_eps, eq_lagrangian, ineq_constraints,
+      ineq_lagrangian, &vdot_sos, &vdot_sos_monomials, &vdot_sos_gram);
+  const auto result = solvers::Solve(prog, std::nullopt, solver_options);
+  *lambda0_sol = result.GetSolution(lambda0);
+  if (lsol_tiny_coeff_tol > 0) {
+    *lambda0_sol =
+        lambda0_sol->RemoveTermsWithSmallCoefficients(lsol_tiny_coeff_tol);
+  }
+  GetPolynomialSolutions(result, l, lsol_tiny_coeff_tol, l_sol);
+  GetPolynomialSolutions(result, eq_lagrangian, lsol_tiny_coeff_tol,
+                         eq_lagrangian_sol);
+  GetPolynomialSolutions(result, ineq_lagrangian, lsol_tiny_coeff_tol,
+                         ineq_lagrangian_sol);
+  if (result.is_success()) {
+    return true;
+  } else {
+    return false;
+  }
 }
 
 namespace internal {

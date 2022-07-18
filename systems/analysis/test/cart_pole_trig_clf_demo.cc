@@ -1,10 +1,10 @@
 #include <iostream>
-
 #include <limits>
 
 #include "drake/common/find_resource.h"
 #include "drake/multibody/parsing/parser.h"
 #include "drake/multibody/plant/multibody_plant.h"
+#include "drake/solvers/common_solver_option.h"
 #include "drake/solvers/solve.h"
 #include "drake/systems/analysis/clf_cbf_utils.h"
 #include "drake/systems/analysis/control_lyapunov.h"
@@ -37,7 +37,8 @@ const double kInf = std::numeric_limits<double>::infinity();
   dircol.prog().AddBoundingBoxConstraint(Eigen::Vector4d(0, M_PI, 0, 0),
                                          Eigen::Vector4d(0, M_PI, 0, 0),
                                          dircol.state(num_time_samples - 1));
-  dircol.prog().AddBoundingBoxConstraint(0, 0, dircol.input(num_time_samples-1)(0));
+  dircol.prog().AddBoundingBoxConstraint(0, 0,
+                                         dircol.input(num_time_samples - 1)(0));
   // for (int i = 0; i < num_time_samples; ++i) {
   //  dircol.prog().AddBoundingBoxConstraint(-110, 110, dircol.input(i)(0));
   //}
@@ -164,6 +165,181 @@ const double kInf = std::numeric_limits<double>::infinity();
   return J_sol;
 }
 
+symbolic::Polynomial SearchClfNoInputBound(
+    const CartPoleParams& params,
+    const Eigen::Matrix<symbolic::Variable, 5, 1>& x, double deriv_eps) {
+  const std::optional<std::string> load_file =
+      "cart_pole_trig_clf_no_limit5.txt.iter12";
+  const std::string save_file_name = "cart_pole_trig_clf_no_limit6.txt";
+  Eigen::Matrix<symbolic::Polynomial, 5, 1> f;
+  Eigen::Matrix<symbolic::Polynomial, 5, 1> G;
+  symbolic::Polynomial dynamics_denominator;
+  TrigPolyDynamics(params, x, &f, &G, &dynamics_denominator);
+  const Vector1<symbolic::Polynomial> state_constraints(StateEqConstraint(x));
+  const ControlLyapunovNoInputBound dut(x, f, G, dynamics_denominator,
+                                        state_constraints);
+  const symbolic::Variables x_set(x);
+
+  const int V_degree = 2;
+  symbolic::Polynomial V_init;
+  if (load_file.has_value()) {
+    V_init = Load(x_set, load_file.value());
+  } else {
+    V_init = FindClfInit(params, V_degree, x);
+    V_init = V_init / 1.3;
+  }
+
+  Eigen::Matrix<double, 5, 1> x_lb;
+  Eigen::Matrix<double, 5, 1> x_ub;
+  // -0.3 <= x(0) <= 0.3
+  // sin(1.1pi) <= sin(theta) = x(1) <= sin(0.9pi)
+  // cos(theta) = x(2)-1 <= cos(0.9*pi)
+  x_lb << -0.3, std::sin(1.1 * M_PI), -1, -1, -2;
+  x_ub << 0.3, std::sin(0.9 * M_PI), std::cos(0.9 * M_PI) + 1, 1, 2;
+
+  const int lambda0_degree = 2;
+  const std::vector<int> l_degrees = {4};
+  const std::vector<int> eq_lagrangian_degrees = {4};
+  const std::vector<int> ineq_lagrangian_degrees = {
+      6};  //{6, 6, 6, 6, 6, 6, 6, 6, 6};
+
+  symbolic::Polynomial V_sol = V_init;
+  symbolic::Polynomial lambda0_sol;
+  VectorX<symbolic::Polynomial> l_sol;
+  VectorX<symbolic::Polynomial> eq_lagrangian_sol;
+  VectorX<symbolic::Polynomial> ineq_lagrangian_sol;
+  int iter_count = 0;
+  const int iter_max = 30;
+  Eigen::MatrixXd state_swingup;
+  Eigen::MatrixXd control_swingup;
+  SwingUpTrajectoryOptimization(&state_swingup, &control_swingup);
+  Eigen::Matrix<double, 5, Eigen::Dynamic> x_swingup(5, state_swingup.cols());
+  for (int i = 0; i < state_swingup.cols(); ++i) {
+    x_swingup.col(i) = ToTrigState<double>(state_swingup.col(i));
+  }
+  while (iter_count < iter_max) {
+    drake::log()->info("Iter {}", iter_count);
+    {
+      // for (int i = 0; i < 5; ++i) {
+      //  ineq_constraints(i) = symbolic::Polynomial(x(i) - x_ub(i));
+      //}
+      // ineq_constraints(5) = symbolic::Polynomial(-x(0) + x_lb(0));
+      // ineq_constraints(6) = symbolic::Polynomial(-x(1) + x_lb(1));
+      // ineq_constraints(7) = symbolic::Polynomial(-x(3) + x_lb(3));
+      // ineq_constraints(8) = symbolic::Polynomial(-x(4) + x_lb(4));
+
+      VectorX<symbolic::Polynomial> ineq_constraints(1);
+      ineq_constraints(0) = V_sol - 1;
+      solvers::SolverOptions lagrangian_solver_options;
+      lagrangian_solver_options.SetOption(
+          solvers::CommonSolverOption::kPrintToConsole, 1);
+      const double lsol_tiny_coeff_tol = 0;
+      const bool found_lagrangian = dut.SearchLagrangian(
+          V_sol, lambda0_degree, l_degrees, deriv_eps, eq_lagrangian_degrees,
+          ineq_constraints, ineq_lagrangian_degrees, lagrangian_solver_options,
+          lsol_tiny_coeff_tol, &lambda0_sol, &l_sol, &eq_lagrangian_sol,
+          &ineq_lagrangian_sol);
+      if (found_lagrangian) {
+        drake::log()->info("Find lagrangian");
+      } else {
+        drake::log()->error("Failed to find Lagrangian");
+        return V_sol;
+      }
+    }
+    {
+      // Now fix Lagrangian multiplier and search for V.
+      solvers::MathematicalProgram prog;
+      prog.AddIndeterminates(x);
+      // Add the constraint that V >= 0 on state_constraints;
+      const int d_degree = V_degree / 2;
+      symbolic::Polynomial V = NewFreePolynomialPassOrigin(
+          &prog, x_set, V_degree, "V", symbolic::internal::DegreeType::kAny,
+          symbolic::Variables({x(0), x(1), x(3), x(4)}));
+      const double positivity_eps = 0.0001;
+      symbolic::Polynomial positivity_sos =
+          V - positivity_eps *
+                  symbolic::Polynomial(
+                      pow(x.cast<symbolic::Expression>().dot(x), d_degree));
+      VectorX<symbolic::Polynomial> positivity_eq_lagrangian(
+          state_constraints.rows());
+      for (int i = 0; i < positivity_eq_lagrangian.rows(); ++i) {
+        positivity_eq_lagrangian(i) =
+            prog.NewFreePolynomial(x_set, V_degree - 2);
+      }
+      positivity_sos -= positivity_eq_lagrangian.dot(state_constraints);
+      prog.AddSosConstraint(positivity_sos);
+
+      VectorX<symbolic::Polynomial> eq_lagrangian(state_constraints.rows());
+      for (int i = 0; i < eq_lagrangian.rows(); ++i) {
+        eq_lagrangian(i) =
+            prog.NewFreePolynomial(x_set, eq_lagrangian_degrees[i]);
+      }
+      VectorX<symbolic::Polynomial> ineq_constraints(1);
+      ineq_constraints(0) = V - 1;
+      symbolic::Polynomial vdot_sos;
+      VectorX<symbolic::Monomial> vdot_sos_monomials;
+      MatrixX<symbolic::Variable> vdot_sos_gram;
+      dut.AddControlLyapunovConstraint(&prog, lambda0_sol, l_sol, V, deriv_eps,
+                                       eq_lagrangian, ineq_constraints,
+                                       ineq_lagrangian_sol, &vdot_sos,
+                                       &vdot_sos_monomials, &vdot_sos_gram);
+      // The cost is to minimize max(V(x_samples));
+      std::vector<int> x_indices = {0,  11, 12, 13, 18, 19, 20, 21,
+                                    22, 23, 24, 25, 26, 27, 28};
+      Eigen::MatrixXd x_samples(5, x_indices.size());
+      for (int i = 0; i < x_samples.cols(); ++i) {
+        x_samples.col(i) = x_swingup.col(x_indices[i]);
+      }
+      OptimizePolynomialAtSamples(&prog, V, x, x_samples,
+                                  OptimizePolynomialMode::kMinimizeMaximal);
+
+      std::optional<Eigen::MatrixXd> in_roa_samples;
+      in_roa_samples.emplace(Eigen::MatrixXd(5, 1));
+      in_roa_samples->col(0) = x_samples.col(1);
+      if (in_roa_samples.has_value()) {
+        Eigen::MatrixXd A_in_roa;
+        Eigen::VectorXd b_in_roa;
+        VectorX<symbolic::Variable> var_in_roa;
+        V.EvaluateWithAffineCoefficients(x, in_roa_samples.value(), &A_in_roa,
+                                         &var_in_roa, &b_in_roa);
+        prog.AddLinearConstraint(
+            A_in_roa, Eigen::VectorXd::Constant(b_in_roa.rows(), -kInf),
+            Eigen::VectorXd::Ones(b_in_roa.rows()) - b_in_roa, var_in_roa);
+      }
+      solvers::SolverOptions solver_options;
+      solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
+      const double backoff_scale = 0.001;
+
+      const double prev_cost =
+          V_sol.EvaluateIndeterminates(x, x_samples).maxCoeff();
+      const auto result = SearchWithBackoff(&prog, solvers::MosekSolver::id(),
+                                            solver_options, backoff_scale);
+      if (result.is_success()) {
+        V_sol = result.GetSolution(V);
+        Save(V_sol, save_file_name + ".iter" + std::to_string(iter_count));
+        const double curr_cost =
+            V_sol.EvaluateIndeterminates(x, x_samples).maxCoeff();
+        drake::log()->info("Found V, cost={}, cost decreases by {}", curr_cost,
+                           prev_cost - curr_cost);
+        drake::log()->info(
+            "After search for V, V(x_swingup)={}",
+            V_sol.EvaluateIndeterminates(x, x_swingup).transpose());
+        if (prev_cost - curr_cost < 0) {
+          return V_sol;
+        }
+      } else {
+        drake::log()->error("Failed to find V");
+        abort();
+      }
+    }
+    iter_count++;
+  }
+  drake::log()->info("V(x_swingup)={}",
+                     V_sol.EvaluateIndeterminates(x, x_swingup).transpose());
+  Save(V_sol, save_file_name);
+  return V_sol;
+}
+
 symbolic::Polynomial SearchWTrigDynamics(
     const CartPoleParams& params,
     const Eigen::Matrix<symbolic::Variable, 5, 1>& x, double u_max,
@@ -244,6 +420,10 @@ symbolic::Polynomial SearchWTrigDynamics(
       V_init = V_init.RemoveTermsWithSmallCoefficients(1E-8);
     }
   }
+
+  V_init = SearchClfNoInputBound(params, x, deriv_eps);
+
+  abort();
   symbolic::Polynomial V_sol;
   {
     ControlLyapunov::SearchOptions search_options;
@@ -315,8 +495,7 @@ symbolic::Polynomial SearchWTrigDynamics(
       std::cout << "V_init at x_swingup "
                 << V_init.EvaluateIndeterminates(x, x_swingup).transpose()
                 << "\n";
-      std::vector<int> x_indices = {12, 19, 20, 21, 22,
-                                    23, 24, 25, 26, 27, 28};
+      std::vector<int> x_indices = {12, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28};
       Eigen::Matrix4Xd state_samples(4, x_indices.size());
       for (int i = 0; i < static_cast<int>(x_indices.size()); ++i) {
         state_samples.col(i) = state_swingup.col(x_indices[i]);
@@ -374,7 +553,7 @@ int DoMain() {
   int u_max_trial = 0;
   while (u_max < 250) {
     std::cout << "Try u_max = " << u_max << "\n";
-    //std::optional<std::string> load_file =
+    // std::optional<std::string> load_file =
     //    "/home/hongkaidai/Dropbox/sos_clf_cbf/cart_pole_trig_clf_last16_1.txt";
     std::optional<std::string> load_file = "cart_pole_trig_clf27.txt";
     SearchResultDetails search_result_details;

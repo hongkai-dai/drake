@@ -809,6 +809,65 @@ class ClfController : public LeafSystem<double> {
   InputPortIndex x_input_index_;
 };
 
+class ControlLyapunovNoInputBound {
+ public:
+  DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(ControlLyapunovNoInputBound)
+
+  /**
+   * @param f The dynamics of the system is ẋ = f(x) + G(x)u
+   * @param G The dynamics of the system is ẋ = f(x) + G(x)u
+   * @param dynamics_denominator If not nullopt, then the dynamics is ẋ =
+   * f(x)/d(x) + G(x)/d(x) * u where d(x) = dynamics_denominator; otherwise d(x)
+   * = 1.
+   * @param state_constraints The additional equality constraints on the system
+   * state x. For example if the state contains the quaternion z, then we have
+   * the unit length constraint on quaternion zᵀz−1 = 0
+   */
+  ControlLyapunovNoInputBound(
+      const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+      const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
+      const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
+      const std::optional<symbolic::Polynomial>& dynamics_denominator,
+      const Eigen::Ref<const VectorX<symbolic::Polynomial>>& state_constraints);
+
+  /**
+   * Add the constraint that
+   * eq(x) = 0
+   * ineq(x) <= 0
+   * and ∂V/∂x*G(x)=0
+   * implies
+   * ∂V/∂x*f(x)+εV<=0
+   */
+  void AddControlLyapunovConstraint(
+      solvers::MathematicalProgram* prog, const symbolic::Polynomial& lambda0,
+      const VectorX<symbolic::Polynomial>& l, const symbolic::Polynomial& V,
+      double deriv_eps, const VectorX<symbolic::Polynomial>& eq_lagrangian,
+      const VectorX<symbolic::Polynomial>& ineq_constraints,
+      const VectorX<symbolic::Polynomial>& ineq_lagrangian,
+      symbolic::Polynomial* vdot_sos,
+      VectorX<symbolic::Monomial>* vdot_sos_monomials,
+      MatrixX<symbolic::Variable>* vdot_sos_gram) const;
+
+  bool SearchLagrangian(
+      const symbolic::Polynomial& V, int lambda0_degree,
+      const std::vector<int>& l_degrees, double deriv_eps,
+      const std::vector<int>& eq_lagrangian_degrees,
+      const VectorX<symbolic::Polynomial>& ineq_constraints,
+      const std::vector<int>& ineq_lagrangian_degrees,
+      const solvers::SolverOptions& solver_options, double lsol_tiny_coeff_tol,
+      symbolic::Polynomial* lambda0_sol, VectorX<symbolic::Polynomial>* l_sol,
+      VectorX<symbolic::Polynomial>* eq_lagrangian_sol,
+      VectorX<symbolic::Polynomial>* ineq_lagrangian_sol) const;
+
+ private:
+  VectorX<symbolic::Variable> x_;
+  symbolic::Variables x_set_;
+  VectorX<symbolic::Polynomial> f_;
+  MatrixX<symbolic::Polynomial> G_;
+  std::optional<symbolic::Polynomial> dynamics_denominator_;
+  VectorX<symbolic::Polynomial> state_constraints_;
+};
+
 namespace internal {
 /**
  * Returns if the dynamics is symmetric, namely f(x) = -f(-x) and G(x) = G(-x),

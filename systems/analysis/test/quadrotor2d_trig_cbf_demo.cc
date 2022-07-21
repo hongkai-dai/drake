@@ -93,8 +93,10 @@ symbolic::Polynomial Search(const QuadrotorPlant<double>& quadrotor,
   unsafe_regions[1].resize(1);
   unsafe_regions[1](0) = symbolic::Polynomial(0.5 - x(1));
 
-  const ControlBarrier dut(f, G, x, unsafe_regions, u_vertices,
-                           state_constraints);
+  const std::optional<symbolic::Polynomial> dynamics_denominator = std::nullopt;
+
+  const ControlBarrier dut(f, G, dynamics_denominator, x, unsafe_regions,
+                           u_vertices, state_constraints);
 
   const int h_degree = 2;
   symbolic::Polynomial h_init = FindCbfInit(x, h_degree);

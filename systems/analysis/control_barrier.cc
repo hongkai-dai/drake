@@ -54,12 +54,14 @@ void AddHdotSosConstraint(
 ControlBarrier::ControlBarrier(
     const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
     const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
+    std::optional<symbolic::Polynomial> dynamics_denominator,
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
     std::vector<VectorX<symbolic::Polynomial>> unsafe_regions,
     const Eigen::Ref<const Eigen::MatrixXd>& u_vertices,
     const Eigen::Ref<const VectorX<symbolic::Polynomial>>& state_eq_constraints)
     : f_{f},
       G_{G},
+      dynamics_denominator_{std::move(dynamics_denominator)},
       nx_{static_cast<int>(f_.rows())},
       nu_{static_cast<int>(G_.cols())},
       x_{x},
@@ -80,7 +82,10 @@ void ControlBarrier::AddControlBarrierConstraint(
   *hdot_poly = (1 + lambda0) * (-1 - h);
   const RowVectorX<symbolic::Polynomial> dhdx = h.Jacobian(x_);
   const symbolic::Polynomial dhdx_times_f = dhdx.dot(f_);
-  *hdot_poly -= l.sum() * (-dhdx_times_f - deriv_eps * h);
+  *hdot_poly -=
+      l.sum() *
+      (-dhdx_times_f -
+       deriv_eps * h * dynamics_denominator_.value_or(symbolic::Polynomial(1)));
   *hdot_poly += (dhdx * G_ * u_vertices_).dot(l);
   DRAKE_DEMAND(state_eq_constraints_.rows() ==
                state_constraints_lagrangian.rows());
@@ -436,14 +441,9 @@ void ControlBarrier::Search(
         drake::log()->info("d: {}", result_barrier.GetSolution(d).transpose());
         s_sol->resize(s.size());
         for (int i = 0; i < static_cast<int>(unsafe_regions_.size()); ++i) {
-          (*s_sol)[i].resize(s[i].rows());
-          for (int j = 0; j < (*s_sol)[i].rows(); ++j) {
-            (*s_sol)[i](j) = result_barrier.GetSolution(s[i](j));
-            if (search_options.hsol_tiny_coeff_tol > 0) {
-              (*s_sol)[i](j) = (*s_sol)[i](j).RemoveTermsWithSmallCoefficients(
-                  search_options.hsol_tiny_coeff_tol);
-            }
-          }
+          GetPolynomialSolutions(result_barrier, s[i],
+                                 search_options.hsol_tiny_coeff_tol,
+                                 &(*s_sol)[i]);
         }
       } else {
         drake::log()->error("Failed to find the barrier.");

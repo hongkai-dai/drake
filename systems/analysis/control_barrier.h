@@ -42,6 +42,7 @@ class ControlBarrier {
 
   ControlBarrier(const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
                  const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
+                 std::optional<symbolic::Polynomial> dynamics_denominator,
                  const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
                  std::vector<VectorX<symbolic::Polynomial>> unsafe_regions,
                  const Eigen::Ref<const Eigen::MatrixXd>& u_vertices,
@@ -106,7 +107,7 @@ class ControlBarrier {
    * Given Lagrangian multipliers λ₀(x), l(x), t(x), find the control barrier
    * function through
    * <pre>
-   * max ∑ᵢ min(h(xⁱ), eps),   xⁱ ∈ unverified_candidate_states
+   * Find h(x), sⱼ(x)
    * s.t (1+λ₀(x))(−1 − h(x)) −∑ᵢlᵢ(x)(−εh − ∂h/∂xf(x)−∂h/∂xG(x)uⁱ) is sos
    *     (1 + tⱼ(x))*(-h(x)) + sⱼ(x)ᵀpⱼ(x) is sos
    *     sⱼ(x) is sos.
@@ -266,6 +267,7 @@ class ControlBarrier {
  private:
   VectorX<symbolic::Polynomial> f_;
   MatrixX<symbolic::Polynomial> G_;
+  std::optional<symbolic::Polynomial> dynamics_denominator_;
   int nx_;
   int nu_;
   VectorX<symbolic::Variable> x_;

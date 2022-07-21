@@ -104,7 +104,7 @@ TEST_F(SimpleLinearSystemTest, ControlBarrier) {
   // clang-format on
   u_vertices *= 10;
   const VectorX<symbolic::Polynomial> state_constraints(0);
-  const ControlBarrier dut(f_, G_, x_, unsafe_regions, u_vertices,
+  const ControlBarrier dut(f_, G_, std::nullopt, x_, unsafe_regions, u_vertices,
                            state_constraints);
 
   const symbolic::Polynomial h_init(1 - x_(0) * x_(0) - x_(1) * x_(1));
@@ -297,7 +297,7 @@ TEST_F(SimpleLinearSystemTest, ControlBarrierSearch) {
   // clang-format on
   u_vertices *= 10;
   const VectorX<symbolic::Polynomial> state_constraints(0);
-  const ControlBarrier dut(f_, G_, x_, unsafe_regions, u_vertices,
+  const ControlBarrier dut(f_, G_, std::nullopt, x_, unsafe_regions, u_vertices,
                            state_constraints);
 
   const symbolic::Polynomial h_init(1 - x_(0) * x_(0) - x_(1) * x_(1));

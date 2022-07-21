@@ -804,7 +804,7 @@ double LargestCoeff(const solvers::MathematicalProgram& prog) {
   return ret;
 }
 
-void OptimizePolynomialAtSamples(
+solvers::Binding<solvers::LinearCost> OptimizePolynomialAtSamples(
     solvers::MathematicalProgram* prog, const symbolic::Polynomial& p,
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
     const Eigen::Ref<const Eigen::MatrixXd>& x_samples,
@@ -826,13 +826,14 @@ void OptimizePolynomialAtSamples(
       prog->AddLinearConstraint(A, Eigen::VectorXd::Constant(A.rows(), -kInf),
                                 -b_samples,
                                 {decision_variables_samples, max_sample});
-      prog->AddLinearCost(Vector1d::Ones(), 0, max_sample);
-      break;
+      auto cost = prog->AddLinearCost(Vector1d::Ones(), 0, max_sample);
+      return cost;
     }
     case OptimizePolynomialMode::kMinimizeAverage: {
-      prog->AddLinearCost(A_samples.colwise().mean().transpose(),
-                          b_samples.mean(), decision_variables_samples);
-      break;
+      auto cost =
+          prog->AddLinearCost(A_samples.colwise().mean().transpose(),
+                              b_samples.mean(), decision_variables_samples);
+      return cost;
     }
     case OptimizePolynomialMode::kMaximizeMinimal: {
       // Add a slack variable min_sample with the constraint
@@ -845,15 +846,17 @@ void OptimizePolynomialAtSamples(
                                 Eigen::VectorXd::Constant(A.rows(), kInf),
 
                                 {decision_variables_samples, min_sample});
-      prog->AddLinearCost(-Vector1d::Ones(), 0, min_sample);
-      break;
+      auto cost = prog->AddLinearCost(-Vector1d::Ones(), 0, min_sample);
+      return cost;
     }
     case OptimizePolynomialMode::kMaximizeAverage: {
-      prog->AddLinearCost(-A_samples.colwise().mean().transpose(),
-                          -b_samples.mean(), decision_variables_samples);
-      break;
+      auto cost =
+          prog->AddLinearCost(-A_samples.colwise().mean().transpose(),
+                              -b_samples.mean(), decision_variables_samples);
+      return cost;
     }
   }
+  DRAKE_UNREACHABLE();
 }
 
 namespace internal {

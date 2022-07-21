@@ -237,7 +237,7 @@ enum class OptimizePolynomialMode {
  * x_samples. Depending on the optimize_polynomial_mode, we choose diffent cost
  * form.
  */
-void OptimizePolynomialAtSamples(
+solvers::Binding<solvers::LinearCost> OptimizePolynomialAtSamples(
     solvers::MathematicalProgram* prog, const symbolic::Polynomial& p,
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
     const Eigen::Ref<const Eigen::MatrixXd>& x_samples,

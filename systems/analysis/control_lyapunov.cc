@@ -101,13 +101,15 @@ ControlLyapunov::ControlLyapunov(
   DRAKE_DEMAND(u_vertices.rows() == num_u);
 }
 
+template <typename T>
 void ControlLyapunov::AddControlLyapunovConstraint(
     solvers::MathematicalProgram* prog, const VectorX<symbolic::Variable>& x,
-    const symbolic::Polynomial& lambda0, const VectorX<symbolic::Polynomial>& l,
-    const symbolic::Polynomial& V, double rho,
-    const Eigen::MatrixXd& u_vertices, double deriv_eps,
-    const VectorX<symbolic::Polynomial>& p, symbolic::Polynomial* vdot_poly,
-    VectorX<symbolic::Monomial>* monomials,
+    const symbolic::Polynomial& lambda0, int d_degree,
+    const VectorX<symbolic::Polynomial>& l, const symbolic::Polynomial& V,
+    const T& rho, const Eigen::MatrixXd& u_vertices, double deriv_eps,
+    const VectorX<symbolic::Polynomial>& p,
+    const std::optional<symbolic::Polynomial>& a,
+    symbolic::Polynomial* vdot_poly, VectorX<symbolic::Monomial>* monomials,
     MatrixX<symbolic::Variable>* gram) const {
   // First compute the polynomial xᵀx
   symbolic::Polynomial::MapType x_square_map;
@@ -115,7 +117,7 @@ void ControlLyapunov::AddControlLyapunovConstraint(
     x_square_map.emplace(symbolic::Monomial(x(i), 2), 1);
   }
   const symbolic::Polynomial x_square{x_square_map};
-  *vdot_poly = (1 + lambda0) * x_square * (V - rho) * dynamics_denominator_;
+  *vdot_poly = (1 + lambda0) * pow(x_square, d_degree) * (V - rho);
   const RowVectorX<symbolic::Polynomial> dVdx = V.Jacobian(x);
   const symbolic::Polynomial dVdx_times_f = dVdx.dot(f_);
   *vdot_poly -=
@@ -123,6 +125,9 @@ void ControlLyapunov::AddControlLyapunovConstraint(
   *vdot_poly -= (dVdx * G_ * u_vertices).dot(l);
   if (state_constraints_.rows() > 0) {
     *vdot_poly -= p.dot(state_constraints_);
+  }
+  if (a.has_value()) {
+    *vdot_poly += a.value();
   }
   std::tie(*gram, *monomials) = prog->AddSosConstraint(
       *vdot_poly, solvers::MathematicalProgram::NonnegativePolynomial::kSos,
@@ -139,6 +144,23 @@ void ControlLyapunov::AddControlLyapunovConstraint(
     }
   }
 }
+
+// Explicit instantiation
+template void ControlLyapunov::AddControlLyapunovConstraint<double>(
+    solvers::MathematicalProgram*, const VectorX<symbolic::Variable>&,
+    const symbolic::Polynomial&, int, const VectorX<symbolic::Polynomial>&,
+    const symbolic::Polynomial&, const double&, const Eigen::MatrixXd&, double,
+    const VectorX<symbolic::Polynomial>&,
+    const std::optional<symbolic::Polynomial>&, symbolic::Polynomial*,
+    VectorX<symbolic::Monomial>*, MatrixX<symbolic::Variable>*) const;
+
+template void ControlLyapunov::AddControlLyapunovConstraint<symbolic::Variable>(
+    solvers::MathematicalProgram*, const VectorX<symbolic::Variable>&,
+    const symbolic::Polynomial&, int, const VectorX<symbolic::Polynomial>&,
+    const symbolic::Polynomial&, const symbolic::Variable&,
+    const Eigen::MatrixXd&, double, const VectorX<symbolic::Polynomial>&,
+    const std::optional<symbolic::Polynomial>&, symbolic::Polynomial*,
+    VectorX<symbolic::Monomial>*, MatrixX<symbolic::Variable>*) const;
 
 std::unique_ptr<solvers::MathematicalProgram>
 ControlLyapunov::ConstructLagrangianProgram(
@@ -178,9 +200,10 @@ ControlLyapunov::ConstructLagrangianProgram(
   for (int i = 0; i < p->rows(); ++i) {
     (*p)(i) = prog->NewFreePolynomial(x_set_, p_degrees[i], "P");
   }
-  this->AddControlLyapunovConstraint(prog.get(), x_, *lambda0, *l, V, rho,
-                                     u_vertices_, deriv_eps, *p, vdot_sos,
-                                     vdot_monomials, vdot_gram);
+  const int d_degree = 1;
+  this->AddControlLyapunovConstraint(
+      prog.get(), x_, *lambda0, d_degree, *l, V, rho, u_vertices_, deriv_eps,
+      *p, std::nullopt /* a */, vdot_sos, vdot_monomials, vdot_gram);
   return prog;
 }
 
@@ -212,20 +235,9 @@ ControlLyapunov::ConstructLagrangianProgram(
   for (int i = 0; i < p->rows(); ++i) {
     (*p)(i) = prog->NewFreePolynomial(x_set_, p_degrees[i], "P");
   }
-  // construct the polynomial (xᵀx)ᵈ
-  DRAKE_DEMAND(d_degree >= 1);
-  using std::pow;
-  const symbolic::Polynomial x_square_power(
-      pow(x_.cast<symbolic::Expression>().dot(x_), d_degree));
-  const RowVectorX<symbolic::Polynomial> dVdx = V.Jacobian(x_);
-  const RowVectorX<symbolic::Polynomial> dVdx_times_G = dVdx * G_;
-  *vdot_sos =
-      (symbolic::Polynomial(1) + lambda0) * x_square_power *
-          (V - symbolic::Polynomial({{symbolic::Monomial(), *rho}})) *
-          dynamics_denominator_ -
-      l->sum() * (dVdx.dot(f_) + deriv_eps * V * dynamics_denominator_) -
-      l->dot(dVdx_times_G * u_vertices_) - p->dot(state_constraints_);
-  std::tie(*vdot_gram, *vdot_monomials) = prog->AddSosConstraint(*vdot_sos);
+  this->AddControlLyapunovConstraint<symbolic::Variable>(
+      prog.get(), x_, lambda0, d_degree, *l, V, *rho, u_vertices_, deriv_eps,
+      *p, std::nullopt /* a */, vdot_sos, vdot_monomials, vdot_gram);
   prog->AddLinearCost(-Vector1d::Ones(), 0, Vector1<symbolic::Variable>(rho));
   return prog;
 }
@@ -289,9 +301,10 @@ ControlLyapunov::ConstructLyapunovProgram(
   for (int i = 0; i < p->rows(); ++i) {
     (*p)(i) = prog->NewFreePolynomial(x_set_, p_degrees[i], "P");
   }
-  this->AddControlLyapunovConstraint(prog.get(), x_, lambda0, l, *V, rho,
-                                     u_vertices_, deriv_eps, *p, &vdot_poly,
-                                     &vdot_monomials, &vdot_gram);
+  const int d_degree = 1;
+  this->AddControlLyapunovConstraint(
+      prog.get(), x_, lambda0, d_degree, l, *V, rho, u_vertices_, deriv_eps, *p,
+      std::nullopt /* a */, &vdot_poly, &vdot_monomials, &vdot_gram);
   return prog;
 }
 

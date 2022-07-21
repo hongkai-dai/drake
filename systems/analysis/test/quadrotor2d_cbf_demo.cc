@@ -47,6 +47,7 @@ int DoMain() {
   Vector6<symbolic::Polynomial> f;
   Eigen::Matrix<symbolic::Polynomial, 6, 2> G;
   PolynomialControlAffineDynamics(quadrotor, x, &f, &G);
+  const std::optional<symbolic::Polynomial> dynamics_numerator = std::nullopt;
   for (int i = 0; i < 6; ++i) {
     f(i) = f(i).RemoveTermsWithSmallCoefficients(1E-6);
     for (int j = 0; j < 2; ++j) {
@@ -68,8 +69,9 @@ int DoMain() {
                 0, thrust_max, 0, thrust_max;
   // clang-format on
   const VectorX<symbolic::Polynomial> state_constraints(0);
-  const ControlBarrier dut(f, G, x, unsafe_regions, u_vertices,
-                           state_constraints);
+
+  const ControlBarrier dut(f, G, dynamics_numerator, x, unsafe_regions,
+                           u_vertices, state_constraints);
 
   // Construct h_init;
   const symbolic::Polynomial h_init(

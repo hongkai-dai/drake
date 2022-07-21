@@ -68,18 +68,23 @@ class ControlLyapunov {
 
   /**
    * A helper function to add the constraint
-   * (1+λ₀(x))xᵀx(V−ρ) − ∑ᵢ lᵢ(x)*(∂V/∂x*f(x)+ε*V + ∂V/∂x*G(x)*uᵢ)-p(x)ᵀc(x) is
-   * sos. where c(x) is state_constraint, p(x) is its Lagrangian multipliers.
+   * (1+λ₀(x))(xᵀx)ᵈ(V−ρ) − ∑ᵢ lᵢ(x)*(∂V/∂x*f(x)+ε*V + ∂V/∂x*G(x)*uᵢ)-p(x)ᵀc(x)
+   * + a(x) is sos. where c(x) is state_constraint, p(x) is its Lagrangian
+   * multipliers.
+   * @param[in] a The slack polynomial a(x) in the documentation above. if
+   * a=std::nullopt, then a(x) = 0.
    * @param[out] monomials The monomial basis of this sos constraint.
    * @param[out] gram The Gram matrix of this sos constraint.
    */
+  template <typename T>
   void AddControlLyapunovConstraint(
       solvers::MathematicalProgram* prog, const VectorX<symbolic::Variable>& x,
-      const symbolic::Polynomial& lambda0,
+      const symbolic::Polynomial& lambda0, int d_degree,
       const VectorX<symbolic::Polynomial>& l, const symbolic::Polynomial& V,
-      double rho, const Eigen::MatrixXd& u_vertices, double deriv_eps,
-      const VectorX<symbolic::Polynomial>& p, symbolic::Polynomial* vdot_poly,
-      VectorX<symbolic::Monomial>* monomials,
+      const T& rho, const Eigen::MatrixXd& u_vertices, double deriv_eps,
+      const VectorX<symbolic::Polynomial>& p,
+      const std::optional<symbolic::Polynomial>& a,
+      symbolic::Polynomial* vdot_poly, VectorX<symbolic::Monomial>* monomials,
       MatrixX<symbolic::Variable>* gram) const;
 
   /**

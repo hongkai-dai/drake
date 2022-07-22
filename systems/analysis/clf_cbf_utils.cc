@@ -130,17 +130,17 @@ solvers::MathematicalProgramResult SearchWithBackoff(
   return result;
 }
 
-void MaximizeInnerEllipsoidRho(
+void MaximizeInnerEllipsoidSize(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
     const Eigen::Ref<const Eigen::VectorXd>& x_star,
     const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& f,
     const symbolic::Polynomial& t, int s_degree,
     const solvers::SolverId& solver_id,
     const std::optional<solvers::SolverOptions>& solver_options,
-    double backoff_scale, double* rho_sol, symbolic::Polynomial* s_sol) {
+    double backoff_scale, double* d_sol, symbolic::Polynomial* s_sol) {
   solvers::MathematicalProgram prog;
   prog.AddIndeterminates(x);
-  auto rho = prog.NewContinuousVariables<1>("rho")(0);
+  auto d = prog.NewContinuousVariables<1>("d")(0);
   const symbolic::Variables x_set(x);
   symbolic::Polynomial s;
   if (s_degree == 0) {
@@ -152,40 +152,40 @@ void MaximizeInnerEllipsoidRho(
   }
 
   const symbolic::Polynomial ellipsoid_poly =
-      internal::EllipsoidPolynomial<symbolic::Variable>(x, x_star, S, rho);
+      internal::EllipsoidPolynomial<symbolic::Variable>(x, x_star, S, d);
   const symbolic::Polynomial sos_poly = (1 + t) * ellipsoid_poly - s * f;
   prog.AddSosConstraint(sos_poly);
-  prog.AddLinearCost(-rho);
+  prog.AddLinearCost(-d);
   const auto result =
       SearchWithBackoff(&prog, solver_id, solver_options, backoff_scale);
   DRAKE_DEMAND(result.is_success());
-  *rho_sol = result.GetSolution(rho);
+  *d_sol = result.GetSolution(d);
   *s_sol = result.GetSolution(s);
 }
 
-bool MaximizeInnerEllipsoidRho(
+bool MaximizeInnerEllipsoidSize(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
     const Eigen::Ref<const Eigen::VectorXd>& x_star,
     const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& f,
     const std::optional<VectorX<symbolic::Polynomial>>& c, int r_degree,
-    const std::optional<std::vector<int>>& c_lagrangian_degrees, double rho_max,
-    double rho_min, const solvers::SolverId& solver_id,
-    const std::optional<solvers::SolverOptions>& solver_options, double rho_tol,
-    double* rho_sol, symbolic::Polynomial* r_sol,
+    const std::optional<std::vector<int>>& c_lagrangian_degrees,
+    double size_max, double size_min, const solvers::SolverId& solver_id,
+    const std::optional<solvers::SolverOptions>& solver_options,
+    double size_tol, double* d_sol, symbolic::Polynomial* r_sol,
     VectorX<symbolic::Polynomial>* c_lagrangian_sol) {
-  DRAKE_DEMAND(rho_max > rho_min);
-  DRAKE_DEMAND(rho_tol > 0);
+  DRAKE_DEMAND(size_max >= size_min);
+  DRAKE_DEMAND(size_tol > 0);
   const symbolic::Polynomial ellipsoid_quadratic =
       internal::EllipsoidPolynomial(x, x_star, S, 0.);
   const symbolic::Variables x_set{x};
   auto is_feasible = [&x, &x_set, &f, &c, &r_degree, &c_lagrangian_degrees,
                       &solver_id, &solver_options, &ellipsoid_quadratic, r_sol,
-                      c_lagrangian_sol](double rho) {
+                      c_lagrangian_sol](double d) {
     solvers::MathematicalProgram prog;
     prog.AddIndeterminates(x);
     symbolic::Polynomial r;
     std::tie(r, std::ignore) = prog.NewSosPolynomial(x_set, r_degree);
-    symbolic::Polynomial sos_condition = -f - r * (rho - ellipsoid_quadratic);
+    symbolic::Polynomial sos_condition = -f - r * (d - ellipsoid_quadratic);
     VectorX<symbolic::Polynomial> c_lagrangian(0);
     if (c.has_value() && c->rows() > 0) {
       c_lagrangian.resize(c->rows());
@@ -214,24 +214,24 @@ bool MaximizeInnerEllipsoidRho(
     }
   };
 
-  if (!is_feasible(rho_min)) {
-    drake::log()->error("MaximizeEllipsoidRho: rho_min={} is infeasible",
-                        rho_min);
+  if (!is_feasible(size_min)) {
+    drake::log()->error("MaximizeEllipsoidSize: size_min={} is infeasible",
+                        size_min);
     return false;
   }
-  if (is_feasible(rho_max)) {
-    *rho_sol = rho_max;
+  if (is_feasible(size_max)) {
+    *d_sol = size_max;
     return true;
   }
-  while (rho_max - rho_min > rho_tol) {
-    const double rho_mid = (rho_max + rho_min) / 2;
-    if (is_feasible(rho_mid)) {
-      rho_min = rho_mid;
+  while (size_max - size_min > size_tol) {
+    const double size_mid = (size_max + size_min) / 2;
+    if (is_feasible(size_mid)) {
+      size_min = size_mid;
     } else {
-      rho_max = rho_mid;
+      size_max = size_mid;
     }
   }
-  *rho_sol = rho_min;
+  *d_sol = size_min;
   return true;
 }
 

@@ -156,8 +156,8 @@ class ControlLyapunov {
     solvers::SolverId ellipsoid_step_solver{solvers::MosekSolver::id()};
     solvers::SolverId lagrangian_step_solver{solvers::MosekSolver::id()};
     int bilinear_iterations{10};
-    // Stop when the improvement on rho is below this tolerance.
-    double rho_converge_tol{1E-5};
+    // Stop when the improvement on ellipsoid d is below this tolerance.
+    double d_converge_tol{1E-5};
     // Back off in each steps.
     double backoff_scale{0.};
     std::optional<solvers::SolverOptions> lagrangian_step_solver_options{
@@ -185,15 +185,16 @@ class ControlLyapunov {
   };
 
   /**
-   * We can search for the largest inscribed ellipsoid {x|(x−x*)ᵀS(x−x*) <=ρ}
-   * through bisection.
+   * We can search for the inscribed ellipsoid {x|(x−x*)ᵀS(x−x*) <=d} with the
+   * largest d through bisection.
    */
-  struct RhoBisectionOption {
-    RhoBisectionOption(double m_rho_min, double m_rho_max, double m_rho_tol)
-        : rho_min{m_rho_min}, rho_max{m_rho_max}, rho_tol{m_rho_tol} {}
-    double rho_min;
-    double rho_max;
-    double rho_tol;
+  struct EllipsoidBisectionOption {
+    EllipsoidBisectionOption(double m_size_min, double m_size_max,
+                             double m_size_tol)
+        : size_min{m_size_min}, size_max{m_size_max}, size_tol{m_size_tol} {}
+    double size_min;
+    double size_max;
+    double size_tol;
   };
 
   /**
@@ -212,7 +213,7 @@ class ControlLyapunov {
               double deriv_eps, const Eigen::Ref<const Eigen::VectorXd>& x_star,
               const Eigen::Ref<const Eigen::MatrixXd>& S, int r_degree,
               const SearchOptions& search_options,
-              const RhoBisectionOption& rho_bisection_option,
+              const EllipsoidBisectionOption& ellipsoid_bisection_option,
               symbolic::Polynomial* V, symbolic::Polynomial* lambda0,
               VectorX<symbolic::Polynomial>* l, symbolic::Polynomial* r,
               VectorX<symbolic::Polynomial>* p,
@@ -547,15 +548,16 @@ class ControlLyapunovBoxInputBound {
     double deriv_eps;
     std::vector<std::vector<std::array<symbolic::Polynomial, 3>>> l;
     symbolic::Polynomial ellipsoid_lagrangian;
-    double rho;
+    // The ellipsoid is {x | (x-x*)S(x-x*) <= d}
+    double d;
   };
 
   struct SearchOptions {
     solvers::SolverId lyap_step_solver{solvers::MosekSolver::id()};
     solvers::SolverId lagrangian_step_solver{solvers::MosekSolver::id()};
     int bilinear_iterations{10};
-    // Stop when the improvement on rho is below this tolerance.
-    double rho_converge_tol{1E-5};
+    // Stop when the improvement on d is below this tolerance.
+    double d_converge_tol{1E-5};
     // Back off in each steps.
     double backoff_scale{0.};
     std::optional<solvers::SolverOptions> lagrangian_step_solver_options{
@@ -607,15 +609,16 @@ class ControlLyapunovBoxInputBound {
       double deriv_eps_upper, const SearchOptions& options) const;
 
   /**
-   * We can search for the largest inscribed ellipsoid {x|(x−x*)ᵀS(x−x*) <=ρ}
-   * through bisection.
+   * We can search for the inscribed ellipsoid {x|(x−x*)ᵀS(x−x*) <=d} with the
+   * largest d through bisection.
    */
-  struct RhoBisectionOption {
-    RhoBisectionOption(double m_rho_min, double m_rho_max, double m_rho_tol)
-        : rho_min{m_rho_min}, rho_max{m_rho_max}, rho_tol{m_rho_tol} {}
-    double rho_min;
-    double rho_max;
-    double rho_tol;
+  struct EllipsoidBisectionOption {
+    EllipsoidBisectionOption(double m_size_min, double m_size_max,
+                             double m_size_tol)
+        : size_min{m_size_min}, size_max{m_size_max}, size_tol{m_size_tol} {}
+    double size_min;
+    double size_max;
+    double size_tol;
   };
 
   /**
@@ -635,7 +638,7 @@ class ControlLyapunovBoxInputBound {
       const Eigen::Ref<const Eigen::MatrixXd>& S, int r_degree, int V_degree,
       double deriv_eps_lower, double deriv_eps_upper,
       const SearchOptions& options,
-      const RhoBisectionOption& rho_bisection_option) const;
+      const EllipsoidBisectionOption& ellipsoid_bisection_option) const;
 
   // Step 1 in Search() function.
   void SearchLagrangianAndB(
@@ -650,7 +653,7 @@ class ControlLyapunovBoxInputBound {
       std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>* l) const;
 
   // Step 2 in Search() function.
-  // The objective is to maximize ρ in the ellipsoid.
+  // The objective is to maximize d in the ellipsoid.
   void SearchLyapunov(
       const std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>& l,
       const std::vector<int>& b_degrees, int V_degree, double deriv_eps,
@@ -660,23 +663,23 @@ class ControlLyapunovBoxInputBound {
       const std::optional<solvers::SolverOptions>& solver_options,
       double backoff_scale, double lyap_tiny_coeff_tol,
       double Vsol_tiny_coeff_tol, symbolic::Polynomial* V,
-      VectorX<symbolic::Polynomial>* b, double* rho) const;
+      VectorX<symbolic::Polynomial>* b, double* d) const;
 
   // Overloaded step 2 of Search() function.
-  // Given the ellipsoid {x|(x−x*)ᵀS(x−x*) <=ρ}, the goal is to minimize the
+  // Given the ellipsoid {x|(x−x*)ᵀS(x−x*) <=d}, the goal is to minimize the
   // maximal value of V(x) within the ellipsoid. This maximal value is denoted
-  // by d.
+  // by rho.
   void SearchLyapunov(
       const std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>& l,
       const std::vector<int>& b_degrees, int V_degree, double deriv_eps,
       const Eigen::Ref<const Eigen::VectorXd>& x_star,
-      const Eigen::Ref<const Eigen::MatrixXd>& S, double rho, int r_degree,
+      const Eigen::Ref<const Eigen::MatrixXd>& S, double d, int r_degree,
       const solvers::SolverId& solver_id,
       const std::optional<solvers::SolverOptions>& solver_options,
       double backoff_scale, double lyap_tiny_coeff_tol,
       double Vsol_tiny_coeff_tol, symbolic::Polynomial* V,
       VectorX<symbolic::Polynomial>* b, symbolic::Polynomial* r,
-      double* d) const;
+      double* rho_sol) const;
 
   // Step 3 in Search() function.
   void SearchLagrangian(

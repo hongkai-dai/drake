@@ -234,8 +234,8 @@ int DoMain() {
   search_options.lagrangian_step_solver_options = solvers::SolverOptions();
   search_options.lagrangian_step_solver_options->SetOption(
       solvers::CommonSolverOption::kPrintToConsole, 1);
-  ControlLyapunovBoxInputBound::RhoBisectionOption rho_bisection_option(0.01, 3,
-                                                                        0.01);
+  ControlLyapunovBoxInputBound::EllipsoidBisectionOption
+      ellipsoid_bisection_option(0.01, 3, 0.01);
 
   const Eigen::Vector4d x_star(0, 0, 0, 0);
   const Eigen::Matrix4d S = Eigen::Matrix4d::Identity();
@@ -246,7 +246,7 @@ int DoMain() {
   const auto search_result =
       dut.Search(V_init, l_given, lagrangian_degrees, b_degrees, x_star, S,
                  r_degree, V_degree, deriv_eps_lower, deriv_eps_upper,
-                 search_options, rho_bisection_option);
+                 search_options, ellipsoid_bisection_option);
   return 0;
 }
 }  // namespace analysis

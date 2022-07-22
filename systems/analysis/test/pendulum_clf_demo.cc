@@ -223,7 +223,6 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
   symbolic::Polynomial lambda0;
   VectorX<symbolic::Polynomial> l;
   VectorX<symbolic::Polynomial> p;
-  double rho;
   const double deriv_eps = 0.25;
 
   V_init = V_init.RemoveTermsWithSmallCoefficients(1e-6);
@@ -262,22 +261,23 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
     search_options.lsol_tiny_coeff_tol = 1E-5;
     // There are tiny coefficients coming from numerical roundoff error.
     search_options.lyap_tiny_coeff_tol = 1E-7;
-    const double rho_min = 0.01;
-    const double rho_max = 15;
-    const double rho_bisection_tol = 0.01;
-    const ControlLyapunov::RhoBisectionOption rho_bisection_option(
-        rho_min, rho_max, rho_bisection_tol);
+    const double size_min = 0.01;
+    const double size_max = 15;
+    const double size_bisection_tol = 0.01;
+    const ControlLyapunov::EllipsoidBisectionOption ellipsoid_bisection_option(
+        size_min, size_max, size_bisection_tol);
     symbolic::Polynomial r;
+    double d_sol;
     VectorX<symbolic::Polynomial> ellipsoid_c_lagrangian_sol;
     dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
                positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
                ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S,
-               V_degree - 2, search_options, rho_bisection_option, &V_sol,
-               &lambda0, &l, &r, &p, &positivity_eq_lagrangian_sol, &rho,
+               V_degree - 2, search_options, ellipsoid_bisection_option, &V_sol,
+               &lambda0, &l, &r, &p, &positivity_eq_lagrangian_sol, &d_sol,
                &ellipsoid_c_lagrangian_sol);
   } else {
     ControlLyapunov::SearchOptions search_options;
-    search_options.rho_converge_tol = 0.;
+    search_options.d_converge_tol = 0.;
     search_options.bilinear_iterations = 50;
     // search_options.lyap_step_solver = solvers::CsdpSolver::id();
     search_options.lyap_step_solver_options = solvers::SolverOptions();
@@ -373,24 +373,24 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
     search_options.backoff_scale = 0.02;
     // There are tiny coefficients coming from numerical roundoff error.
     search_options.lyap_tiny_coeff_tol = 1E-10;
-    const double rho_min = 0.01;
-    const double rho_max = 15;
-    const double rho_bisection_tol = 0.01;
-    const ControlLyapunov::RhoBisectionOption rho_bisection_option(
-        rho_min, rho_max, rho_bisection_tol);
+    const double size_min = 0.01;
+    const double size_max = 15;
+    const double size_bisection_tol = 0.01;
+    const ControlLyapunov::EllipsoidBisectionOption ellipsoid_bisection_option(
+        size_min, size_max, size_bisection_tol);
     symbolic::Polynomial V_sol;
     symbolic::Polynomial lambda0;
     VectorX<symbolic::Polynomial> l;
     symbolic::Polynomial r;
     VectorX<symbolic::Polynomial> p;
     VectorX<symbolic::Polynomial> positivity_eq_lagrangian;
-    double rho;
+    double d;
     VectorX<symbolic::Polynomial> ellipsoid_c_lagrangian_sol;
     dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
                positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
                ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S,
-               V_degree - 2, search_options, rho_bisection_option, &V_sol,
-               &lambda0, &l, &r, &p, &positivity_eq_lagrangian, &rho,
+               V_degree - 2, search_options, ellipsoid_bisection_option, &V_sol,
+               &lambda0, &l, &r, &p, &positivity_eq_lagrangian, &d,
                &ellipsoid_c_lagrangian_sol);
     Simulate(x, theta_des, V_sol, u_bound, deriv_eps,
              Eigen::Vector2d(M_PI + 0.6 * M_PI, 0), 10);
@@ -437,16 +437,16 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
   search_options.lagrangian_step_solver_options = solvers::SolverOptions();
   // search_options.lagrangian_step_solver_options->SetOption(solvers::CommonSolverOption::kPrintToConsole,
   // 1);
-  const double rho_min = 0.01;
-  const double rho_max = 15;
-  const double rho_bisection_tol = 0.01;
+  const double size_min = 0.01;
+  const double size_max = 15;
+  const double size_bisection_tol = 0.01;
   const int r_degree = V_degree - 2;
-  const ControlLyapunovBoxInputBound::RhoBisectionOption rho_bisection_option(
-      rho_min, rho_max, rho_bisection_tol);
+  const ControlLyapunovBoxInputBound::EllipsoidBisectionOption
+      ellipsoid_bisection_option(size_min, size_max, size_bisection_tol);
   auto clf_result =
       searcher.Search(V_init, l_given, lagrangian_degrees, b_degrees, x_star, S,
                       r_degree, V_degree, deriv_eps_lower, deriv_eps_upper,
-                      search_options, rho_bisection_option);
+                      search_options, ellipsoid_bisection_option);
   *V_sol = clf_result.V;
   *deriv_eps_sol = clf_result.deriv_eps;
 }

@@ -146,52 +146,51 @@ class ControlBarrier {
 
   /**
    * An ellipsoid as
-   * (x−c)ᵀS(x−c) ≤ ρ
+   * (x−c)ᵀS(x−c) ≤ d
    */
   struct Ellipsoid {
     Ellipsoid(const Eigen::Ref<const Eigen::VectorXd>& m_c,
-              const Eigen::Ref<const Eigen::MatrixXd>& m_S, double m_rho,
-              double m_rho_min, double m_rho_max, double m_rho_tol,
-              int m_r_degree,
+              const Eigen::Ref<const Eigen::MatrixXd>& m_S, double m_d,
+              double m_d_min, double m_d_max, double m_d_tol, int m_r_degree,
               std::vector<int> m_state_constraints_lagrangian_degrees)
         : c{m_c},
           S{m_S},
-          rho{m_rho},
-          rho_min{m_rho_min},
-          rho_max{m_rho_max},
-          rho_tol{m_rho_tol},
+          d{m_d},
+          d_min{m_d_min},
+          d_max{m_d_max},
+          d_tol{m_d_tol},
           r_degree{m_r_degree},
           state_constraints_lagrangian_degrees{
               std::move(m_state_constraints_lagrangian_degrees)} {
       DRAKE_DEMAND(c.rows() == S.rows());
       DRAKE_DEMAND(c.rows() == S.cols());
-      DRAKE_DEMAND(rho_min <= rho);
-      DRAKE_DEMAND(rho_max >= rho);
-      DRAKE_DEMAND(rho_tol > 0);
+      DRAKE_DEMAND(d_min <= d);
+      DRAKE_DEMAND(d_max >= d);
+      DRAKE_DEMAND(d_tol > 0);
     }
 
     Eigen::VectorXd c;
     Eigen::MatrixXd S;
-    double rho;
-    double rho_min;
-    double rho_max;
-    double rho_tol;
+    double d;
+    double d_min;
+    double d_max;
+    double d_tol;
     int r_degree;
     std::vector<int> state_constraints_lagrangian_degrees;
   };
 
   /**
    * Maximize the minimal value of h(x) within the ellipsoids.
-   * Add the cost max ∑ᵢ dᵢ
+   * Add the cost max ∑ᵢ ρᵢ
    * with constraint
-   * h(x)-dᵢ - rᵢ(x) * (ρᵢ−(x−cᵢ)ᵀS(x−cᵢ)) is sos.
+   * h(x)-ρᵢ - rᵢ(x) * (dᵢ−(x−cᵢ)ᵀS(x−cᵢ)) is sos.
    * rᵢ(x) is sos.
    */
   void AddBarrierProgramCost(solvers::MathematicalProgram* prog,
                              const symbolic::Polynomial& h,
                              const std::vector<Ellipsoid>& inner_ellipsoids,
                              std::vector<symbolic::Polynomial>* r,
-                             VectorX<symbolic::Variable>* d,
+                             VectorX<symbolic::Variable>* rho,
                              std::vector<VectorX<symbolic::Polynomial>>*
                                  ellipsoids_state_constraints_lagrangian) const;
 

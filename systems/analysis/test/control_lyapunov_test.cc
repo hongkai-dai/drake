@@ -501,11 +501,11 @@ TEST_F(SimpleLinearSystemTest, MaximizeEllipsoid) {
     }
     const double deriv_eps_sol = result.GetSolution(deriv_eps);
 
-    double rho_sol;
+    double d_sol;
     symbolic::Polynomial s_sol;
-    MaximizeInnerEllipsoidRho(x_, x_star, S, V - 1, t, s_degree,
-                              solvers::MosekSolver::id(), std::nullopt, 1.,
-                              &rho_sol, &s_sol);
+    MaximizeInnerEllipsoidSize(x_, x_star, S, V - 1, t, s_degree,
+                               solvers::MosekSolver::id(), std::nullopt, 1.,
+                               &d_sol, &s_sol);
 
     // Now fix the Lagrangian multiplier and search for V
     const int V_degree = 2;
@@ -578,11 +578,11 @@ TEST_F(SimpleLinearSystemTest, SearchLagrangianGivenVBoxInputBound) {
     for (int i = 0; i < nu; ++i) {
       b_sol(i) = result.GetSolution(b(i));
     }
-    double rho_sol;
+    double d_sol;
     symbolic::Polynomial s_sol;
-    MaximizeInnerEllipsoidRho(x_, x_star, S, V - 1, t, s_degree,
-                              solvers::MosekSolver::id(), std::nullopt, 1.,
-                              &rho_sol, &s_sol);
+    MaximizeInnerEllipsoidSize(x_, x_star, S, V - 1, t, s_degree,
+                               solvers::MosekSolver::id(), std::nullopt, 1.,
+                               &d_sol, &s_sol);
 
     // Now fix V and b, search for Lagrangians.
     SearchLagrangianGivenVBoxInputBound dut_search_l(
@@ -654,11 +654,12 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound) {
   const double rho_max = 5;
   const double rho_bisection_tol = 0.01;
   const int r_degree = V_degree - 2;
-  const ControlLyapunovBoxInputBound::RhoBisectionOption rho_bisection_option(
-      rho_min, rho_max, rho_bisection_tol);
-  const auto search_result_algo1 = dut.Search(
-      V, l_given, lagrangian_degrees, b_degrees, x_star, S, r_degree, V_degree,
-      deriv_eps_lower, deriv_eps_upper, search_options, rho_bisection_option);
+  const ControlLyapunovBoxInputBound::EllipsoidBisectionOption
+      ellipsoid_bisection_option(rho_min, rho_max, rho_bisection_tol);
+  const auto search_result_algo1 =
+      dut.Search(V, l_given, lagrangian_degrees, b_degrees, x_star, S, r_degree,
+                 V_degree, deriv_eps_lower, deriv_eps_upper, search_options,
+                 ellipsoid_bisection_option);
   ValidateRegionOfAttractionBySample(
       f, G, search_result_algo1.V, x_, u_vertices,
       search_result_backoff.deriv_eps, 1000, 1E-5, 1E-3);
@@ -726,44 +727,43 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound_SearchLyapunov) {
   const Eigen::Vector2d x_star(0.001, 0.002);
   const Eigen::Matrix2d S = Eigen::Vector2d(1, 2).asDiagonal();
   int r_degree = 0;
-  double rho_max = 0.04;
-  double rho_min = 0.001;
-  double rho_tol = 0.001;
-  double rho_sol;
+  double size_max = 0.04;
+  double size_min = 0.001;
+  double size_tol = 0.001;
+  double d_sol;
   symbolic::Polynomial r_sol;
-  MaximizeInnerEllipsoidRho(x_, x_star, S, V - 1, std::nullopt, r_degree,
-                            std::nullopt, rho_max, rho_min,
-                            solvers::MosekSolver::id(), std::nullopt, rho_tol,
-                            &rho_sol, &r_sol, nullptr);
+  MaximizeInnerEllipsoidSize(x_, x_star, S, V - 1, std::nullopt, r_degree,
+                             std::nullopt, size_max, size_min,
+                             solvers::MosekSolver::id(), std::nullopt, size_tol,
+                             &d_sol, &r_sol, nullptr);
 
   // Now find the Lyapunov function.
   const double backoff_scale = 0.01;
   symbolic::Polynomial V_sol;
   VectorX<symbolic::Polynomial> b_sol;
-  double d_sol;
-  dut.SearchLyapunov(l, b_degrees, V.TotalDegree(), deriv_eps, x_star, S,
-                     rho_sol, r_degree, solvers::MosekSolver::id(),
-                     std::nullopt, backoff_scale, 0., 0., &V_sol, &b_sol,
-                     &r_sol, &d_sol);
+  double rho_sol;
+  dut.SearchLyapunov(l, b_degrees, V.TotalDegree(), deriv_eps, x_star, S, d_sol,
+                     r_degree, solvers::MosekSolver::id(), std::nullopt,
+                     backoff_scale, 0., 0., &V_sol, &b_sol, &r_sol, &rho_sol);
   // First validate that V is a valid CLF.
   Eigen::Matrix<double, 2, 4> u_vertices;
   u_vertices << 1, 1, -1, -1, 1, -1, 1, -1;
   ValidateRegionOfAttractionBySample(f, G, V_sol, x_, u_vertices, deriv_eps,
                                      100, 1E-5, 1E-3);
-  ASSERT_GT(d_sol, 0);
-  EXPECT_LE(d_sol, 1);
-  // Now check if the ellipsoid is in the sub-level set {x | V(x) <= d}.
-  CheckEllipsoidInRoa(x_, x_star, S, rho_sol, 1. / d_sol * V_sol);
+  ASSERT_GT(rho_sol, 0);
+  EXPECT_LE(rho_sol, 1);
+  // Now check if the ellipsoid is in the sub-level set {x | V(x) <= rho}.
+  CheckEllipsoidInRoa(x_, x_star, S, d_sol, 1. / rho_sol * V_sol);
 
   // Now find the largest ellipsoid in {x | V(x)<=1} again. This ellipsoid
   // should be larger than the one before searching for V.
-  double rho_sol_new;
+  double d_sol_new;
   symbolic::Polynomial r_sol_new;
-  MaximizeInnerEllipsoidRho(x_, x_star, S, V_sol - 1, std::nullopt, r_degree,
-                            std::nullopt, rho_max, rho_min,
-                            solvers::MosekSolver::id(), std::nullopt, rho_tol,
-                            &rho_sol_new, &r_sol_new, nullptr);
-  EXPECT_GT(rho_sol_new, rho_sol);
+  MaximizeInnerEllipsoidSize(x_, x_star, S, V_sol - 1, std::nullopt, r_degree,
+                             std::nullopt, size_max, size_min,
+                             solvers::MosekSolver::id(), std::nullopt, size_tol,
+                             &d_sol_new, &r_sol_new, nullptr);
+  EXPECT_GT(d_sol_new, d_sol);
 }
 
 GTEST_TEST(EllipsoidPolynomial, Test) {
@@ -931,12 +931,12 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunov) {
   search_options.backoff_scale = 0.01;
   search_options.bilinear_iterations = 15;
   search_options.lyap_tiny_coeff_tol = 1E-10;
-  const double rho_min = 0.01;
-  const double rho_max = 1;
-  const double rho_tol = 0.001;
-  double rho_sol;
-  ControlLyapunov::RhoBisectionOption rho_bisection_option(rho_min, rho_max,
-                                                           rho_tol);
+  const double size_min = 0.01;
+  const double size_max = 1;
+  const double size_tol = 0.001;
+  double d_sol;
+  ControlLyapunov::EllipsoidBisectionOption ellipsoid_bisection_option(
+      size_min, size_max, size_tol);
 
   symbolic::Polynomial r_sol;
   VectorX<symbolic::Polynomial> positivity_eq_lagrangian_sol;
@@ -945,8 +945,8 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunov) {
   dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
              positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
              ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S, r_degree,
-             search_options, rho_bisection_option, &V_sol, &lambda0_sol, &l_sol,
-             &r_sol, &p_sol, &positivity_eq_lagrangian_sol, &rho_sol,
+             search_options, ellipsoid_bisection_option, &V_sol, &lambda0_sol,
+             &l_sol, &r_sol, &p_sol, &positivity_eq_lagrangian_sol, &d_sol,
              &ellipsoid_c_lagrangian_sol);
 }
 

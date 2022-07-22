@@ -282,7 +282,7 @@ void SearchWTrigDynamics(double u_max,
   symbolic::Polynomial V_sol;
   {
     ControlLyapunov::SearchOptions search_options;
-    search_options.rho_converge_tol = 0.;
+    search_options.d_converge_tol = 0.;
     search_options.bilinear_iterations = 15;
     search_options.backoff_scale = 0.04;
     search_options.lagrangian_tiny_coeff_tol = 1E-6;

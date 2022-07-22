@@ -193,20 +193,21 @@ struct Quadrotor {
   search_options.lagrangian_step_solver_options = solvers::SolverOptions();
   // search_options.lagrangian_step_solver_options->SetOption(
   //    solvers::CommonSolverOption::kPrintToConsole, 1);
-  ControlLyapunov::RhoBisectionOption rho_bisection_option(0.01, 3, 0.01);
+  ControlLyapunov::EllipsoidBisectionOption ellipsoid_bisection_option(0.01, 3,
+                                                                       0.01);
   symbolic::Polynomial lambda0;
   VectorX<symbolic::Polynomial> l;
   VectorX<symbolic::Polynomial> p_sol;
   symbolic::Polynomial r;
   VectorX<symbolic::Polynomial> positivity_eq_lagrangian_sol;
-  double rho_sol;
+  double d_sol;
   VectorX<symbolic::Polynomial> ellipsoid_c_lagrangian_sol;
 
   dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
              positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
              ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S, V_degree - 2,
-             search_options, rho_bisection_option, V_sol, &lambda0, &l, &r,
-             &p_sol, &positivity_eq_lagrangian_sol, &rho_sol,
+             search_options, ellipsoid_bisection_option, V_sol, &lambda0, &l,
+             &r, &p_sol, &positivity_eq_lagrangian_sol, &d_sol,
              &ellipsoid_c_lagrangian_sol);
 }
 
@@ -230,8 +231,8 @@ struct Quadrotor {
       solvers::CommonSolverOption::kPrintToConsole, 1);
   search_options.lyap_tiny_coeff_tol = 2E-7;
   search_options.lsol_tiny_coeff_tol = 1E-5;
-  ControlLyapunovBoxInputBound::RhoBisectionOption rho_bisection_option(0.01, 3,
-                                                                        0.01);
+  ControlLyapunovBoxInputBound::EllipsoidBisectionOption
+      ellipsoid_bisection_option(0.01, 3, 0.01);
 
   const int nu = 4;
   const int num_vdot_sos = 2;
@@ -264,7 +265,7 @@ struct Quadrotor {
   const auto search_result =
       dut.Search(V_init, l_given, lagrangian_degrees, b_degrees, x_star, S,
                  r_degree, V_degree, deriv_eps_lower, deriv_eps_upper,
-                 search_options, rho_bisection_option);
+                 search_options, ellipsoid_bisection_option);
   *V_sol = search_result.V;
   *deriv_eps_sol = search_result.deriv_eps;
 }

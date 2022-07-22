@@ -163,11 +163,12 @@ const double kInf = std::numeric_limits<double>::infinity();
       // search_options.lyap_step_solver_options->SetOption(solvers::CommonSolverOption::kPrintToConsole,
       // 1);
 
-      ControlLyapunov::RhoBisectionOption rho_bisection_option(0.01, 2, 0.01);
+      ControlLyapunov::EllipsoidBisectionOption ellipsoid_bisection_option(
+          0.01, 2, 0.01);
       symbolic::Polynomial lambda0;
       VectorX<symbolic::Polynomial> l;
       symbolic::Polynomial r;
-      double rho_sol;
+      double d_sol;
       VectorX<symbolic::Polynomial> positivity_eq_lagrangian_sol;
       VectorX<symbolic::Polynomial> p_sol;
       VectorX<symbolic::Polynomial> ellipsoid_c_lagrangian_sol;
@@ -175,9 +176,10 @@ const double kInf = std::numeric_limits<double>::infinity();
       dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
                  positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
                  ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S,
-                 V_degree - 2, search_options, rho_bisection_option, &V_sol,
-                 &lambda0, &l, &r, &p_sol, &positivity_eq_lagrangian_sol,
-                 &rho_sol, &ellipsoid_c_lagrangian_sol);
+                 V_degree - 2, search_options, ellipsoid_bisection_option,
+                 &V_sol, &lambda0, &l, &r, &p_sol,
+                 &positivity_eq_lagrangian_sol, &d_sol,
+                 &ellipsoid_c_lagrangian_sol);
     }
   }
 

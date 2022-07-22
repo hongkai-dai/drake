@@ -48,52 +48,52 @@ solvers::MathematicalProgramResult SearchWithBackoff(
     double backoff_scale);
 
 /**
- * Find the largest inscribed ellipsoid {x | (x-x*)ᵀS(x-x*) <= ρ} in the
+ * Find the largest inscribed ellipsoid {x | (x-x*)ᵀS(x-x*) <= d} in the
  * sub-level set {x | f(x)<= 0}. Solve the following problem on the variable
- * s(x), ρ
+ * s(x), d
  * max ρ
- * s.t (1+t(x))((x-x*)ᵀS(x-x*)-ρ) - s(x)*f(x) is sos
+ * s.t (1+t(x))((x-x*)ᵀS(x-x*)-d) - s(x)*f(x) is sos
  *     s(x) is sos
  */
-void MaximizeInnerEllipsoidRho(
+void MaximizeInnerEllipsoidSize(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
     const Eigen::Ref<const Eigen::VectorXd>& x_star,
     const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& f,
     const symbolic::Polynomial& t, int s_degree,
     const solvers::SolverId& solver_id,
     const std::optional<solvers::SolverOptions>& solver_options,
-    double backoff_scale, double* rho_sol, symbolic::Polynomial* s_sol);
+    double backoff_scale, double* d_sol, symbolic::Polynomial* s_sol);
 
 /**
- * Find the largest inscribed ellipsoid {x | (x-x*)ᵀS(x-x*) <= ρ} in the
+ * Find the largest inscribed ellipsoid {x | (x-x*)ᵀS(x-x*) <= d} in the
  * sub-level set {x | f(x) <= 0}. Solve the following problem on the variable
- * r(x) through bisecting ρ
+ * r(x) through bisecting d
  *
- *     max ρ
- *     s.t -f(x) - r(x)*(ρ-(x-x*)ᵀS(x-x*)) is sos
+ *     max d
+ *     s.t -f(x) - r(x)*(d-(x-x*)ᵀS(x-x*)) is sos
  *         r(x) is sos.
  *
  * Optionally we can specify that we only care about the containment in the
  * algebraic set {x | c(x) = 0}. Namely the intersection of the ellipsoid and
  * the algebraic set {x | c(x) = 0} is contained inside the sub-level set {x |
  * f(x) <= 0}., and we solve the following problem on the variable r(x), t(x)
- * through bisecting ρ
+ * through bisecting d
  *
- *     max ρ
- *     s.t -f(x) - r(x)*(ρ-(x-x*)ᵀS(x-x*)) -t(x)ᵀ*c(x) is sos
+ *     max d
+ *     s.t -f(x) - r(x)*(d-(x-x*)ᵀS(x-x*)) -t(x)ᵀ*c(x) is sos
  *         r(x) is sos.
  *
  * @return Whether we find an ellipsoid or not.
  */
-bool MaximizeInnerEllipsoidRho(
+bool MaximizeInnerEllipsoidSize(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
     const Eigen::Ref<const Eigen::VectorXd>& x_star,
     const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& f,
     const std::optional<VectorX<symbolic::Polynomial>>& c, int r_degree,
-    const std::optional<std::vector<int>>& c_lagrangian_degrees, double rho_max,
-    double rho_min, const solvers::SolverId& solver_id,
-    const std::optional<solvers::SolverOptions>& solver_options, double rho_tol,
-    double* rho_sol, symbolic::Polynomial* r_sol,
+    const std::optional<std::vector<int>>& c_lagrangian_degrees,
+    double size_max, double size_min, const solvers::SolverId& solver_id,
+    const std::optional<solvers::SolverOptions>& solver_options,
+    double size_tol, double* d_sol, symbolic::Polynomial* r_sol,
     VectorX<symbolic::Polynomial>* c_lagrangian_sol);
 
 void GetPolynomialSolutions(const solvers::MathematicalProgramResult& result,

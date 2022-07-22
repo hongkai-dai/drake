@@ -39,25 +39,25 @@ namespace {
 }
 
 // add the constraint that the intersection of the ellipsoid and the algebraic
-// set c(x) is within the sub-level set {x | V(x)<=d},
+// set c(x) is within the sub-level set {x | V(x)<=ρ},
 // Namely
-// d−V(x) − r(x)(ρ−(x−x*)ᵀS(x−x*)) - t(x) * c(x) is sos
+// ρ−V(x) − r(x)(d−(x−x*)ᵀS(x−x*)) - t(x) * c(x) is sos
 // and r(x) is sos.
 template <typename T>
 void AddEllipsoidInRoaConstraint(
     solvers::MathematicalProgram* prog, const VectorX<symbolic::Variable>& x,
-    const T& d, const symbolic::Polynomial& V,
+    const T& rho, const symbolic::Polynomial& V,
     const Eigen::Ref<const Eigen::VectorXd>& x_star,
-    const Eigen::Ref<const Eigen::MatrixXd>& S, double rho, int r_degree,
+    const Eigen::Ref<const Eigen::MatrixXd>& S, double d, int r_degree,
     const std::optional<VectorX<symbolic::Polynomial>>& c,
     const std::optional<std::vector<int>>& c_lagrangian_degrees,
     symbolic::Polynomial* r, VectorX<symbolic::Polynomial>* c_lagrangian) {
   const symbolic::Variables x_set(x);
   std::tie(*r, std::ignore) = prog->NewSosPolynomial(x_set, r_degree);
   const symbolic::Polynomial ellipsoid_poly =
-      internal::EllipsoidPolynomial(x, x_star, S, rho);
+      internal::EllipsoidPolynomial(x, x_star, S, d);
   symbolic::Polynomial sos_condition =
-      symbolic::Polynomial({{symbolic::Monomial(), d}}) - V +
+      symbolic::Polynomial({{symbolic::Monomial(), rho}}) - V +
       (*r) * ellipsoid_poly;
   if (c.has_value() && c->rows() > 0) {
     DRAKE_DEMAND(c_lagrangian_degrees.has_value() &&
@@ -399,30 +399,31 @@ void ControlLyapunov::Search(
     const Eigen::Ref<const Eigen::VectorXd>& x_star,
     const Eigen::Ref<const Eigen::MatrixXd>& S, int r_degree,
     const SearchOptions& search_options,
-    const RhoBisectionOption& rho_bisection_option, symbolic::Polynomial* V_sol,
-    symbolic::Polynomial* lambda0_sol, VectorX<symbolic::Polynomial>* l_sol,
-    symbolic::Polynomial* r_sol, VectorX<symbolic::Polynomial>* p_sol,
-    VectorX<symbolic::Polynomial>* positivity_eq_lagrangian_sol,
-    double* rho_sol,
+    const EllipsoidBisectionOption& ellipsoid_bisection_option,
+    symbolic::Polynomial* V_sol, symbolic::Polynomial* lambda0_sol,
+    VectorX<symbolic::Polynomial>* l_sol, symbolic::Polynomial* r_sol,
+    VectorX<symbolic::Polynomial>* p_sol,
+    VectorX<symbolic::Polynomial>* positivity_eq_lagrangian_sol, double* d_sol,
     VectorX<symbolic::Polynomial>* ellipsoid_c_lagrangian_sol) const {
   int iter_count = 0;
-  double rho_prev = 0;
+  double d_prev = 0;
   *V_sol = V_init;
   while (iter_count < search_options.bilinear_iterations) {
     {
-      MaximizeInnerEllipsoidRho(
-          x_, x_star, S, *V_sol - search_options.rho, state_constraints_,
-          r_degree, ellipsoid_c_lagrangian_degrees,
-          rho_bisection_option.rho_max, rho_bisection_option.rho_min,
-          search_options.ellipsoid_step_solver,
-          search_options.ellipsoid_step_solver_options,
-          rho_bisection_option.rho_tol, rho_sol, r_sol,
-          ellipsoid_c_lagrangian_sol);
-      drake::log()->info("iter {}, ellipsoid rho={}", iter_count, *rho_sol);
-      if (*rho_sol - rho_prev < search_options.rho_converge_tol) {
+      MaximizeInnerEllipsoidSize(x_, x_star, S, *V_sol - search_options.rho,
+                                 state_constraints_, r_degree,
+                                 ellipsoid_c_lagrangian_degrees,
+                                 ellipsoid_bisection_option.size_max,
+                                 ellipsoid_bisection_option.size_min,
+                                 search_options.ellipsoid_step_solver,
+                                 search_options.ellipsoid_step_solver_options,
+                                 ellipsoid_bisection_option.size_tol, d_sol,
+                                 r_sol, ellipsoid_c_lagrangian_sol);
+      drake::log()->info("iter {}, ellipsoid d={}", iter_count, *d_sol);
+      if (*d_sol - d_prev < search_options.d_converge_tol) {
         return;
       } else {
-        rho_prev = *rho_sol;
+        d_prev = *d_sol;
       }
     }
 
@@ -443,15 +444,17 @@ void ControlLyapunov::Search(
           *lambda0_sol, *l_sol, V_degree, search_options.rho, positivity_eps,
           positivity_d, positivity_eq_lagrangian_degrees, p_degrees, deriv_eps,
           &V_search, &positivity_eq_lagrangian, &p);
-      const auto d = prog_lyapunov->NewContinuousVariables<1>("d");
+      const auto rho_on_ellipsoid =
+          prog_lyapunov->NewContinuousVariables<1>("rho_e");
       symbolic::Polynomial r;
       VectorX<symbolic::Polynomial> c_lagrangian;
       AddEllipsoidInRoaConstraint(
-          prog_lyapunov.get(), x_, d(0), V_search, x_star, S, *rho_sol,
-          r_degree, state_constraints_, ellipsoid_c_lagrangian_degrees, &r,
-          &c_lagrangian);
-      prog_lyapunov->AddBoundingBoxConstraint(-kInf, search_options.rho, d);
-      prog_lyapunov->AddLinearCost(Vector1d(1), 0, d);
+          prog_lyapunov.get(), x_, rho_on_ellipsoid(0), V_search, x_star, S,
+          *d_sol, r_degree, state_constraints_, ellipsoid_c_lagrangian_degrees,
+          &r, &c_lagrangian);
+      prog_lyapunov->AddBoundingBoxConstraint(-kInf, search_options.rho,
+                                              rho_on_ellipsoid);
+      prog_lyapunov->AddLinearCost(Vector1d(1), 0, rho_on_ellipsoid);
       RemoveTinyCoeff(prog_lyapunov.get(), search_options.lyap_tiny_coeff_tol);
       drake::log()->info("Search Lyapunov, Lyapunov program smallest coeff: {}",
                          SmallestCoeff(*prog_lyapunov));
@@ -477,7 +480,8 @@ void ControlLyapunov::Search(
         GetPolynomialSolutions(result_lyapunov, positivity_eq_lagrangian,
                                search_options.lsol_tiny_coeff_tol,
                                positivity_eq_lagrangian_sol);
-        drake::log()->info("d = {}", result_lyapunov.GetSolution(d(0)));
+        drake::log()->info("rho_on_ellipsoid = {}",
+                           result_lyapunov.GetSolution(rho_on_ellipsoid(0)));
       } else {
         drake::log()->error("Failed to find Lyapunov");
         return;
@@ -573,9 +577,9 @@ void ControlLyapunov::Search(
         cost = EvaluateClfCost(V_sol_tmp, x_, x_samples, minimize_max);
         drake::log()->info("Optimal cost = {}, cost decreases by {}", cost,
                            prev_cost - cost);
-        if (prev_cost - cost < search_options.rho_converge_tol) {
+        if (prev_cost - cost < search_options.d_converge_tol) {
           drake::log()->info("Cost decreases by {}, less than {} in iter {}",
-                             prev_cost - cost, search_options.rho_converge_tol,
+                             prev_cost - cost, search_options.d_converge_tol,
                              iter_count);
           search_result_details->num_bilinear_iterations = iter_count;
           search_result_details->bilinear_iteration_status =
@@ -936,7 +940,7 @@ void ControlLyapunovBoxInputBound::SearchLyapunov(
     const std::optional<solvers::SolverOptions>& solver_options,
     double backoff_scale, double lyap_tiny_coeff_tol,
     double Vsol_tiny_coeff_tol, symbolic::Polynomial* V_sol,
-    VectorX<symbolic::Polynomial>* b_sol, double* rho_sol) const {
+    VectorX<symbolic::Polynomial>* b_sol, double* d_sol) const {
   symbolic::Polynomial V;
   MatrixX<symbolic::Expression> positivity_constraint_gram;
   VectorX<symbolic::Monomial> positivity_constraint_monomial;
@@ -946,17 +950,17 @@ void ControlLyapunovBoxInputBound::SearchLyapunov(
       l, symmetric_dynamics_, deriv_eps, V_degree, b_degrees, &V,
       &positivity_constraint_gram, &positivity_constraint_monomial, &b,
       &vdot_sos_constraint);
-  const auto rho = prog->NewContinuousVariables<1>("rho")(0);
+  const auto d = prog->NewContinuousVariables<1>("d")(0);
   auto [ellipsoid_constraint_gram, ellipsoid_constraint_monomials] =
       AddEllipsoidInRoaConstraintHelper<symbolic::Variable>(
-          prog.get(), t, x_, x_star, S, rho, s, V, 1);
-  prog->AddLinearCost(-rho);
+          prog.get(), t, x_, x_star, S, d, s, V, 1);
+  prog->AddLinearCost(-d);
   RemoveTinyCoeff(prog.get(), lyap_tiny_coeff_tol);
   drake::log()->info("Smallest coeff in Lyapunov program: {}",
                      SmallestCoeff(*prog));
   const auto result =
       SearchWithBackoff(prog.get(), solver_id, solver_options, backoff_scale);
-  *rho_sol = result.GetSolution(rho);
+  *d_sol = result.GetSolution(d);
   *V_sol = result.GetSolution(V);
   if (Vsol_tiny_coeff_tol > 0) {
     *V_sol = V_sol->RemoveTermsWithSmallCoefficients(Vsol_tiny_coeff_tol);
@@ -976,13 +980,13 @@ void ControlLyapunovBoxInputBound::SearchLyapunov(
     const std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>& l,
     const std::vector<int>& b_degrees, int V_degree, double deriv_eps,
     const Eigen::Ref<const Eigen::VectorXd>& x_star,
-    const Eigen::Ref<const Eigen::MatrixXd>& S, double rho, int r_degree,
+    const Eigen::Ref<const Eigen::MatrixXd>& S, double d, int r_degree,
     const solvers::SolverId& solver_id,
     const std::optional<solvers::SolverOptions>& solver_options,
     double backoff_scale, double lyap_tiny_coeff_tol,
     double Vsol_tiny_coeff_tol, symbolic::Polynomial* V_sol,
     VectorX<symbolic::Polynomial>* b_sol, symbolic::Polynomial* r_sol,
-    double* d_sol) const {
+    double* rho_sol) const {
   symbolic::Polynomial V;
   MatrixX<symbolic::Expression> positivity_constraint_gram;
   VectorX<symbolic::Monomial> positivity_constraint_monomial;
@@ -993,16 +997,18 @@ void ControlLyapunovBoxInputBound::SearchLyapunov(
       &positivity_constraint_gram, &positivity_constraint_monomial, &b,
       &vdot_sos_constraint);
   // Now add the constraint that the ellipsoid is within the sub-level set {x |
-  // V(x)<=d} Namely d−V(x) − r(x)(ρ−(x−x*)ᵀS(x−x*)) is sos and r(x) is sos.
-  const symbolic::Variable d_var = prog->NewContinuousVariables<1>("d")(0);
+  // V(x)<=d} Namely rho−V(x) − r(x)(d−(x−x*)ᵀS(x−x*)) is sos and r(x) is sos.
+  const symbolic::Variable rho_on_ellipsoid =
+      prog->NewContinuousVariables<1>("rho_e")(0);
   // 0 <= d <= 1
-  prog->AddBoundingBoxConstraint(0, 1, d_var);
+  prog->AddBoundingBoxConstraint(0, 1, rho_on_ellipsoid);
   symbolic::Polynomial r;
-  AddEllipsoidInRoaConstraint(prog.get(), x_, d_var, V, x_star, S, rho,
+  AddEllipsoidInRoaConstraint(prog.get(), x_, rho_on_ellipsoid, V, x_star, S, d,
                               r_degree, std::nullopt, std::nullopt, &r,
                               nullptr);
   // The objective is to minimize d.
-  prog->AddLinearCost(Vector1d::Ones(), 0, Vector1<symbolic::Variable>(d_var));
+  prog->AddLinearCost(Vector1d::Ones(), 0,
+                      Vector1<symbolic::Variable>(rho_on_ellipsoid));
   RemoveTinyCoeff(prog.get(), lyap_tiny_coeff_tol);
   drake::log()->info("Smallest coeff in Lyapunov program: {}",
                      SmallestCoeff(*prog));
@@ -1023,7 +1029,7 @@ void ControlLyapunovBoxInputBound::SearchLyapunov(
     }
   }
   *r_sol = result.GetSolution(r);
-  *d_sol = result.GetSolution(d_var);
+  *rho_sol = result.GetSolution(rho_on_ellipsoid);
 }
 
 void ControlLyapunovBoxInputBound::SearchLagrangian(
@@ -1086,21 +1092,21 @@ ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(
       &(ret.deriv_eps), &(ret.b), &(ret.l));
 
   // Solve a separate program to find the inscribed ellipsoid.
-  MaximizeInnerEllipsoidRho(
+  MaximizeInnerEllipsoidSize(
       x_, x_star, S, V_init - 1, t_given, s_degree,
       options.lagrangian_step_solver, options.lagrangian_step_solver_options,
-      options.backoff_scale, &(ret.rho), &(ret.ellipsoid_lagrangian));
+      options.backoff_scale, &(ret.d), &(ret.ellipsoid_lagrangian));
 
   int iter = 0;
   bool converged = false;
   while (iter < options.bilinear_iterations && !converged) {
-    double rho_new;
+    double d_new;
     drake::log()->info("search Lyapunov");
     SearchLyapunov(ret.l, b_degrees, V_degree, ret.deriv_eps, x_star, S,
                    ret.ellipsoid_lagrangian, t_given, options.lyap_step_solver,
                    options.lyap_step_solver_options, options.backoff_scale,
                    options.lyap_tiny_coeff_tol, options.Vsol_tiny_coeff_tol,
-                   &(ret.V), &(ret.b), &rho_new);
+                   &(ret.V), &(ret.b), &d_new);
     if (options.search_l_and_b) {
       drake::log()->info("search Lagrangian");
       SearchLagrangianAndB(
@@ -1116,15 +1122,15 @@ ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(
                      options.lagrangian_tiny_coeff_tol,
                      options.lsol_tiny_coeff_tol, &(ret.l));
     // Solve a separate program to find the innner ellipsoid.
-    MaximizeInnerEllipsoidRho(
+    MaximizeInnerEllipsoidSize(
         x_, x_star, S, ret.V - 1, t_given, s_degree,
         options.lagrangian_step_solver, options.lagrangian_step_solver_options,
-        options.backoff_scale, &rho_new, &(ret.ellipsoid_lagrangian));
-    drake::log()->info("iter: {}, rho: {}", iter, rho_new);
-    if (rho_new - ret.rho < options.rho_converge_tol) {
+        options.backoff_scale, &d_new, &(ret.ellipsoid_lagrangian));
+    drake::log()->info("iter: {}, d: {}", iter, d_new);
+    if (d_new - ret.d < options.d_converge_tol) {
       converged = true;
     }
-    ret.rho = rho_new;
+    ret.d = d_new;
     iter += 1;
   }
   return ret;
@@ -1139,7 +1145,7 @@ ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(
     const Eigen::Ref<const Eigen::MatrixXd>& S, int r_degree, int V_degree,
     double deriv_eps_lower, double deriv_eps_upper,
     const SearchOptions& options,
-    const RhoBisectionOption& rho_bisection_option) const {
+    const EllipsoidBisectionOption& ellipsoid_bisection_option) const {
   SearchReturn ret;
   drake::log()->info("search Lagrangian and b.");
   // First search for b and Lagrangians.
@@ -1149,12 +1155,12 @@ ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(
       options.lagrangian_step_solver_options, options.lsol_tiny_coeff_tol,
       &(ret.deriv_eps), &(ret.b), &(ret.l));
   // Solve a separate program to find the inscribed ellipsoid.
-  const bool found_inner_ellipsoid = MaximizeInnerEllipsoidRho(
+  const bool found_inner_ellipsoid = MaximizeInnerEllipsoidSize(
       x_, x_star, S, V_init - 1, std::nullopt, r_degree, std::nullopt,
-      rho_bisection_option.rho_max, rho_bisection_option.rho_min,
+      ellipsoid_bisection_option.size_max, ellipsoid_bisection_option.size_min,
       options.lagrangian_step_solver, options.lagrangian_step_solver_options,
-      rho_bisection_option.rho_tol, &(ret.rho), &(ret.ellipsoid_lagrangian),
-      nullptr);
+      ellipsoid_bisection_option.size_tol, &(ret.d),
+      &(ret.ellipsoid_lagrangian), nullptr);
   DRAKE_DEMAND(found_inner_ellipsoid);
 
   int iter = 0;
@@ -1162,24 +1168,25 @@ ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(
   while (iter < options.bilinear_iterations && !converged) {
     double d;
     drake::log()->info("search Lyapunov");
-    SearchLyapunov(ret.l, b_degrees, V_degree, ret.deriv_eps, x_star, S,
-                   ret.rho, r_degree, options.lyap_step_solver,
+    SearchLyapunov(ret.l, b_degrees, V_degree, ret.deriv_eps, x_star, S, ret.d,
+                   r_degree, options.lyap_step_solver,
                    options.lyap_step_solver_options, options.backoff_scale,
                    options.lyap_tiny_coeff_tol, options.Vsol_tiny_coeff_tol,
                    &(ret.V), &(ret.b), &(ret.ellipsoid_lagrangian), &d);
     // Solve a separate program to find the inner ellipsoid.
-    double rho_new;
-    MaximizeInnerEllipsoidRho(
+    double d_new;
+    MaximizeInnerEllipsoidSize(
         x_, x_star, S, ret.V - 1, std::nullopt, r_degree, std::nullopt,
-        rho_bisection_option.rho_max, rho_bisection_option.rho_min,
-        options.lagrangian_step_solver, options.lagrangian_step_solver_options,
-        rho_bisection_option.rho_tol, &rho_new, &(ret.ellipsoid_lagrangian),
-        nullptr);
-    drake::log()->info("iter: {}, rho: {}", iter, rho_new);
-    if (rho_new - ret.rho < options.rho_converge_tol) {
+        ellipsoid_bisection_option.size_max,
+        ellipsoid_bisection_option.size_min, options.lagrangian_step_solver,
+        options.lagrangian_step_solver_options,
+        ellipsoid_bisection_option.size_tol, &d_new,
+        &(ret.ellipsoid_lagrangian), nullptr);
+    drake::log()->info("iter: {}, d: {}", iter, d_new);
+    if (d_new - ret.d < options.d_converge_tol) {
       converged = true;
     }
-    ret.rho = rho_new;
+    ret.d = d_new;
     drake::log()->info("d={}", d);
 
     if (options.search_l_and_b) {

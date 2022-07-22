@@ -18,16 +18,16 @@ namespace analysis {
 
 const double kInf = std::numeric_limits<double>::infinity();
 
-// Check if the ellipsoid {x | (x-x*)ᵀS(x-x*) <= ρ} in the
+// Check if the ellipsoid {x | (x-x*)ᵀS(x-x*) <= d} in the
 // sub-level set {x | f(x) <= 0}
 void CheckEllipsoidInSublevelSet(
     const Eigen::Ref<const VectorX<symbolic::Variable>> x,
     const Eigen::Ref<const Eigen::VectorXd>& x_star,
-    const Eigen::Ref<const Eigen::MatrixXd>& S, double rho,
+    const Eigen::Ref<const Eigen::MatrixXd>& S, double d,
     const symbolic::Polynomial& f) {
   // Check if any point within the ellipsoid also satisfies V(x)<=1.
-  // A point on the boundary of ellipsoid (x−x*)ᵀS(x−x*)=ρ
-  // can be writeen as x=√ρ*L⁻ᵀ*u+x*
+  // A point on the boundary of ellipsoid (x−x*)ᵀS(x−x*)=d
+  // can be writeen as x=√d*L⁻ᵀ*u+x*
   // where L is the Cholesky decomposition of S, u is a vector with norm < 1.
   Eigen::LLT<Eigen::Matrix2d> llt_solver;
   llt_solver.compute(S);
@@ -45,7 +45,7 @@ void CheckEllipsoidInSublevelSet(
   qr_solver.compute(llt_solver.matrixL().transpose());
   for (int i = 0; i < u_samples.cols(); ++i) {
     const Eigen::VectorXd x_val =
-        std::sqrt(rho) * qr_solver.solve(u_samples.col(i)) + x_star;
+        std::sqrt(d) * qr_solver.solve(u_samples.col(i)) + x_star;
     symbolic::Environment env;
     env.insert(x, x_val);
     EXPECT_LE(f.Evaluate(env), 1E-5);
@@ -141,15 +141,15 @@ GTEST_TEST(MaximizeInnerEllipsoidRho, Test1) {
   const symbolic::Polynomial t(x(0) * x(0) + x(1) * x(1));
   const int s_degree(2);
   const double backoff_scale = 0.;
-  double rho_sol;
+  double d_sol;
   symbolic::Polynomial s_sol;
-  MaximizeInnerEllipsoidRho(x, x_star, S, V - 1, t, s_degree,
-                            solvers::MosekSolver::id(), std::nullopt,
-                            backoff_scale, &rho_sol, &s_sol);
+  MaximizeInnerEllipsoidSize(x, x_star, S, V - 1, t, s_degree,
+                             solvers::MosekSolver::id(), std::nullopt,
+                             backoff_scale, &d_sol, &s_sol);
   const double tol = 1E-5;
-  EXPECT_NEAR(rho_sol, 0.5, tol);
+  EXPECT_NEAR(d_sol, 0.5, tol);
 
-  CheckEllipsoidInSublevelSet(x, x_star, S, rho_sol, V - 1);
+  CheckEllipsoidInSublevelSet(x, x_star, S, d_sol, V - 1);
 }
 
 GTEST_TEST(MaximizeInnerEllipsoidRho, Test2) {
@@ -170,45 +170,44 @@ GTEST_TEST(MaximizeInnerEllipsoidRho, Test2) {
       1);
   {
     // Test the program
-    // max ρ
-    // s.t (1+t(x))((x-x*)ᵀS(x-x*)-ρ) - s(x)(V(x)-1) is sos
+    // max d
+    // s.t (1+t(x))((x-x*)ᵀS(x-x*)-d) - s(x)(V(x)-1) is sos
     //     s(x) is sos
     const symbolic::Polynomial t(0);
     const int s_degree = 2;
     const double backoff_scale = 0.05;
-    double rho_sol;
+    double d_sol;
     symbolic::Polynomial s_sol;
     solvers::SolverOptions solver_options;
     solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 0);
-    // I am really surprised that this SOS finds a solution with rho > 0. AFAIK,
-    // t(x) is constant, hence (1+t(x))((x-x*)ᵀS(x-x*)-ρ) is a degree 2
+    // I am really surprised that this SOS finds a solution with d > 0. AFAIK,
+    // t(x) is constant, hence (1+t(x))((x-x*)ᵀS(x-x*)-d) is a degree 2
     // polynomial, while -s(x)*(V(x)-1) has much higher degree (>6) with
     // negative leading terms. The resulting polynomial cannot be sos.
-    MaximizeInnerEllipsoidRho(x, x_star, S, V - 1, t, s_degree,
-                              solvers::MosekSolver::id(), solver_options,
-                              backoff_scale, &rho_sol, &s_sol);
-    CheckEllipsoidInSublevelSet(x, x_star, S, rho_sol, V - 1);
+    MaximizeInnerEllipsoidSize(x, x_star, S, V - 1, t, s_degree,
+                               solvers::MosekSolver::id(), solver_options,
+                               backoff_scale, &d_sol, &s_sol);
+    CheckEllipsoidInSublevelSet(x, x_star, S, d_sol, V - 1);
   }
 
   {
     // Test the bisection approach
     const int r_degree = 2;
-    const double rho_max = 4;
-    const double rho_min = 0.2;
-    const double rho_tol = 0.1;
-    double rho_sol_wo_c;
+    const double size_max = 4;
+    const double size_min = 0.2;
+    const double size_tol = 0.1;
+    double d_sol_wo_c;
     symbolic::Polynomial r_sol;
     VectorX<symbolic::Polynomial> c_lagrangian_sol;
-    MaximizeInnerEllipsoidRho(x, x_star, S, V - 1, std::nullopt, r_degree,
-                              std::nullopt, rho_max, rho_min,
-                              solvers::MosekSolver::id(), std::nullopt, rho_tol,
-                              &rho_sol_wo_c, &r_sol, &c_lagrangian_sol);
-    CheckEllipsoidInSublevelSet(x, x_star, S, rho_sol_wo_c, V - 1);
+    MaximizeInnerEllipsoidSize(
+        x, x_star, S, V - 1, std::nullopt, r_degree, std::nullopt, size_max,
+        size_min, solvers::MosekSolver::id(), std::nullopt, size_tol,
+        &d_sol_wo_c, &r_sol, &c_lagrangian_sol);
+    CheckEllipsoidInSublevelSet(x, x_star, S, d_sol_wo_c, V - 1);
     // Check if r_sol is sos.
     Eigen::Matrix2Xd x_check = Eigen::Matrix2Xd::Random(2, 100);
     const symbolic::Polynomial sos_cond =
-        1 - V +
-        r_sol * internal::EllipsoidPolynomial(x, x_star, S, rho_sol_wo_c);
+        1 - V + r_sol * internal::EllipsoidPolynomial(x, x_star, S, d_sol_wo_c);
     for (int i = 0; i < x_check.cols(); ++i) {
       symbolic::Environment env;
       env.insert(x, x_check.col(i));
@@ -220,12 +219,12 @@ GTEST_TEST(MaximizeInnerEllipsoidRho, Test2) {
     const Vector1<symbolic::Polynomial> c(
         symbolic::Polynomial(x(0) + x(1) - 1));
     const std::vector<int> c_lagrangian_degrees{{3}};
-    double rho_sol_w_c;
-    MaximizeInnerEllipsoidRho(x, x_star, S, V - 1, c, r_degree,
-                              c_lagrangian_degrees, rho_max, rho_min,
-                              solvers::MosekSolver::id(), std::nullopt, rho_tol,
-                              &rho_sol_w_c, &r_sol, &c_lagrangian_sol);
-    EXPECT_GT(rho_sol_w_c, rho_sol_wo_c);
+    double d_sol_w_c;
+    MaximizeInnerEllipsoidSize(x, x_star, S, V - 1, c, r_degree,
+                               c_lagrangian_degrees, size_max, size_min,
+                               solvers::MosekSolver::id(), std::nullopt,
+                               size_tol, &d_sol_w_c, &r_sol, &c_lagrangian_sol);
+    EXPECT_GT(d_sol_w_c, d_sol_wo_c);
     // Now sample many points on the plane x(0) + x(1) == 1, if they are within
     // the ellipsoid, then they should satisfy V(x) <= 1.
     const Eigen::VectorXd x0_samples = Eigen::VectorXd::LinSpaced(500, -10, 10);
@@ -236,7 +235,7 @@ GTEST_TEST(MaximizeInnerEllipsoidRho, Test2) {
     const Eigen::VectorXd V_samples = V.EvaluateIndeterminates(x, x_samples);
     for (int i = 0; i < x0_samples.rows(); ++i) {
       const Eigen::Vector2d x_sample = x_samples.col(i);
-      if ((x_sample - x_star).dot(S * (x_sample - x_star)) <= rho_sol_w_c) {
+      if ((x_sample - x_star).dot(S * (x_sample - x_star)) <= d_sol_w_c) {
         EXPECT_LE(V_samples(i), 1);
       }
     }

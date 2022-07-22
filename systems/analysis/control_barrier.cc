@@ -271,12 +271,12 @@ void ControlBarrier::AddBarrierProgramCost(
 void ControlBarrier::AddBarrierProgramCost(
     solvers::MathematicalProgram* prog, const symbolic::Polynomial& h,
     const std::vector<Ellipsoid>& inner_ellipsoids,
-    std::vector<symbolic::Polynomial>* r, VectorX<symbolic::Variable>* d,
+    std::vector<symbolic::Polynomial>* r, VectorX<symbolic::Variable>* rho,
     std::vector<VectorX<symbolic::Polynomial>>* state_constraints_lagrangian)
     const {
   r->resize(inner_ellipsoids.size());
-  *d = prog->NewContinuousVariables(static_cast<int>(inner_ellipsoids.size()),
-                                    "d");
+  *rho = prog->NewContinuousVariables(static_cast<int>(inner_ellipsoids.size()),
+                                      "rho");
   state_constraints_lagrangian->resize(inner_ellipsoids.size());
   for (int i = 0; i < static_cast<int>(inner_ellipsoids.size()); ++i) {
     std::tie((*r)[i], std::ignore) = prog->NewSosPolynomial(
@@ -292,14 +292,14 @@ void ControlBarrier::AddBarrierProgramCost(
           x_set_, inner_ellipsoids[i].state_constraints_lagrangian_degrees[j]);
     }
     prog->AddSosConstraint(
-        h - (*d)(i) +
+        h - (*rho)(i) +
         (*r)[i] * internal::EllipsoidPolynomial(x_, inner_ellipsoids[i].c,
                                                 inner_ellipsoids[i].S,
-                                                inner_ellipsoids[i].rho) -
+                                                inner_ellipsoids[i].d) -
         (*state_constraints_lagrangian)[i].dot(state_eq_constraints_));
   }
-  prog->AddLinearCost(-Eigen::VectorXd::Ones(d->rows()), 0, *d);
-  prog->AddBoundingBoxConstraint(0, kInf, *d);
+  prog->AddLinearCost(-Eigen::VectorXd::Ones(rho->rows()), 0, *rho);
+  prog->AddBoundingBoxConstraint(0, kInf, *rho);
 }
 
 void ControlBarrier::Search(
@@ -350,42 +350,41 @@ void ControlBarrier::Search(
 
     // Maximize the inner ellipsoids.
     drake::log()->info("Find maximal inner ellipsoids");
-    // For each inner ellipsoid, compute rho.
+    // For each inner ellipsoid, compute d.
     for (auto& ellipsoid : inner_ellipsoids) {
-      double rho_sol;
+      double d_sol;
       symbolic::Polynomial r_sol;
       VectorX<symbolic::Polynomial> ellipsoid_c_lagrangian_sol;
-      MaximizeInnerEllipsoidRho(
+      MaximizeInnerEllipsoidSize(
           x_, ellipsoid.c, ellipsoid.S, -(*h_sol), state_eq_constraints_,
           ellipsoid.r_degree, ellipsoid.state_constraints_lagrangian_degrees,
-          ellipsoid.rho_max, ellipsoid.rho,
-          search_options.lagrangian_step_solver,
-          search_options.lagrangian_step_solver_options, ellipsoid.rho_tol,
-          &rho_sol, &r_sol, &ellipsoid_c_lagrangian_sol);
-      drake::log()->info("rho {}", rho_sol);
-      ellipsoid.rho = rho_sol;
-      ellipsoid.rho_min = rho_sol;
+          ellipsoid.d_max, ellipsoid.d, search_options.lagrangian_step_solver,
+          search_options.lagrangian_step_solver_options, ellipsoid.d_tol,
+          &d_sol, &r_sol, &ellipsoid_c_lagrangian_sol);
+      drake::log()->info("d {}", d_sol);
+      ellipsoid.d = d_sol;
+      ellipsoid.d_min = d_sol;
     }
     // First determine if the ellipsoid center is within the super-level set
-    // {x|h(x)>=0}, if yes, then find rho for the ellipsoid.
+    // {x|h(x)>=0}, if yes, then find d for the ellipsoid.
     for (auto it = uncovered_ellipsoids.begin();
          it != uncovered_ellipsoids.end();) {
       symbolic::Environment env;
       env.insert(x_, it->c);
       if (h_sol->Evaluate(env) > 0) {
-        double rho_sol;
+        double d_sol;
         symbolic::Polynomial r_sol;
         VectorX<symbolic::Polynomial> ellipsoid_c_lagrangian_sol;
-        MaximizeInnerEllipsoidRho(
+        MaximizeInnerEllipsoidSize(
             x_, it->c, it->S, -(*h_sol), state_eq_constraints_, it->r_degree,
-            it->state_constraints_lagrangian_degrees, it->rho_max, it->rho_min,
+            it->state_constraints_lagrangian_degrees, it->d_max, it->d_min,
             search_options.lagrangian_step_solver,
-            search_options.lagrangian_step_solver_options, it->rho_tol,
-            &rho_sol, &r_sol, &ellipsoid_c_lagrangian_sol);
-        inner_ellipsoids.emplace_back(it->c, it->S, rho_sol, rho_sol,
-                                      it->rho_max, it->rho_tol, it->r_degree,
+            search_options.lagrangian_step_solver_options, it->d_tol, &d_sol,
+            &r_sol, &ellipsoid_c_lagrangian_sol);
+        inner_ellipsoids.emplace_back(it->c, it->S, d_sol, d_sol, it->d_max,
+                                      it->d_tol, it->r_degree,
                                       it->state_constraints_lagrangian_degrees);
-        drake::log()->info("rho {}", rho_sol);
+        drake::log()->info("d {}", d_sol);
         it = uncovered_ellipsoids.erase(it);
       } else {
         ++it;

@@ -257,10 +257,10 @@ TEST_F(SimpleLinearSystemTest, ControlBarrier) {
                             Eigen::Matrix2d::Identity(), 0.3, 0.1, 1, 0.1, 0,
                             std::vector<int>());
     std::vector<symbolic::Polynomial> r;
-    VectorX<symbolic::Variable> d;
+    VectorX<symbolic::Variable> rho;
     std::vector<VectorX<symbolic::Polynomial>>
         ellipsoids_state_constraints_lagrangian;
-    dut.AddBarrierProgramCost(prog_cost2.get(), h, ellipsoids, &r, &d,
+    dut.AddBarrierProgramCost(prog_cost2.get(), h, ellipsoids, &r, &rho,
                               &ellipsoids_state_constraints_lagrangian);
     Eigen::MatrixXd h_monomial_vals;
     VectorX<symbolic::Variable> h_coeff_vars;
@@ -271,10 +271,10 @@ TEST_F(SimpleLinearSystemTest, ControlBarrier) {
     result_barrier = solvers::Solve(*prog_cost2);
     ASSERT_TRUE(result_barrier.is_success());
     h_sol = result_barrier.GetSolution(h);
-    const auto d_sol = result_barrier.GetSolution(d);
+    const auto rho_sol = result_barrier.GetSolution(rho);
     for (int i = 0; i < static_cast<int>(ellipsoids.size()); ++i) {
       CheckEllipsoidInSublevelSet(x_, ellipsoids[i].c, ellipsoids[i].S,
-                                  ellipsoids[i].rho, d_sol(i) - h_sol);
+                                  ellipsoids[i].d, rho_sol(i) - h_sol);
     }
   }
 }

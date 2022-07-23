@@ -198,11 +198,29 @@ class ControlLyapunov {
   };
 
   /**
+   * We can search for the inscribed ellipsoid {x|(x−x*)ᵀS(x−x*) <=d} with the
+   * largest d through optimization
+   * max d
+   * s.t (1+t(x))((x-x*)ᵀS(x-x*)-d) - s(x)*(V(x)-ρ) is sos
+   *     s(x) is sos
+   */
+  struct EllipsoidMaximizeOption {
+    EllipsoidMaximizeOption(symbolic::Polynomial m_t, int m_s_degree,
+                            double m_backoff_scale)
+        : t{std::move(m_t)},
+          s_degree{m_s_degree},
+          backoff_scale{m_backoff_scale} {}
+    symbolic::Polynomial t;
+    int s_degree;
+    double backoff_scale;
+  };
+
+  /**
    * Use bilinear alternation to grow the region-of-attraction of the control
    * Lyapunov function (CLF).
    * @param ellipsoid_c_lagrangian_degrees. The degrees of the Lagrangian
    * multiplier for state_constraints(x) = 0 when searching for the maximal
-   * ellipsoid contained in the sub-level set { x | V(x) <= 1}
+   * ellipsoid contained in the sub-level set { x | V(x) <= ρ}
    */
   void Search(const symbolic::Polynomial& V_init, int lambda0_degree,
               const std::vector<int>& l_degrees, int V_degree,
@@ -213,7 +231,8 @@ class ControlLyapunov {
               double deriv_eps, const Eigen::Ref<const Eigen::VectorXd>& x_star,
               const Eigen::Ref<const Eigen::MatrixXd>& S, int r_degree,
               const SearchOptions& search_options,
-              const EllipsoidBisectionOption& ellipsoid_bisection_option,
+              const std::variant<EllipsoidBisectionOption,
+                                 EllipsoidMaximizeOption>& ellipsoid_option,
               symbolic::Polynomial* V, symbolic::Polynomial* lambda0,
               VectorX<symbolic::Polynomial>* l, symbolic::Polynomial* r,
               VectorX<symbolic::Polynomial>* p,

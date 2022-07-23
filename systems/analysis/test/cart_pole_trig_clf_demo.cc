@@ -604,7 +604,7 @@ symbolic::Polynomial SearchWTrigDynamics(
 
   const int lambda0_degree = 4;
   const std::vector<int> l_degrees{{4, 4}};
-  const std::vector<int> p_degrees{{6}};
+  const std::vector<int> p_degrees{{8}};
   symbolic::Polynomial lambda0;
   VectorX<symbolic::Polynomial> l;
   VectorX<symbolic::Polynomial> p;
@@ -667,12 +667,20 @@ symbolic::Polynomial SearchWTrigDynamics(
 
   // V_init = SearchClfNoInputBound(params, x, deriv_eps);
 
+  Eigen::MatrixXd state_swingup;
+  Eigen::MatrixXd control_swingup;
+  SwingUpTrajectoryOptimization(&state_swingup, &control_swingup);
+  std::cout << "state_swingup\n" << state_swingup.transpose() << "\n";
+  Eigen::Matrix<double, 5, Eigen::Dynamic> x_swingup(5, state_swingup.cols());
+  for (int i = 0; i < x_swingup.cols(); ++i) {
+    x_swingup.col(i) = ToTrigState<double>(state_swingup.col(i));
+  }
   symbolic::Polynomial V_sol;
   {
     ControlLyapunov::SearchOptions search_options;
     search_options.d_converge_tol = 0.0;
-    search_options.bilinear_iterations = 1;
-    search_options.backoff_scale = 0.03;
+    search_options.bilinear_iterations = 20;
+    search_options.backoff_scale = 0.012;
     // search_options.lagrangian_tiny_coeff_tol = 1E-5;
     // search_options.lsol_tiny_coeff_tol = 1E-5;
     search_options.lyap_tiny_coeff_tol = 1E-10;
@@ -698,24 +706,31 @@ symbolic::Polynomial SearchWTrigDynamics(
     VectorX<symbolic::Polynomial> l_sol;
     VectorX<symbolic::Polynomial> p_sol;
 
-    const bool search_inner_ellipsoid = false;
+    std::cout << "V_init at x_swingup "
+              << V_init.EvaluateIndeterminates(x, x_swingup).transpose()
+              << "\n";
+    const bool search_inner_ellipsoid = true;
     if (search_inner_ellipsoid) {
-      const double size_min = 0.32;
+      const double size_min = 0.;
       const double size_max = 0.5;
       const double size_tol = 0.001;
-      const std::vector<int> ellipsoid_c_lagrangian_degrees{{0}};
-      const Eigen::Matrix<double, 5, 1> x_star =
-          ToTrigState<double>(Eigen::Vector4d(0., 1. * M_PI, 0, 0));
+      const std::vector<int> ellipsoid_c_lagrangian_degrees{{V_degree - 2}};
+      const Eigen::Matrix<double, 5, 1> x_star = ToTrigState<double>(
+          0.23 * state_swingup.col(12) +
+          0.77 * state_swingup.col(13));  // x_swingup.col(16);
       Eigen::Matrix<double, 5, 5> S;
       S.setZero();
-      S(0, 0) = 1;
-      S(1, 1) = 1;
-      S(2, 2) = 1;
+      S(0, 0) = 100;
+      S(1, 1) = 100;
+      S(2, 2) = 100;
       S(3, 3) = 1;
       S(4, 4) = 1;
       const int r_degree = 0;
       const ControlLyapunov::EllipsoidBisectionOption
           ellipsoid_bisection_option(size_min, size_max, size_tol);
+      const double ellipsoid_backoff_scale = 0.004;
+      const ControlLyapunov::EllipsoidMaximizeOption ellipsoid_maximize_option(
+          symbolic::Polynomial(), 0, ellipsoid_backoff_scale);
       symbolic::Polynomial r_sol;
       VectorX<symbolic::Polynomial> positivity_eq_lagrangian_sol;
       double ellipsoid_d_sol;
@@ -723,22 +738,14 @@ symbolic::Polynomial SearchWTrigDynamics(
       dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
                  positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
                  ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S, r_degree,
-                 search_options, ellipsoid_bisection_option, &V_sol,
+                 search_options, ellipsoid_maximize_option, &V_sol,
                  &lambda0_sol, &l_sol, &r_sol, &p_sol,
                  &positivity_eq_lagrangian_sol, &ellipsoid_d_sol,
                  &ellipsoid_c_lagrangian_sol);
-    } else {
-      Eigen::MatrixXd state_swingup;
-      Eigen::MatrixXd control_swingup;
-      SwingUpTrajectoryOptimization(&state_swingup, &control_swingup);
-      Eigen::Matrix<double, 5, Eigen::Dynamic> x_swingup(5,
-                                                         state_swingup.cols());
-      for (int i = 0; i < x_swingup.cols(); ++i) {
-        x_swingup.col(i) = ToTrigState<double>(state_swingup.col(i));
-      }
-      std::cout << "V_init at x_swingup "
-                << V_init.EvaluateIndeterminates(x, x_swingup).transpose()
+      std::cout << "V(x_swingup): "
+                << V_sol.EvaluateIndeterminates(x, x_swingup).transpose()
                 << "\n";
+    } else {
       std::vector<int> x_indices = {14, 15, 16, 17, 18, 19, 20, 21,
                                     22, 23, 24, 25, 26, 27, 28};
       Eigen::Matrix4Xd state_samples(4, x_indices.size());
@@ -791,7 +798,7 @@ int DoMain() {
     x(i) = symbolic::Variable("x" + std::to_string(i));
   }
 
-  double u_max = 160;
+  double u_max = 175;
   const double deriv_eps = 0.1;
   symbolic::Polynomial V_sol;
   bool found_u_max = false;
@@ -804,12 +811,12 @@ int DoMain() {
   while (u_max < 250) {
     std::cout << "Try u_max = " << u_max << "\n";
     // std::optional<std::string> load_file =
-    //   "/home/hongkaidai/Dropbox/sos_clf_cbf/cart_pole_trig_clf_last3.txt";
-    std::optional<std::string> load_file = "cart_pole_trig_clf9.txt";
+    //   "/home/hongkaidai/Dropbox/sos_clf_cbf/cart_pole_trig_clf_last17_16.txt";
+    std::optional<std::string> load_file = "cart_pole_trig_clf4.txt.iter0";
     SearchResultDetails search_result_details;
     V_sol =
         SearchWTrigDynamics(params, x, u_max, deriv_eps, load_file,
-                            "cart_pole_trig_clf10.txt", &search_result_details);
+                            "cart_pole_trig_clf5.txt", &search_result_details);
     if (search_result_details.num_bilinear_iterations >= 1 ||
         search_result_details.bilinear_iteration_status !=
             BilinearIterationStatus::kFailLagrangian) {

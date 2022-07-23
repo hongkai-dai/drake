@@ -126,7 +126,7 @@ GTEST_TEST(SplitCandidateStates, Test) {
   EXPECT_TRUE((p.EvaluateIndeterminates(x, negative_states).array() < 0).all());
 }
 
-GTEST_TEST(MaximizeInnerEllipsoidRho, Test1) {
+GTEST_TEST(MaximizeInnerEllipsoidSize, Test1) {
   // Test a 2D case with known solution.
   // Find the largest x²+4y² <= ρ within the circle 2x²+2y² <= 1
   const Vector2<symbolic::Variable> x(symbolic::Variable("x0"),
@@ -152,7 +152,7 @@ GTEST_TEST(MaximizeInnerEllipsoidRho, Test1) {
   CheckEllipsoidInSublevelSet(x, x_star, S, d_sol, V - 1);
 }
 
-GTEST_TEST(MaximizeInnerEllipsoidRho, Test2) {
+GTEST_TEST(MaximizeInnerEllipsoidSize, Test2) {
   // Test a case that I cannot compute the solution analytically.
   const Vector2<symbolic::Variable> x(symbolic::Variable("x0"),
                                       symbolic::Variable("x1"));

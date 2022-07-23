@@ -49,13 +49,15 @@ solvers::MathematicalProgramResult SearchWithBackoff(
 
 /**
  * Find the largest inscribed ellipsoid {x | (x-x*)ᵀS(x-x*) <= d} in the
- * sub-level set {x | f(x)<= 0}. Solve the following problem on the variable
- * s(x), d
- * max ρ
+ * sub-level set {x | f(x)<= 0}. Namely f(x)>= 0 implies (x-x*)ᵀS(x-x*) >= d.
+ * Solve the following problem on the variable s(x), d
+ * max d
  * s.t (1+t(x))((x-x*)ᵀS(x-x*)-d) - s(x)*f(x) is sos
  *     s(x) is sos
+ *
+ * t(x) is a given sos polynomial.
  */
-void MaximizeInnerEllipsoidSize(
+bool MaximizeInnerEllipsoidSize(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
     const Eigen::Ref<const Eigen::VectorXd>& x_star,
     const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& f,

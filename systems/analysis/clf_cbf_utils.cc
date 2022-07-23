@@ -130,7 +130,7 @@ solvers::MathematicalProgramResult SearchWithBackoff(
   return result;
 }
 
-void MaximizeInnerEllipsoidSize(
+bool MaximizeInnerEllipsoidSize(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
     const Eigen::Ref<const Eigen::VectorXd>& x_star,
     const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& f,
@@ -158,9 +158,9 @@ void MaximizeInnerEllipsoidSize(
   prog.AddLinearCost(-d);
   const auto result =
       SearchWithBackoff(&prog, solver_id, solver_options, backoff_scale);
-  DRAKE_DEMAND(result.is_success());
   *d_sol = result.GetSolution(d);
   *s_sol = result.GetSolution(s);
+  return result.is_success();
 }
 
 bool MaximizeInnerEllipsoidSize(

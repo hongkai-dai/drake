@@ -680,10 +680,10 @@ symbolic::Polynomial SearchWTrigDynamics(
     ControlLyapunov::SearchOptions search_options;
     search_options.d_converge_tol = 0.0;
     search_options.bilinear_iterations = 20;
-    search_options.backoff_scale = 0.012;
+    search_options.backoff_scale = 0.013;
     // search_options.lagrangian_tiny_coeff_tol = 1E-5;
-    // search_options.lsol_tiny_coeff_tol = 1E-5;
-    search_options.lyap_tiny_coeff_tol = 1E-10;
+    search_options.lsol_tiny_coeff_tol = 1E-5;
+    search_options.lyap_tiny_coeff_tol = 1E-7;
     // search_options.Vsol_tiny_coeff_tol = 1E-7;
     search_options.lagrangian_step_solver_options = solvers::SolverOptions();
     search_options.lagrangian_step_solver_options->SetOption(
@@ -716,8 +716,8 @@ symbolic::Polynomial SearchWTrigDynamics(
       const double size_tol = 0.001;
       const std::vector<int> ellipsoid_c_lagrangian_degrees{{V_degree - 2}};
       const Eigen::Matrix<double, 5, 1> x_star = ToTrigState<double>(
-          0.23 * state_swingup.col(12) +
-          0.77 * state_swingup.col(13));  // x_swingup.col(16);
+          0.55 * state_swingup.col(12) +
+          0.45 * state_swingup.col(13));  // x_swingup.col(16);
       Eigen::Matrix<double, 5, 5> S;
       S.setZero();
       S(0, 0) = 100;
@@ -728,7 +728,7 @@ symbolic::Polynomial SearchWTrigDynamics(
       const int r_degree = 0;
       const ControlLyapunov::EllipsoidBisectionOption
           ellipsoid_bisection_option(size_min, size_max, size_tol);
-      const double ellipsoid_backoff_scale = 0.004;
+      const double ellipsoid_backoff_scale = 0.02;
       const ControlLyapunov::EllipsoidMaximizeOption ellipsoid_maximize_option(
           symbolic::Polynomial(), 0, ellipsoid_backoff_scale);
       symbolic::Polynomial r_sol;
@@ -798,8 +798,8 @@ int DoMain() {
     x(i) = symbolic::Variable("x" + std::to_string(i));
   }
 
-  double u_max = 175;
-  const double deriv_eps = 0.1;
+  double u_max = 200;
+  const double deriv_eps = 0.075;
   symbolic::Polynomial V_sol;
   bool found_u_max = false;
   // SearchWithSlackA(
@@ -811,12 +811,13 @@ int DoMain() {
   while (u_max < 250) {
     std::cout << "Try u_max = " << u_max << "\n";
     // std::optional<std::string> load_file =
-    //   "/home/hongkaidai/Dropbox/sos_clf_cbf/cart_pole_trig_clf_last17_16.txt";
-    std::optional<std::string> load_file = "cart_pole_trig_clf4.txt.iter0";
+    //    "/home/hongkaidai/Dropbox/sos_clf_cbf/cart_pole_trig_clf_last17_21.txt";
+    std::optional<std::string> load_file =
+        "sos_data/cart_pole_trig_clf52.txt.iter1";
     SearchResultDetails search_result_details;
-    V_sol =
-        SearchWTrigDynamics(params, x, u_max, deriv_eps, load_file,
-                            "cart_pole_trig_clf5.txt", &search_result_details);
+    V_sol = SearchWTrigDynamics(params, x, u_max, deriv_eps, load_file,
+                                "sos_data/cart_pole_trig_clf53.txt",
+                                &search_result_details);
     if (search_result_details.num_bilinear_iterations >= 1 ||
         search_result_details.bilinear_iteration_status !=
             BilinearIterationStatus::kFailLagrangian) {

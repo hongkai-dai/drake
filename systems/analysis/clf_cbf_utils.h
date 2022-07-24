@@ -49,10 +49,11 @@ solvers::MathematicalProgramResult SearchWithBackoff(
 
 /**
  * Find the largest inscribed ellipsoid {x | (x-x*)ᵀS(x-x*) <= d} in the
- * sub-level set {x | f(x)<= 0}. Namely f(x)>= 0 implies (x-x*)ᵀS(x-x*) >= d.
+ * sub-level set {x | f(x)<= 0}, and also subject to the equality constraint
+ * eq(x) = 0 Namely f(x)>= 0 and eq(x) = 0 implies (x-x*)ᵀS(x-x*) >= d.
  * Solve the following problem on the variable s(x), d
  * max d
- * s.t (1+t(x))((x-x*)ᵀS(x-x*)-d) - s(x)*f(x) is sos
+ * s.t (1+t(x))((x-x*)ᵀS(x-x*)-d) - s(x)*f(x) - eq_l(x) * eq(x) is sos
  *     s(x) is sos
  *
  * t(x) is a given sos polynomial.
@@ -62,9 +63,12 @@ bool MaximizeInnerEllipsoidSize(
     const Eigen::Ref<const Eigen::VectorXd>& x_star,
     const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& f,
     const symbolic::Polynomial& t, int s_degree,
+    const std::optional<VectorX<symbolic::Polynomial>>& eq_constraints,
+    const std::vector<int>& eq_lagrangian_degrees,
     const solvers::SolverId& solver_id,
     const std::optional<solvers::SolverOptions>& solver_options,
-    double backoff_scale, double* d_sol, symbolic::Polynomial* s_sol);
+    double backoff_scale, double* d_sol, symbolic::Polynomial* s_sol,
+    VectorX<symbolic::Polynomial>* eq_lagrangian_sol);
 
 /**
  * Find the largest inscribed ellipsoid {x | (x-x*)ᵀS(x-x*) <= d} in the

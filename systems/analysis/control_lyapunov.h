@@ -287,6 +287,7 @@ class ControlLyapunov {
                         int lambda0_degree, const std::vector<int>& l_degrees,
                         const std::vector<int>& p_degrees, double deriv_eps,
                         const SearchOptions& search_options,
+                        std::optional<bool> always_write_sol,
                         symbolic::Polynomial* lambda0,
                         VectorX<symbolic::Polynomial>* l,
                         VectorX<symbolic::Polynomial>* p) const;

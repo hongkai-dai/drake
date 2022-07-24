@@ -143,9 +143,11 @@ GTEST_TEST(MaximizeInnerEllipsoidSize, Test1) {
   const double backoff_scale = 0.;
   double d_sol;
   symbolic::Polynomial s_sol;
-  MaximizeInnerEllipsoidSize(x, x_star, S, V - 1, t, s_degree,
+  VectorX<symbolic::Polynomial> ellipsoid_eq_lagrangian_sol;
+  MaximizeInnerEllipsoidSize(x, x_star, S, V - 1, t, s_degree, std::nullopt, {},
                              solvers::MosekSolver::id(), std::nullopt,
-                             backoff_scale, &d_sol, &s_sol);
+                             backoff_scale, &d_sol, &s_sol,
+                             &ellipsoid_eq_lagrangian_sol);
   const double tol = 1E-5;
   EXPECT_NEAR(d_sol, 0.5, tol);
 
@@ -184,9 +186,11 @@ GTEST_TEST(MaximizeInnerEllipsoidSize, Test2) {
     // t(x) is constant, hence (1+t(x))((x-x*)ᵀS(x-x*)-d) is a degree 2
     // polynomial, while -s(x)*(V(x)-1) has much higher degree (>6) with
     // negative leading terms. The resulting polynomial cannot be sos.
-    MaximizeInnerEllipsoidSize(x, x_star, S, V - 1, t, s_degree,
-                               solvers::MosekSolver::id(), solver_options,
-                               backoff_scale, &d_sol, &s_sol);
+    VectorX<symbolic::Polynomial> ellipsoid_eq_lagrangian_sol;
+    MaximizeInnerEllipsoidSize(x, x_star, S, V - 1, t, s_degree, std::nullopt,
+                               {}, solvers::MosekSolver::id(), solver_options,
+                               backoff_scale, &d_sol, &s_sol,
+                               &ellipsoid_eq_lagrangian_sol);
     CheckEllipsoidInSublevelSet(x, x_star, S, d_sol, V - 1);
   }
 

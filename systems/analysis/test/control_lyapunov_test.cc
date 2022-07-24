@@ -503,9 +503,10 @@ TEST_F(SimpleLinearSystemTest, MaximizeEllipsoid) {
 
     double d_sol;
     symbolic::Polynomial s_sol;
-    MaximizeInnerEllipsoidSize(x_, x_star, S, V - 1, t, s_degree,
-                               solvers::MosekSolver::id(), std::nullopt, 1.,
-                               &d_sol, &s_sol);
+    VectorX<symbolic::Polynomial> ellipsoid_eq_lagrangian_sol;
+    MaximizeInnerEllipsoidSize(x_, x_star, S, V - 1, t, s_degree, std::nullopt,
+                               {}, solvers::MosekSolver::id(), std::nullopt, 1.,
+                               &d_sol, &s_sol, &ellipsoid_eq_lagrangian_sol);
 
     // Now fix the Lagrangian multiplier and search for V
     const int V_degree = 2;
@@ -580,9 +581,10 @@ TEST_F(SimpleLinearSystemTest, SearchLagrangianGivenVBoxInputBound) {
     }
     double d_sol;
     symbolic::Polynomial s_sol;
-    MaximizeInnerEllipsoidSize(x_, x_star, S, V - 1, t, s_degree,
-                               solvers::MosekSolver::id(), std::nullopt, 1.,
-                               &d_sol, &s_sol);
+    VectorX<symbolic::Polynomial> ellipsoid_eq_lagrangian_sol;
+    MaximizeInnerEllipsoidSize(x_, x_star, S, V - 1, t, s_degree, std::nullopt,
+                               {}, solvers::MosekSolver::id(), std::nullopt, 1.,
+                               &d_sol, &s_sol, &ellipsoid_eq_lagrangian_sol);
 
     // Now fix V and b, search for Lagrangians.
     SearchLagrangianGivenVBoxInputBound dut_search_l(

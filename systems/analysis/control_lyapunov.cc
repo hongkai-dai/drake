@@ -312,7 +312,8 @@ bool ControlLyapunov::SearchLagrangian(
     const symbolic::Polynomial& V, double rho, int lambda0_degree,
     const std::vector<int>& l_degrees, const std::vector<int>& p_degrees,
     double deriv_eps, const ControlLyapunov::SearchOptions& search_options,
-    symbolic::Polynomial* lambda0_sol, VectorX<symbolic::Polynomial>* l_sol,
+    std::optional<bool> always_write_sol, symbolic::Polynomial* lambda0_sol,
+    VectorX<symbolic::Polynomial>* l_sol,
     VectorX<symbolic::Polynomial>* p_sol) const {
   symbolic::Polynomial lambda0;
   MatrixX<symbolic::Variable> lambda0_gram;
@@ -334,7 +335,8 @@ bool ControlLyapunov::SearchLagrangian(
       ->Solve(*prog_lagrangian, std::nullopt,
               search_options.lagrangian_step_solver_options,
               &result_lagrangian);
-  if (result_lagrangian.is_success()) {
+  if (result_lagrangian.is_success() ||
+      (always_write_sol.has_value() && always_write_sol.value())) {
     // internal::PrintPsdConstraintStat(*prog_lagrangian,
     // result_lagrangian);
     *lambda0_sol = result_lagrangian.GetSolution(lambda0);
@@ -348,9 +350,8 @@ bool ControlLyapunov::SearchLagrangian(
                            search_options.lsol_tiny_coeff_tol, p_sol);
   } else {
     drake::log()->error("Failed to find Lagrangian.");
-    return false;
   }
-  return true;
+  return result_lagrangian.is_success();
 }
 
 bool ControlLyapunov::FindRhoBinarySearch(
@@ -363,8 +364,9 @@ bool ControlLyapunov::FindRhoBinarySearch(
   auto is_rho_feasible = [this, &V, lambda0_degree, &l_degrees, &p_degrees,
                           deriv_eps, &search_options, lambda0, l,
                           p](double rho) {
-    return this->SearchLagrangian(V, rho, lambda0_degree, l_degrees, p_degrees,
-                                  deriv_eps, search_options, lambda0, l, p);
+    return this->SearchLagrangian(
+        V, rho, lambda0_degree, l_degrees, p_degrees, deriv_eps, search_options,
+        std::nullopt /* always_write_sol */, lambda0, l, p);
   };
   DRAKE_DEMAND(rho_max >= rho_min);
   DRAKE_DEMAND(rho_tol > 0);
@@ -425,12 +427,15 @@ void ControlLyapunov::Search(
         const EllipsoidMaximizeOption ellipsoid_maximize_option =
             std::get<EllipsoidMaximizeOption>(ellipsoid_option);
         symbolic::Polynomial s_sol;
+        VectorX<symbolic::Polynomial> ellipsoid_eq_lagrangian_sol;
         found_inner_ellipsoid = MaximizeInnerEllipsoidSize(
             x_, x_star, S, *V_sol - search_options.rho,
             ellipsoid_maximize_option.t, ellipsoid_maximize_option.s_degree,
+            state_constraints_, ellipsoid_c_lagrangian_degrees,
             search_options.ellipsoid_step_solver,
             search_options.ellipsoid_step_solver_options,
-            ellipsoid_maximize_option.backoff_scale, d_sol, &s_sol);
+            ellipsoid_maximize_option.backoff_scale, d_sol, &s_sol,
+            &ellipsoid_eq_lagrangian_sol);
       } else if (std::holds_alternative<EllipsoidBisectionOption>(
                      ellipsoid_option)) {
         const EllipsoidBisectionOption ellipsoid_bisection_option =
@@ -460,10 +465,17 @@ void ControlLyapunov::Search(
 
     const bool found_lagrangian = SearchLagrangian(
         *V_sol, search_options.rho, lambda0_degree, l_degrees, p_degrees,
-        deriv_eps, search_options, lambda0_sol, l_sol, p_sol);
+        deriv_eps, search_options, true /* always_write_sol */, lambda0_sol,
+        l_sol, p_sol);
     if (!found_lagrangian) {
-      drake::log()->error("Failed to find Lagrangian in iter {}", iter_count);
-      return;
+      std::cout
+          << "Type 0 to reject the solution, type 1 to accept the solution\n";
+      int accept = 0;
+      std::cin >> accept;
+      if (!accept) {
+        drake::log()->error("Failed to find Lagrangian in iter {}", iter_count);
+        return;
+      }
     }
 
     {
@@ -556,7 +568,8 @@ void ControlLyapunov::Search(
     drake::log()->info("Iteration {}", iter_count);
     const bool found_lagrangian = SearchLagrangian(
         *V_sol, search_options.rho, lambda0_degree, l_degrees, p_degrees,
-        deriv_eps, search_options, lambda0_sol, l_sol, p_sol);
+        deriv_eps, search_options, std::nullopt /* always_write_sol */,
+        lambda0_sol, l_sol, p_sol);
     if (!found_lagrangian) {
       drake::log()->error("Failed to find Lagrangian in iter {}", iter_count);
       search_result_details->bilinear_iteration_status =
@@ -1125,10 +1138,13 @@ ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(
       &(ret.deriv_eps), &(ret.b), &(ret.l));
 
   // Solve a separate program to find the inscribed ellipsoid.
+  // TODO(hongkai.dai): handle state equality constraints.
+  VectorX<symbolic::Polynomial> ellipsoid_eq_lagrangian_sol;
   MaximizeInnerEllipsoidSize(
-      x_, x_star, S, V_init - 1, t_given, s_degree,
-      options.lagrangian_step_solver, options.lagrangian_step_solver_options,
-      options.backoff_scale, &(ret.d), &(ret.ellipsoid_lagrangian));
+      x_, x_star, S, V_init - 1, t_given, s_degree, std::nullopt,
+      std::vector<int>(), options.lagrangian_step_solver,
+      options.lagrangian_step_solver_options, options.backoff_scale, &(ret.d),
+      &(ret.ellipsoid_lagrangian), &ellipsoid_eq_lagrangian_sol);
 
   int iter = 0;
   bool converged = false;
@@ -1156,9 +1172,10 @@ ControlLyapunovBoxInputBound::SearchReturn ControlLyapunovBoxInputBound::Search(
                      options.lsol_tiny_coeff_tol, &(ret.l));
     // Solve a separate program to find the innner ellipsoid.
     MaximizeInnerEllipsoidSize(
-        x_, x_star, S, ret.V - 1, t_given, s_degree,
-        options.lagrangian_step_solver, options.lagrangian_step_solver_options,
-        options.backoff_scale, &d_new, &(ret.ellipsoid_lagrangian));
+        x_, x_star, S, ret.V - 1, t_given, s_degree, std::nullopt,
+        std::vector<int>(), options.lagrangian_step_solver,
+        options.lagrangian_step_solver_options, options.backoff_scale, &d_new,
+        &(ret.ellipsoid_lagrangian), &ellipsoid_eq_lagrangian_sol);
     drake::log()->info("iter: {}, d: {}", iter, d_new);
     if (d_new - ret.d < options.d_converge_tol) {
       converged = true;

@@ -55,7 +55,7 @@ ControlBarrier::ControlBarrier(
     const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
     const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
     std::optional<symbolic::Polynomial> dynamics_denominator,
-    const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+    const Eigen::Ref<const VectorX<symbolic::Variable>>& x, double beta,
     std::vector<VectorX<symbolic::Polynomial>> unsafe_regions,
     const Eigen::Ref<const Eigen::MatrixXd>& u_vertices,
     const Eigen::Ref<const VectorX<symbolic::Polynomial>>& state_eq_constraints)
@@ -64,22 +64,26 @@ ControlBarrier::ControlBarrier(
       dynamics_denominator_{std::move(dynamics_denominator)},
       nx_{static_cast<int>(f_.rows())},
       nu_{static_cast<int>(G_.cols())},
+      beta_{beta},
       x_{x},
       x_set_{x},
       unsafe_regions_{std::move(unsafe_regions)},
       u_vertices_{u_vertices},
       state_eq_constraints_{state_eq_constraints} {
+  DRAKE_DEMAND(beta_ >= 0);
   DRAKE_DEMAND(G_.rows() == nx_);
   DRAKE_DEMAND(u_vertices_.rows() == nu_);
 }
+
 void ControlBarrier::AddControlBarrierConstraint(
     solvers::MathematicalProgram* prog, const symbolic::Polynomial& lambda0,
     const VectorX<symbolic::Polynomial>& l,
     const VectorX<symbolic::Polynomial>& state_constraints_lagrangian,
     const symbolic::Polynomial& h, double deriv_eps,
+    const std::optional<symbolic::Polynomial>& a,
     symbolic::Polynomial* hdot_poly, VectorX<symbolic::Monomial>* monomials,
     MatrixX<symbolic::Variable>* gram) const {
-  *hdot_poly = (1 + lambda0) * (-1 - h);
+  *hdot_poly = (1 + lambda0) * (-beta_ - h);
   const RowVectorX<symbolic::Polynomial> dhdx = h.Jacobian(x_);
   const symbolic::Polynomial dhdx_times_f = dhdx.dot(f_);
   *hdot_poly -=
@@ -90,6 +94,9 @@ void ControlBarrier::AddControlBarrierConstraint(
   DRAKE_DEMAND(state_eq_constraints_.rows() ==
                state_constraints_lagrangian.rows());
   *hdot_poly -= state_constraints_lagrangian.dot(state_eq_constraints_);
+  if (a.has_value()) {
+    *hdot_poly += a.value();
+  }
   std::tie(*gram, *monomials) = prog->AddSosConstraint(
       *hdot_poly, solvers::MathematicalProgram::NonnegativePolynomial::kSos,
       "hd");
@@ -127,9 +134,9 @@ ControlBarrier::ConstructLagrangianProgram(
         prog->NewFreePolynomial(x_set_, state_constraints_lagrangian_degrees[i],
                                 "le" + std::to_string(i));
   }
-  this->AddControlBarrierConstraint(prog.get(), *lambda0, *l,
-                                    *state_constraints_lagrangian, h, deriv_eps,
-                                    hdot_sos, hdot_monomials, hdot_gram);
+  this->AddControlBarrierConstraint(
+      prog.get(), *lambda0, *l, *state_constraints_lagrangian, h, deriv_eps,
+      std::nullopt /* a */, hdot_sos, hdot_monomials, hdot_gram);
   return prog;
 }
 
@@ -197,7 +204,7 @@ ControlBarrier::ConstructBarrierProgram(
   // Add the constraint on hdot.
   this->AddControlBarrierConstraint(
       prog.get(), lambda0, l, hdot_state_constraints_lagrangian, *h, deriv_eps,
-      hdot_sos, &hdot_monomials, hdot_sos_gram);
+      std::nullopt /* a */, hdot_sos, &hdot_monomials, hdot_sos_gram);
   // Add the constraint that the unsafe region has h <= 0
   const int num_unsafe_regions = static_cast<int>(unsafe_regions_.size());
   DRAKE_DEMAND(static_cast<int>(t.size()) == num_unsafe_regions);
@@ -283,13 +290,12 @@ void ControlBarrier::AddBarrierProgramCost(
         x_set_, inner_ellipsoids[i].r_degree,
         solvers::MathematicalProgram::NonnegativePolynomial::kSos, "R");
     DRAKE_DEMAND(
-        static_cast<int>(
-            inner_ellipsoids[i].state_constraints_lagrangian_degrees.size()) ==
+        static_cast<int>(inner_ellipsoids[i].eq_lagrangian_degrees.size()) ==
         state_eq_constraints_.rows());
     (*state_constraints_lagrangian)[i].resize(state_eq_constraints_.rows());
     for (int j = 0; j < state_eq_constraints_.rows(); ++j) {
       (*state_constraints_lagrangian)[i](j) = prog->NewFreePolynomial(
-          x_set_, inner_ellipsoids[i].state_constraints_lagrangian_degrees[j]);
+          x_set_, inner_ellipsoids[i].eq_lagrangian_degrees[j]);
     }
     prog->AddSosConstraint(
         h - (*rho)(i) +
@@ -310,10 +316,12 @@ void ControlBarrier::Search(
     const std::vector<std::vector<int>>& s_degrees,
     const std::vector<std::vector<int>>&
         unsafe_state_constraints_lagrangian_degrees,
-    const std::vector<ControlBarrier::Ellipsoid>& ellipsoids,
     const Eigen::Ref<const Eigen::VectorXd>& x_anchor,
-    const SearchOptions& search_options, symbolic::Polynomial* h_sol,
-    symbolic::Polynomial* lambda0_sol, VectorX<symbolic::Polynomial>* l_sol,
+    const SearchOptions& search_options,
+    std::vector<ControlBarrier::Ellipsoid>* ellipsoids,
+    std::vector<EllipsoidBisectionOption>* ellipsoid_bisection_options,
+    symbolic::Polynomial* h_sol, symbolic::Polynomial* lambda0_sol,
+    VectorX<symbolic::Polynomial>* l_sol,
     VectorX<symbolic::Polynomial>* hdot_state_constraints_lagrangian,
     std::vector<symbolic::Polynomial>* t_sol,
     std::vector<VectorX<symbolic::Polynomial>>* s_sol,
@@ -334,9 +342,10 @@ void ControlBarrier::Search(
 
   int iter_count = 0;
 
-  std::vector<ControlBarrier::Ellipsoid> inner_ellipsoids;
-  std::list<ControlBarrier::Ellipsoid> uncovered_ellipsoids{ellipsoids.begin(),
-                                                            ellipsoids.end()};
+  // inner_ellipsoid_flag[i] is true if and only if the center of ellipsoids[i]
+  // is covered in the safe region h(x) >= 0.
+  std::vector<bool> inner_ellipsoid_flag(ellipsoids->size(), false);
+  DRAKE_DEMAND(ellipsoids->size() == ellipsoid_bisection_options->size());
   while (iter_count < search_options.bilinear_iterations) {
     const bool found_lagrangian = SearchLagrangian(
         *h_sol, deriv_eps, lambda0_degree, l_degrees,
@@ -349,45 +358,31 @@ void ControlBarrier::Search(
     }
 
     // Maximize the inner ellipsoids.
-    drake::log()->info("Find maximal inner ellipsoids");
     // For each inner ellipsoid, compute d.
-    for (auto& ellipsoid : inner_ellipsoids) {
-      double d_sol;
-      symbolic::Polynomial r_sol;
-      VectorX<symbolic::Polynomial> ellipsoid_c_lagrangian_sol;
-      MaximizeInnerEllipsoidSize(
-          x_, ellipsoid.c, ellipsoid.S, -(*h_sol), state_eq_constraints_,
-          ellipsoid.r_degree, ellipsoid.state_constraints_lagrangian_degrees,
-          ellipsoid.d_max, ellipsoid.d, search_options.lagrangian_step_solver,
-          search_options.lagrangian_step_solver_options, ellipsoid.d_tol,
-          &d_sol, &r_sol, &ellipsoid_c_lagrangian_sol);
-      drake::log()->info("d {}", d_sol);
-      ellipsoid.d = d_sol;
-      ellipsoid.d_min = d_sol;
-    }
-    // First determine if the ellipsoid center is within the super-level set
-    // {x|h(x)>=0}, if yes, then find d for the ellipsoid.
-    for (auto it = uncovered_ellipsoids.begin();
-         it != uncovered_ellipsoids.end();) {
-      symbolic::Environment env;
-      env.insert(x_, it->c);
-      if (h_sol->Evaluate(env) > 0) {
+    for (int ellipsoid_idx = 0;
+         ellipsoid_idx < static_cast<int>(ellipsoids->size());
+         ellipsoid_idx++) {
+      auto& ellipsoid = (*ellipsoids)[ellipsoid_idx];
+      if (h_sol->EvaluateIndeterminates(x_, ellipsoid.c)(0) > 0) {
+        inner_ellipsoid_flag[ellipsoid_idx] = true;
         double d_sol;
         symbolic::Polynomial r_sol;
         VectorX<symbolic::Polynomial> ellipsoid_c_lagrangian_sol;
+        auto& ellipsoid_bisection_option =
+            (*ellipsoid_bisection_options)[ellipsoid_idx];
         MaximizeInnerEllipsoidSize(
-            x_, it->c, it->S, -(*h_sol), state_eq_constraints_, it->r_degree,
-            it->state_constraints_lagrangian_degrees, it->d_max, it->d_min,
+            x_, ellipsoid.c, ellipsoid.S, -(*h_sol), state_eq_constraints_,
+            ellipsoid.r_degree, ellipsoid.eq_lagrangian_degrees,
+            ellipsoid_bisection_option.d_max, ellipsoid_bisection_option.d_min,
             search_options.lagrangian_step_solver,
-            search_options.lagrangian_step_solver_options, it->d_tol, &d_sol,
-            &r_sol, &ellipsoid_c_lagrangian_sol);
-        inner_ellipsoids.emplace_back(it->c, it->S, d_sol, d_sol, it->d_max,
-                                      it->d_tol, it->r_degree,
-                                      it->state_constraints_lagrangian_degrees);
+            search_options.lagrangian_step_solver_options,
+            ellipsoid_bisection_option.d_tol, &d_sol, &r_sol,
+            &ellipsoid_c_lagrangian_sol);
         drake::log()->info("d {}", d_sol);
-        it = uncovered_ellipsoids.erase(it);
+        ellipsoid.d = d_sol;
+        ellipsoid_bisection_option.d_min = d_sol;
       } else {
-        ++it;
+        inner_ellipsoid_flag[ellipsoid_idx] = false;
       }
     }
 
@@ -406,11 +401,20 @@ void ControlBarrier::Search(
           deriv_eps, s_degrees, &h, &hdot_sos, &hdot_gram, &s, &s_grams,
           &unsafe_sos_polys, &unsafe_sos_poly_grams);
       std::vector<symbolic::Polynomial> r;
-      VectorX<symbolic::Variable> d;
+      VectorX<symbolic::Variable> rho;
       std::vector<VectorX<symbolic::Polynomial>>
           ellipsoid_state_constraints_lagrangian;
+      std::vector<Ellipsoid> inner_ellipsoids;
+      for (int ellipsoid_idx = 0;
+           ellipsoid_idx < static_cast<int>(ellipsoids->size());
+           ++ellipsoid_idx) {
+        if (inner_ellipsoid_flag[ellipsoid_idx]) {
+          inner_ellipsoids.push_back((*ellipsoids)[ellipsoid_idx]);
+        }
+      }
       this->AddBarrierProgramCost(prog_barrier.get(), h, inner_ellipsoids, &r,
-                                  &d, &ellipsoid_state_constraints_lagrangian);
+                                  &rho,
+                                  &ellipsoid_state_constraints_lagrangian);
       // To prevent scaling h arbitrarily to infinity, we constrain
       // h(x_anchor)
       // <= h_init(x_anchor).
@@ -437,7 +441,8 @@ void ControlBarrier::Search(
           *h_sol = h_sol->RemoveTermsWithSmallCoefficients(
               search_options.hsol_tiny_coeff_tol);
         }
-        drake::log()->info("d: {}", result_barrier.GetSolution(d).transpose());
+        drake::log()->info("min h(x) on ellipsoid: {}",
+                           result_barrier.GetSolution(rho).transpose());
         s_sol->resize(s.size());
         for (int i = 0; i < static_cast<int>(unsafe_regions_.size()); ++i) {
           GetPolynomialSolutions(result_barrier, s[i],

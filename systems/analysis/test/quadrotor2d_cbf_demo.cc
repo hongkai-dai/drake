@@ -70,7 +70,8 @@ int DoMain() {
   // clang-format on
   const VectorX<symbolic::Polynomial> state_constraints(0);
 
-  const ControlBarrier dut(f, G, dynamics_numerator, x, unsafe_regions,
+  const double beta = 1;
+  const ControlBarrier dut(f, G, dynamics_numerator, x, beta, unsafe_regions,
                            u_vertices, state_constraints);
 
   // Construct h_init;
@@ -86,9 +87,12 @@ int DoMain() {
   const std::vector<std::vector<int>>
       unsafe_state_constraints_lagrangian_degrees{{}, {}};
   std::vector<ControlBarrier::Ellipsoid> ellipsoids;
+  std::vector<ControlBarrier::EllipsoidBisectionOption>
+      ellipsoid_bisection_options;
   ellipsoids.emplace_back(
-      Vector6d::Zero(), Matrix6<double>::Identity(), 0., 0., 2, 0.001, 0,
+      Vector6d::Zero(), Matrix6<double>::Identity(), 0., 0,
       std::vector<int>() /* state_constraints_lagrangian_degree */);
+  ellipsoid_bisection_options.emplace_back(0, 2, 0.001);
   const Vector6d x_anchor = Vector6d::Zero();
   ControlBarrier::SearchOptions search_options;
   search_options.hsol_tiny_coeff_tol = 1E-8;
@@ -105,10 +109,10 @@ int DoMain() {
       unsafe_state_constraints_lagrangian_sol;
   dut.Search(h_init, h_degree, deriv_eps, lambda0_degree, l_degrees,
              hdot_state_constraints_lagrangian_degrees, t_degree, s_degrees,
-             unsafe_state_constraints_lagrangian_degrees, ellipsoids, x_anchor,
-             search_options, &h_sol, &lambda0_sol, &l_sol,
-             &hdot_state_constraints_lagrangian_sol, &t_sol, &s_sol,
-             &unsafe_state_constraints_lagrangian_sol);
+             unsafe_state_constraints_lagrangian_degrees, x_anchor,
+             search_options, &ellipsoids, &ellipsoid_bisection_options, &h_sol,
+             &lambda0_sol, &l_sol, &hdot_state_constraints_lagrangian_sol,
+             &t_sol, &s_sol, &unsafe_state_constraints_lagrangian_sol);
   std::cout << "h_sol: " << h_sol << "\n";
   return 0;
 }

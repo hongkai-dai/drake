@@ -104,8 +104,9 @@ TEST_F(SimpleLinearSystemTest, ControlBarrier) {
   // clang-format on
   u_vertices *= 10;
   const VectorX<symbolic::Polynomial> state_constraints(0);
-  const ControlBarrier dut(f_, G_, std::nullopt, x_, unsafe_regions, u_vertices,
-                           state_constraints);
+  const double beta = 1;
+  const ControlBarrier dut(f_, G_, std::nullopt, x_, beta, unsafe_regions,
+                           u_vertices, state_constraints);
 
   const symbolic::Polynomial h_init(1 - x_(0) * x_(0) - x_(1) * x_(1));
   const double deriv_eps = 0.1;
@@ -250,12 +251,16 @@ TEST_F(SimpleLinearSystemTest, ControlBarrier) {
     // Add cost to maximize min(h(x)) within some ellipsoids.
     auto prog_cost2 = prog_barrier->Clone();
     std::vector<ControlBarrier::Ellipsoid> ellipsoids;
+    std::vector<ControlBarrier::EllipsoidBisectionOption>
+        ellipsoid_bisection_options;
     ellipsoids.emplace_back(Eigen::Vector2d(0.1, 0.5),
-                            Eigen::Matrix2d::Identity(), 0.5, 0.1, 1, 0.1, 0,
+                            Eigen::Matrix2d::Identity(), 0.5, 0,
                             std::vector<int>());
+    ellipsoid_bisection_options.emplace_back(0.1, 1, 0.1);
     ellipsoids.emplace_back(Eigen::Vector2d(0.1, -0.5),
-                            Eigen::Matrix2d::Identity(), 0.3, 0.1, 1, 0.1, 0,
+                            Eigen::Matrix2d::Identity(), 0.3, 0,
                             std::vector<int>());
+    ellipsoid_bisection_options.emplace_back(0.1, 1, 0.1);
     std::vector<symbolic::Polynomial> r;
     VectorX<symbolic::Variable> rho;
     std::vector<VectorX<symbolic::Polynomial>>
@@ -297,8 +302,9 @@ TEST_F(SimpleLinearSystemTest, ControlBarrierSearch) {
   // clang-format on
   u_vertices *= 10;
   const VectorX<symbolic::Polynomial> state_constraints(0);
-  const ControlBarrier dut(f_, G_, std::nullopt, x_, unsafe_regions, u_vertices,
-                           state_constraints);
+  const double beta = 1;
+  const ControlBarrier dut(f_, G_, std::nullopt, x_, beta, unsafe_regions,
+                           u_vertices, state_constraints);
 
   const symbolic::Polynomial h_init(1 - x_(0) * x_(0) - x_(1) * x_(1));
   const int h_degree = 2;
@@ -312,15 +318,20 @@ TEST_F(SimpleLinearSystemTest, ControlBarrierSearch) {
       unsafe_state_constraints_lagrangian_degrees = {{}};
 
   std::vector<ControlBarrier::Ellipsoid> ellipsoids;
+  std::vector<ControlBarrier::EllipsoidBisectionOption>
+      ellipsoid_bisection_options;
   ellipsoids.emplace_back(Eigen::Vector2d(0.1, 0.2),
-                          Eigen::Matrix2d::Identity(), 0, 0, 2, 0.001, 0,
+                          Eigen::Matrix2d::Identity(), 0, 0,
                           std::vector<int>());
+  ellipsoid_bisection_options.emplace_back(0, 2, 0.01);
   ellipsoids.emplace_back(Eigen::Vector2d(0.5, -0.9),
-                          Eigen::Matrix2d::Identity(), 0, 0, 2, 0.001, 0,
+                          Eigen::Matrix2d::Identity(), 0, 0,
                           std::vector<int>());
+  ellipsoid_bisection_options.emplace_back(0, 2, 0.01);
   ellipsoids.emplace_back(Eigen::Vector2d(0.5, -1.9),
-                          Eigen::Matrix2d::Identity(), 0, 0, 2, 0.01, 0,
+                          Eigen::Matrix2d::Identity(), 0, 0,
                           std::vector<int>());
+  ellipsoid_bisection_options.emplace_back(0, 2, 0.01);
   const Eigen::Vector2d x_anchor(0.3, 0.5);
 
   ControlBarrier::SearchOptions search_options;
@@ -343,10 +354,10 @@ TEST_F(SimpleLinearSystemTest, ControlBarrierSearch) {
 
   dut.Search(h_init, h_degree, deriv_eps, lambda0_degree, l_degrees,
              hdot_state_constraints_lagrangian_degrees, t_degree, s_degrees,
-             unsafe_state_constraints_lagrangian_degrees, ellipsoids, x_anchor,
-             search_options, &h_sol, &lambda0_sol, &l_sol,
-             &hdot_state_constraints_lagrangian, &t_sol, &s_sol,
-             &unsafe_state_constraints_lagrangian);
+             unsafe_state_constraints_lagrangian_degrees, x_anchor,
+             search_options, &ellipsoids, &ellipsoid_bisection_options, &h_sol,
+             &lambda0_sol, &l_sol, &hdot_state_constraints_lagrangian, &t_sol,
+             &s_sol, &unsafe_state_constraints_lagrangian);
 }
 
 TEST_F(SimpleLinearSystemTest, ConstructLagrangianAndBProgram) {

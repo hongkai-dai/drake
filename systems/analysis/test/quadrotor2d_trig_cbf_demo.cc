@@ -80,7 +80,8 @@ symbolic::Polynomial FindCbfInit(
     const Eigen::Matrix<symbolic::Variable, 7, 1>& x, double thrust_max,
     double deriv_eps,
     const std::vector<VectorX<symbolic::Polynomial>>& unsafe_regions,
-    const Eigen::MatrixXd& x_safe) {
+    const Eigen::MatrixXd& x_safe,
+    const std::optional<std::string>& load_cbf_file) {
   Eigen::Matrix<symbolic::Polynomial, 7, 1> f;
   Eigen::Matrix<symbolic::Polynomial, 7, 2> G;
   TrigPolyDynamics(quadrotor, x, &f, &G);
@@ -93,19 +94,26 @@ symbolic::Polynomial FindCbfInit(
 
   const std::optional<symbolic::Polynomial> dynamics_denominator = std::nullopt;
 
-  const double beta = 0.0;
+  const double beta = 0.1;
   const ControlBarrier dut(f, G, dynamics_denominator, x, beta, unsafe_regions,
                            u_vertices, state_constraints);
 
   // Set h_init to some values, it should satisfy h_init(x_safe) >= 0.
-  const int h_degree = 2;
+  const int h_degree = 4;
   const symbolic::Variables x_set(x);
   // symbolic::Polynomial h_init = FindCbfInit(x, h_degree);
-  symbolic::Polynomial h_init{1 - x.cast<symbolic::Expression>().dot(x)};
-  // symbolic::Polynomial h_init =
-  //    Load(x_set, "sos_data/quadrotor2d_trig_cbf1.txt");
+  symbolic::Polynomial h_init;
+  if (load_cbf_file.has_value()) {
+    h_init = Load(x_set, load_cbf_file.value());
+  } else {
+    const VectorX<symbolic::Monomial> h_monomials =
+        ComputeMonomialBasisNoConstant(x_set, h_degree / 2,
+                                       symbolic::internal::DegreeType::kAny);
+    h_init = symbolic::Polynomial(1 - h_monomials.dot(h_monomials));
+  }
   const Eigen::VectorXd h_init_x_safe =
       h_init.EvaluateIndeterminates(x, x_safe);
+  std::cout << "h_init(x_safe): " << h_init_x_safe.transpose() << "\n";
   if ((h_init_x_safe.array() < 0).any()) {
     h_init -= h_init_x_safe.minCoeff();
     h_init += 0.1;
@@ -113,8 +121,8 @@ symbolic::Polynomial FindCbfInit(
 
   const int lambda0_degree = 4;
   const std::vector<int> l_degrees = {2, 2, 2, 2};
-  const std::vector<int> hdot_eq_lagrangian_degrees = {h_degree - 1};
-  const int hdot_a_degree = 6;
+  const std::vector<int> hdot_eq_lagrangian_degrees = {6};
+  const int hdot_a_degree = 8;
 
   const std::vector<int> t_degrees = {0, 0};
   const std::vector<std::vector<int>> s_degrees = {{h_degree - 2},
@@ -128,7 +136,7 @@ symbolic::Polynomial FindCbfInit(
   symbolic::Polynomial lambda0_sol;
   VectorX<symbolic::Polynomial> l_sol;
   int iter_count = 0;
-  const int iter_max = 100;
+  const int iter_max = 40;
   const double a_is_zero_tol = 1E-8;
   bool hdot_a_is_zero = false;
   std::vector<bool> unsafe_a_is_zero(unsafe_regions.size(), false);
@@ -167,8 +175,7 @@ symbolic::Polynomial FindCbfInit(
         prog.AddLinearCost(a_gram->cast<symbolic::Expression>().trace());
       }
       solvers::SolverOptions solver_options;
-      // solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole,
-      // 1);
+      solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
       const auto result = solvers::Solve(prog, std::nullopt, solver_options);
       if (result.is_success()) {
         lambda0_sol = result.GetSolution(lambda0);
@@ -468,17 +475,21 @@ int DoMain() {
   unsafe_regions[1].resize(1);
   unsafe_regions[1](0) = symbolic::Polynomial(0.5 - x(1));
 
-  Eigen::MatrixXd safe_states(6, 2);
+  Eigen::MatrixXd safe_states(6, 4);
   safe_states.col(0) << 0, 0, 0, 0, 0, 0;
   safe_states.col(1) << 0, 0.2, 0, 0, 0, 0;
+  safe_states.col(2) << 0, -0.2, 0, 0, 0, 0;
+  safe_states.col(3) << 0, 0.45, 0.1, 0, 0, 0;
   Eigen::MatrixXd x_safe(7, safe_states.cols());
   for (int i = 0; i < safe_states.cols(); ++i) {
     x_safe.col(i) = ToTrigState<double>(safe_states.col(i));
   }
 
-  const symbolic::Polynomial h_sol =
-      SearchWithSlackA(plant, x, thrust_max, deriv_eps, unsafe_regions, x_safe);
-  Save(h_sol, "sos_data/quadrotor2d_trig_cbf1.txt");
+  std::optional<std::string> load_cbf_file = std::nullopt;
+  load_cbf_file = "sos_data/quadrotor2d_trig_cbf4.txt";
+  const symbolic::Polynomial h_sol = SearchWithSlackA(
+      plant, x, thrust_max, deriv_eps, unsafe_regions, x_safe, load_cbf_file);
+  Save(h_sol, "sos_data/quadrotor2d_trig_cbf5.txt");
 
   // const symbolic::Polynomial h_sol = Search(plant, x, thrust_max, deriv_eps,
   // unsafe_regions);

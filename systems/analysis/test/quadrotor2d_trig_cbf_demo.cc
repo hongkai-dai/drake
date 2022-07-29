@@ -129,7 +129,8 @@ void Simulate(const Eigen::Matrix<symbolic::Variable, 7, 1>& x,
   std::cout << "z_min: " << state_data.row(1).minCoeff() << "\n";
   std::cout << "z_max: " << state_data.row(1).maxCoeff() << "\n";
 
-  const Eigen::RowVectorXd cbf_data = cbf_logger->FindLog(simulator.get_context()).data().row(0);
+  const Eigen::RowVectorXd cbf_data =
+      cbf_logger->FindLog(simulator.get_context()).data().row(0);
   std::cout << "cbf min: " << cbf_data.minCoeff() << "\n";
 
   unused(control_logger);
@@ -215,9 +216,10 @@ symbolic::Polynomial FindCbfInit(
 
   const std::optional<symbolic::Polynomial> dynamics_denominator = std::nullopt;
 
-  const double beta = 0.1;
-  const ControlBarrier dut(f, G, dynamics_denominator, x, beta, unsafe_regions,
-                           u_vertices, state_constraints);
+  const double beta_minus = -0.1;
+  const std::optional<double> beta_plus = std::nullopt;
+  const ControlBarrier dut(f, G, dynamics_denominator, x, beta_minus, beta_plus,
+                           unsafe_regions, u_vertices, state_constraints);
 
   // Set h_init to some values, it should satisfy h_init(x_safe) >= 0.
   const int h_degree = 4;
@@ -241,6 +243,7 @@ symbolic::Polynomial FindCbfInit(
   }
 
   const int lambda0_degree = 4;
+  const std::optional<int> lambda1_degree = std::nullopt;
   const std::vector<int> l_degrees = {2, 2, 2, 2};
   const std::vector<int> hdot_eq_lagrangian_degrees = {6};
   const int hdot_a_degree = 8;
@@ -255,6 +258,7 @@ symbolic::Polynomial FindCbfInit(
   symbolic::Polynomial h_sol = h_init;
 
   symbolic::Polynomial lambda0_sol;
+  std::optional<symbolic::Polynomial> lambda1_sol;
   VectorX<symbolic::Polynomial> l_sol;
   int iter_count = 0;
   const int iter_max = 40;
@@ -270,6 +274,7 @@ symbolic::Polynomial FindCbfInit(
       symbolic::Polynomial lambda0;
       std::tie(lambda0, std::ignore) =
           prog.NewSosPolynomial(x_set, lambda0_degree);
+      std::optional<symbolic::Polynomial> lambda1;
       VectorX<symbolic::Polynomial> l(4);
       for (int i = 0; i < 4; ++i) {
         std::tie(l(i), std::ignore) =
@@ -288,9 +293,9 @@ symbolic::Polynomial FindCbfInit(
       symbolic::Polynomial hdot_sos;
       VectorX<symbolic::Monomial> hdot_monomials;
       MatrixX<symbolic::Variable> hdot_gram;
-      dut.AddControlBarrierConstraint(&prog, lambda0, l, hdot_eq_lagrangians,
-                                      h_sol, deriv_eps, a, &hdot_sos,
-                                      &hdot_monomials, &hdot_gram);
+      dut.AddControlBarrierConstraint(&prog, lambda0, lambda1, l,
+                                      hdot_eq_lagrangians, h_sol, deriv_eps, a,
+                                      &hdot_sos, &hdot_monomials, &hdot_gram);
       if (a_gram.has_value()) {
         // Add the cost to minimize the trace of a_gram;
         prog.AddLinearCost(a_gram->cast<symbolic::Expression>().trace());
@@ -392,8 +397,8 @@ symbolic::Polynomial FindCbfInit(
       VectorX<symbolic::Monomial> hdot_monomials;
       MatrixX<symbolic::Variable> hdot_sos_gram;
       dut.AddControlBarrierConstraint(
-          &prog, lambda0_sol, l_sol, hdot_eq_lagrangian, h, deriv_eps, hdot_a,
-          &hdot_sos, &hdot_monomials, &hdot_sos_gram);
+          &prog, lambda0_sol, lambda1_sol, l_sol, hdot_eq_lagrangian, h,
+          deriv_eps, hdot_a, &hdot_sos, &hdot_monomials, &hdot_sos_gram);
       if (hdot_a_gram.has_value()) {
         prog.AddLinearCost(hdot_a_gram->cast<symbolic::Expression>().trace());
       }
@@ -485,16 +490,11 @@ symbolic::Polynomial FindCbfInit(
   search_options.lagrangian_step_solver_options = solvers::SolverOptions();
   search_options.lagrangian_step_solver_options->SetOption(
       solvers::CommonSolverOption::kPrintToConsole, 1);
-  VectorX<symbolic::Polynomial> hdot_eq_lagrangian_sol;
-  std::vector<symbolic::Polynomial> t_sol;
-  std::vector<VectorX<symbolic::Polynomial>> s_sol;
-  std::vector<VectorX<symbolic::Polynomial>> unsafe_eq_lagrangian_sol;
-  bool is_h_valid = dut.SearchLagrangian(
-      h_sol, deriv_eps, lambda0_degree, l_degrees, hdot_eq_lagrangian_degrees,
-      t_degrees, s_degrees, unsafe_eq_lagrangian_degrees, search_options,
-      &lambda0_sol, &l_sol, &hdot_eq_lagrangian_sol, &t_sol, &s_sol,
-      &unsafe_eq_lagrangian_sol);
-  drake::log()->info("h_sol is valid? {}", is_h_valid);
+  const auto search_lagrangian_ret = dut.SearchLagrangian(
+      h_sol, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
+      hdot_eq_lagrangian_degrees, t_degrees, s_degrees,
+      unsafe_eq_lagrangian_degrees, search_options);
+  drake::log()->info("h_sol is valid? {}", search_lagrangian_ret.success);
   return h_sol;
 }
 
@@ -515,13 +515,15 @@ symbolic::Polynomial FindCbfInit(
 
   const std::optional<symbolic::Polynomial> dynamics_denominator = std::nullopt;
 
-  const double beta = 1;
-  const ControlBarrier dut(f, G, dynamics_denominator, x, beta, unsafe_regions,
-                           u_vertices, state_constraints);
+  const double beta_minus = -1;
+  const std::optional<double> beta_plus = std::nullopt;
+  const ControlBarrier dut(f, G, dynamics_denominator, x, beta_minus, beta_plus,
+                           unsafe_regions, u_vertices, state_constraints);
 
   const int h_degree = 2;
   symbolic::Polynomial h_init = FindCbfInit(x, h_degree);
   const int lambda0_degree = 4;
+  const std::optional<int> lambda1_degree = std::nullopt;
   const std::vector<int> l_degrees = {2, 2, 2, 2};
   const std::vector<int> hdot_eq_lagrangian_degrees{h_degree - 1};
   const std::vector<int> t_degree = {0, 0};
@@ -548,21 +550,12 @@ symbolic::Polynomial FindCbfInit(
   search_options.barrier_step_solver_options = solvers::SolverOptions();
   search_options.barrier_step_solver_options->SetOption(
       solvers::CommonSolverOption::kPrintToConsole, 1);
-  symbolic::Polynomial h_sol;
-  symbolic::Polynomial lambda0_sol;
-  VectorX<symbolic::Polynomial> l_sol;
-  VectorX<symbolic::Polynomial> hdot_state_constraints_lagrangian_sol;
-  std::vector<symbolic::Polynomial> t_sol;
-  std::vector<VectorX<symbolic::Polynomial>> s_sol;
-  std::vector<VectorX<symbolic::Polynomial>>
-      unsafe_state_constraints_lagrangian_sol;
-  dut.Search(h_init, h_degree, deriv_eps, lambda0_degree, l_degrees,
-             hdot_eq_lagrangian_degrees, t_degree, s_degrees,
-             unsafe_state_constraints_lagrangian_degrees, x_anchor,
-             search_options, &ellipsoids, &ellipsoid_bisection_options, &h_sol,
-             &lambda0_sol, &l_sol, &hdot_state_constraints_lagrangian_sol,
-             &t_sol, &s_sol, &unsafe_state_constraints_lagrangian_sol);
-  std::cout << "h_sol: " << h_sol << "\n";
+  const auto search_ret =
+      dut.Search(h_init, h_degree, deriv_eps, lambda0_degree, lambda1_degree,
+                 l_degrees, hdot_eq_lagrangian_degrees, t_degree, s_degrees,
+                 unsafe_state_constraints_lagrangian_degrees, x_anchor,
+                 search_options, &ellipsoids, &ellipsoid_bisection_options);
+  std::cout << "h_sol: " << search_ret.h << "\n";
 
   Eigen::Matrix<double, 6, Eigen::Dynamic> state_samples(6, 5);
   state_samples.col(0) << 0.2, 0.2, 0, 0, 0, 0;
@@ -575,9 +568,10 @@ symbolic::Polynomial FindCbfInit(
     x_samples.col(i) = ToTrigState<double>(state_samples.col(i));
   }
   std::cout << "h at samples: "
-            << h_sol.EvaluateIndeterminates(x, x_samples).transpose() << "\n";
+            << search_ret.h.EvaluateIndeterminates(x, x_samples).transpose()
+            << "\n";
 
-  return h_sol;
+  return search_ret.h;
 }
 
 int DoMain() {
@@ -608,15 +602,14 @@ int DoMain() {
 
   std::optional<std::string> load_cbf_file = std::nullopt;
   load_cbf_file = "sos_data/quadrotor2d_trig_cbf4.txt";
-  symbolic::Polynomial h_sol = Load(symbolic::Variables(x), *load_cbf_file);
-  //const symbolic::Polynomial h_sol = SearchWithSlackA(
-  //    plant, x, thrust_max, deriv_eps, unsafe_regions, x_safe, load_cbf_file);
-  //Save(h_sol, "sos_data/quadrotor2d_trig_cbf5.txt");
+  const symbolic::Polynomial h_sol = SearchWithSlackA(
+      plant, x, thrust_max, deriv_eps, unsafe_regions, x_safe, load_cbf_file);
+  // Save(h_sol, "sos_data/quadrotor2d_trig_cbf5.txt");
 
-  Simulate(x, h_sol, thrust_max, deriv_eps, Vector6d::Zero(), 10);
+  // Simulate(x, h_sol, thrust_max, deriv_eps, Vector6d::Zero(), 10);
 
-  // const symbolic::Polynomial h_sol = Search(plant, x, thrust_max, deriv_eps,
-  // unsafe_regions);
+  // const symbolic::Polynomial h_sol =
+  //    Search(plant, x, thrust_max, deriv_eps, unsafe_regions);
   return 0;
 }
 }  // namespace analysis

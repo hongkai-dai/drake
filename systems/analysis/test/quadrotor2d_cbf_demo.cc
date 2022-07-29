@@ -70,9 +70,10 @@ int DoMain() {
   // clang-format on
   const VectorX<symbolic::Polynomial> state_constraints(0);
 
-  const double beta = 1;
-  const ControlBarrier dut(f, G, dynamics_numerator, x, beta, unsafe_regions,
-                           u_vertices, state_constraints);
+  const double beta_minus = -1;
+  const std::optional<double> beta_plus = std::nullopt;
+  const ControlBarrier dut(f, G, dynamics_numerator, x, beta_minus, beta_plus,
+                           unsafe_regions, u_vertices, state_constraints);
 
   // Construct h_init;
   const symbolic::Polynomial h_init(
@@ -80,6 +81,7 @@ int DoMain() {
   const int h_degree = 2;
   const double deriv_eps = 0.1;
   const int lambda0_degree = 4;
+  const std::optional<int> lambda1_degree = std::nullopt;
   const std::vector<int> l_degrees = {2, 2, 2, 2};
   const std::vector<int> hdot_state_constraints_lagrangian_degrees{};
   const std::vector<int> t_degree = {0, 0};
@@ -107,13 +109,12 @@ int DoMain() {
   std::vector<VectorX<symbolic::Polynomial>> s_sol;
   std::vector<VectorX<symbolic::Polynomial>>
       unsafe_state_constraints_lagrangian_sol;
-  dut.Search(h_init, h_degree, deriv_eps, lambda0_degree, l_degrees,
-             hdot_state_constraints_lagrangian_degrees, t_degree, s_degrees,
-             unsafe_state_constraints_lagrangian_degrees, x_anchor,
-             search_options, &ellipsoids, &ellipsoid_bisection_options, &h_sol,
-             &lambda0_sol, &l_sol, &hdot_state_constraints_lagrangian_sol,
-             &t_sol, &s_sol, &unsafe_state_constraints_lagrangian_sol);
-  std::cout << "h_sol: " << h_sol << "\n";
+  const auto search_ret = dut.Search(
+      h_init, h_degree, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
+      hdot_state_constraints_lagrangian_degrees, t_degree, s_degrees,
+      unsafe_state_constraints_lagrangian_degrees, x_anchor, search_options,
+      &ellipsoids, &ellipsoid_bisection_options);
+  std::cout << "h_sol: " << search_ret.h << "\n";
   return 0;
 }
 }  // namespace analysis

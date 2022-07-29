@@ -104,17 +104,19 @@ TEST_F(SimpleLinearSystemTest, ControlBarrier) {
   // clang-format on
   u_vertices *= 10;
   const VectorX<symbolic::Polynomial> state_constraints(0);
-  const double beta = 1;
-  const ControlBarrier dut(f_, G_, std::nullopt, x_, beta, unsafe_regions,
-                           u_vertices, state_constraints);
+  const double beta_minus = -1;
+  const double beta_plus = 2;
+  const ControlBarrier dut(f_, G_, std::nullopt, x_, beta_minus, beta_plus,
+                           unsafe_regions, u_vertices, state_constraints);
 
   const symbolic::Polynomial h_init(1 - x_(0) * x_(0) - x_(1) * x_(1));
   const double deriv_eps = 0.1;
   const int lambda0_degree = 2;
+  const int lambda1_degree = 2;
   const std::vector<int> l_degrees = {2, 2, 2, 2};
   const std::vector<int> state_constraints_lagrangian_degrees{};
   auto lagrangian_ret = dut.ConstructLagrangianProgram(
-      h_init, deriv_eps, lambda0_degree, l_degrees,
+      h_init, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
       state_constraints_lagrangian_degrees);
   auto result_lagrangian = solvers::Solve(*(lagrangian_ret.prog));
   ASSERT_TRUE(result_lagrangian.is_success());
@@ -123,7 +125,11 @@ TEST_F(SimpleLinearSystemTest, ControlBarrier) {
   EXPECT_TRUE(math::IsPositiveDefinite(lambda0_gram_sol));
   symbolic::Polynomial lambda0_sol =
       result_lagrangian.GetSolution(lagrangian_ret.lambda0);
-  symbolic::Polynomial hdot_sos_expected = (1 + lambda0_sol) * (-1 - h_init);
+  symbolic::Polynomial lambda1_sol =
+      result_lagrangian.GetSolution(*(lagrangian_ret.lambda1));
+  symbolic::Polynomial hdot_sos_expected =
+      (1 + lambda0_sol) * (beta_minus - h_init) -
+      lambda1_sol * (beta_plus - h_init);
   VectorX<symbolic::Polynomial> l_sol(u_vertices.cols());
   RowVectorX<symbolic::Polynomial> dhdx = h_init.Jacobian(x_);
   for (int i = 0; i < u_vertices.cols(); ++i) {
@@ -181,7 +187,8 @@ TEST_F(SimpleLinearSystemTest, ControlBarrier) {
   lambda0_sol = lambda0_sol.RemoveTermsWithSmallCoefficients(1e-10);
   const double eps = 1E-3;
   auto barrier_ret = dut.ConstructBarrierProgram(
-      lambda0_sol, l_sol, hdot_state_constraints_lagrangian_degrees, {t_sol},
+      lambda0_sol, lambda1_sol, l_sol,
+      hdot_state_constraints_lagrangian_degrees, {t_sol},
       {unsafe_state_constraints_lagrangian_degrees}, h_degree, deriv_eps,
       {s_degrees});
   RemoveTinyCoeff(barrier_ret.prog.get(), 1E-10);
@@ -286,14 +293,16 @@ TEST_F(SimpleLinearSystemTest, ControlBarrierSearch) {
   // clang-format on
   u_vertices *= 10;
   const VectorX<symbolic::Polynomial> state_constraints(0);
-  const double beta = 1;
-  const ControlBarrier dut(f_, G_, std::nullopt, x_, beta, unsafe_regions,
-                           u_vertices, state_constraints);
+  const double beta_minus = -1;
+  const double beta_plus = 10;
+  const ControlBarrier dut(f_, G_, std::nullopt, x_, beta_minus, beta_plus,
+                           unsafe_regions, u_vertices, state_constraints);
 
   const symbolic::Polynomial h_init(1 - x_(0) * x_(0) - x_(1) * x_(1));
   const int h_degree = 2;
   const double deriv_eps = 0.1;
   const int lambda0_degree = 2;
+  const int lambda1_degree = 2;
   const std::vector<int> l_degrees = {2, 2, 2, 2};
   const std::vector<int> hdot_state_constraints_lagrangian_degrees{};
   const std::vector<int> t_degree = {0};
@@ -329,6 +338,7 @@ TEST_F(SimpleLinearSystemTest, ControlBarrierSearch) {
 
   symbolic::Polynomial h_sol;
   symbolic::Polynomial lambda0_sol;
+  symbolic::Polynomial lambda1_sol;
   VectorX<symbolic::Polynomial> l_sol;
   VectorX<symbolic::Polynomial> hdot_state_constraints_lagrangian;
   std::vector<symbolic::Polynomial> t_sol;
@@ -336,12 +346,11 @@ TEST_F(SimpleLinearSystemTest, ControlBarrierSearch) {
   std::vector<VectorX<symbolic::Polynomial>>
       unsafe_state_constraints_lagrangian;
 
-  dut.Search(h_init, h_degree, deriv_eps, lambda0_degree, l_degrees,
-             hdot_state_constraints_lagrangian_degrees, t_degree, s_degrees,
-             unsafe_state_constraints_lagrangian_degrees, x_anchor,
-             search_options, &ellipsoids, &ellipsoid_bisection_options, &h_sol,
-             &lambda0_sol, &l_sol, &hdot_state_constraints_lagrangian, &t_sol,
-             &s_sol, &unsafe_state_constraints_lagrangian);
+  const auto search_ret = dut.Search(
+      h_init, h_degree, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
+      hdot_state_constraints_lagrangian_degrees, t_degree, s_degrees,
+      unsafe_state_constraints_lagrangian_degrees, x_anchor, search_options,
+      &ellipsoids, &ellipsoid_bisection_options);
 }
 
 TEST_F(SimpleLinearSystemTest, ConstructLagrangianAndBProgram) {

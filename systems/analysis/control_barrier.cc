@@ -55,7 +55,8 @@ ControlBarrier::ControlBarrier(
     const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
     const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
     std::optional<symbolic::Polynomial> dynamics_denominator,
-    const Eigen::Ref<const VectorX<symbolic::Variable>>& x, double beta,
+    const Eigen::Ref<const VectorX<symbolic::Variable>>& x, double beta_minus,
+    std::optional<double> beta_plus,
     std::vector<VectorX<symbolic::Polynomial>> unsafe_regions,
     const Eigen::Ref<const Eigen::MatrixXd>& u_vertices,
     const Eigen::Ref<const VectorX<symbolic::Polynomial>>& state_eq_constraints)
@@ -64,26 +65,31 @@ ControlBarrier::ControlBarrier(
       dynamics_denominator_{std::move(dynamics_denominator)},
       nx_{static_cast<int>(f_.rows())},
       nu_{static_cast<int>(G_.cols())},
-      beta_{beta},
+      beta_minus_{beta_minus},
+      beta_plus_{beta_plus},
       x_{x},
       x_set_{x},
       unsafe_regions_{std::move(unsafe_regions)},
       u_vertices_{u_vertices},
       state_eq_constraints_{state_eq_constraints} {
-  DRAKE_DEMAND(beta_ >= 0);
+  DRAKE_DEMAND(beta_minus_ <= 0);
+  if (beta_plus_.has_value()) {
+    DRAKE_DEMAND(*beta_plus_ > 0);
+  }
   DRAKE_DEMAND(G_.rows() == nx_);
   DRAKE_DEMAND(u_vertices_.rows() == nu_);
 }
 
 void ControlBarrier::AddControlBarrierConstraint(
     solvers::MathematicalProgram* prog, const symbolic::Polynomial& lambda0,
+    const std::optional<symbolic::Polynomial>& lambda1,
     const VectorX<symbolic::Polynomial>& l,
     const VectorX<symbolic::Polynomial>& state_constraints_lagrangian,
     const symbolic::Polynomial& h, double deriv_eps,
     const std::optional<symbolic::Polynomial>& a,
     symbolic::Polynomial* hdot_poly, VectorX<symbolic::Monomial>* monomials,
     MatrixX<symbolic::Variable>* gram) const {
-  *hdot_poly = (1 + lambda0) * (-beta_ - h);
+  *hdot_poly = (1 + lambda0) * (beta_minus_ - h);
   const RowVectorX<symbolic::Polynomial> dhdx = h.Jacobian(x_);
   const symbolic::Polynomial dhdx_times_f = dhdx.dot(f_);
   *hdot_poly -=
@@ -91,6 +97,9 @@ void ControlBarrier::AddControlBarrierConstraint(
       (-dhdx_times_f -
        deriv_eps * h * dynamics_denominator_.value_or(symbolic::Polynomial(1)));
   *hdot_poly += (dhdx * G_ * u_vertices_).dot(l);
+  if (beta_plus_.has_value()) {
+    *hdot_poly -= *lambda1 * (*beta_plus_ - h);
+  }
   DRAKE_DEMAND(state_eq_constraints_.rows() ==
                state_constraints_lagrangian.rows());
   *hdot_poly -= state_constraints_lagrangian.dot(state_eq_constraints_);
@@ -104,7 +113,7 @@ void ControlBarrier::AddControlBarrierConstraint(
 
 ControlBarrier::LagrangianReturn ControlBarrier::ConstructLagrangianProgram(
     const symbolic::Polynomial& h, double deriv_eps, int lambda0_degree,
-    const std::vector<int>& l_degrees,
+    std::optional<int> lambda1_degree, const std::vector<int>& l_degrees,
     const std::vector<int>& state_constraints_lagrangian_degrees) const {
   DRAKE_DEMAND(static_cast<int>(l_degrees.size()) == u_vertices_.cols());
   LagrangianReturn ret{};
@@ -112,6 +121,12 @@ ControlBarrier::LagrangianReturn ControlBarrier::ConstructLagrangianProgram(
   // Now construct Lagrangian multipliers.
   std::tie(ret.lambda0, ret.lambda0_gram) =
       ret.prog->NewSosPolynomial(x_set_, lambda0_degree);
+  if (beta_plus_.has_value()) {
+    ret.lambda1.emplace(symbolic::Polynomial());
+    ret.lambda1_gram.emplace(MatrixX<symbolic::Variable>());
+    std::tie(*(ret.lambda1), *(ret.lambda1_gram)) =
+        ret.prog->NewSosPolynomial(x_set_, *lambda1_degree);
+  }
   const int num_u_vertices = u_vertices_.cols();
   ret.l.resize(num_u_vertices);
   ret.l_grams.resize(num_u_vertices);
@@ -128,9 +143,9 @@ ControlBarrier::LagrangianReturn ControlBarrier::ConstructLagrangianProgram(
         "le" + std::to_string(i));
   }
   this->AddControlBarrierConstraint(
-      ret.prog.get(), ret.lambda0, ret.l, ret.state_constraints_lagrangian, h,
-      deriv_eps, std::nullopt /* a */, &(ret.hdot_sos), &(ret.hdot_monomials),
-      &(ret.hdot_gram));
+      ret.prog.get(), ret.lambda0, ret.lambda1, ret.l,
+      ret.state_constraints_lagrangian, h, deriv_eps, std::nullopt /* a */,
+      &(ret.hdot_sos), &(ret.hdot_monomials), &(ret.hdot_gram));
   return ret;
 }
 
@@ -166,7 +181,9 @@ ControlBarrier::UnsafeReturn ControlBarrier::ConstructUnsafeRegionProgram(
 }
 
 ControlBarrier::BarrierReturn ControlBarrier::ConstructBarrierProgram(
-    const symbolic::Polynomial& lambda0, const VectorX<symbolic::Polynomial>& l,
+    const symbolic::Polynomial& lambda0,
+    const std::optional<symbolic::Polynomial>& lambda1,
+    const VectorX<symbolic::Polynomial>& l,
     const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
     const std::vector<symbolic::Polynomial>& t,
     const std::vector<std::vector<int>>&
@@ -177,25 +194,24 @@ ControlBarrier::BarrierReturn ControlBarrier::ConstructBarrierProgram(
   ret.prog->AddIndeterminates(x_);
   ret.h = ret.prog->NewFreePolynomial(x_set_, h_degree, "H");
   VectorX<symbolic::Monomial> hdot_monomials;
-  VectorX<symbolic::Polynomial> hdot_state_constraints_lagrangian(
-      state_eq_constraints_.rows());
+  ret.hdot_state_constraints_lagrangian.resize(state_eq_constraints_.rows());
   for (int i = 0; i < state_eq_constraints_.rows(); ++i) {
-    hdot_state_constraints_lagrangian(i) = ret.prog->NewFreePolynomial(
+    ret.hdot_state_constraints_lagrangian(i) = ret.prog->NewFreePolynomial(
         x_set_, hdot_state_constraints_lagrangian_degrees[i]);
   }
   // Add the constraint on hdot.
-  this->AddControlBarrierConstraint(
-      ret.prog.get(), lambda0, l, hdot_state_constraints_lagrangian, ret.h,
-      deriv_eps, std::nullopt /* a */, &(ret.hdot_sos), &hdot_monomials,
-      &(ret.hdot_sos_gram));
+  this->AddControlBarrierConstraint(ret.prog.get(), lambda0, lambda1, l,
+                                    ret.hdot_state_constraints_lagrangian,
+                                    ret.h, deriv_eps, std::nullopt /* a */,
+                                    &(ret.hdot_sos), &hdot_monomials,
+                                    &(ret.hdot_sos_gram));
   // Add the constraint that the unsafe region has h <= 0
   const int num_unsafe_regions = static_cast<int>(unsafe_regions_.size());
   DRAKE_DEMAND(static_cast<int>(t.size()) == num_unsafe_regions);
   DRAKE_DEMAND(static_cast<int>(s_degrees.size()) == num_unsafe_regions);
   ret.s.resize(num_unsafe_regions);
   ret.s_grams.resize(num_unsafe_regions);
-  std::vector<VectorX<symbolic::Polynomial>>
-      unsafe_state_constraints_lagrangian(num_unsafe_regions);
+  ret.unsafe_state_constraints_lagrangian.resize(num_unsafe_regions);
   ret.unsafe_sos_polys.resize(num_unsafe_regions);
   ret.unsafe_sos_poly_grams.resize(num_unsafe_regions);
   for (int i = 0; i < num_unsafe_regions; ++i) {
@@ -209,14 +225,16 @@ ControlBarrier::BarrierReturn ControlBarrier::ConstructBarrierProgram(
           solvers::MathematicalProgram::NonnegativePolynomial::kSos,
           fmt::format("S{},{}", i, j));
     }
-    unsafe_state_constraints_lagrangian[i].resize(state_eq_constraints_.rows());
+    ret.unsafe_state_constraints_lagrangian[i].resize(
+        state_eq_constraints_.rows());
     for (int j = 0; j < state_eq_constraints_.rows(); ++j) {
-      unsafe_state_constraints_lagrangian[i](j) = ret.prog->NewFreePolynomial(
-          x_set_, unsafe_state_constraints_lagrangian_degrees[i][j]);
+      ret.unsafe_state_constraints_lagrangian[i](j) =
+          ret.prog->NewFreePolynomial(
+              x_set_, unsafe_state_constraints_lagrangian_degrees[i][j]);
     }
     ret.unsafe_sos_polys[i] =
         (1 + t[i]) * (-ret.h) + ret.s[i].dot(unsafe_regions_[i]) -
-        unsafe_state_constraints_lagrangian[i].dot(state_eq_constraints_);
+        ret.unsafe_state_constraints_lagrangian[i].dot(state_eq_constraints_);
     std::tie(ret.unsafe_sos_poly_grams[i], std::ignore) =
         ret.prog->AddSosConstraint(ret.unsafe_sos_polys[i]);
   }
@@ -291,9 +309,10 @@ void ControlBarrier::AddBarrierProgramCost(
   prog->AddBoundingBoxConstraint(0, kInf, *rho);
 }
 
-void ControlBarrier::Search(
+ControlBarrier::SearchReturn ControlBarrier::Search(
     const symbolic::Polynomial& h_init, int h_degree, double deriv_eps,
-    int lambda0_degree, const std::vector<int>& l_degrees,
+    int lambda0_degree, std::optional<int> lambda1_degree,
+    const std::vector<int>& l_degrees,
     const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
     const std::vector<int>& t_degree,
     const std::vector<std::vector<int>>& s_degrees,
@@ -302,15 +321,9 @@ void ControlBarrier::Search(
     const Eigen::Ref<const Eigen::VectorXd>& x_anchor,
     const SearchOptions& search_options,
     std::vector<ControlBarrier::Ellipsoid>* ellipsoids,
-    std::vector<EllipsoidBisectionOption>* ellipsoid_bisection_options,
-    symbolic::Polynomial* h_sol, symbolic::Polynomial* lambda0_sol,
-    VectorX<symbolic::Polynomial>* l_sol,
-    VectorX<symbolic::Polynomial>* hdot_state_constraints_lagrangian,
-    std::vector<symbolic::Polynomial>* t_sol,
-    std::vector<VectorX<symbolic::Polynomial>>* s_sol,
-    std::vector<VectorX<symbolic::Polynomial>>*
-        unsafe_state_constraints_lagrangian) const {
-  *h_sol = h_init;
+    std::vector<EllipsoidBisectionOption>* ellipsoid_bisection_options) const {
+  SearchReturn ret;
+  ret.h = h_init;
   double h_at_x_anchor{};
   {
     symbolic::Environment env;
@@ -330,14 +343,22 @@ void ControlBarrier::Search(
   std::vector<bool> inner_ellipsoid_flag(ellipsoids->size(), false);
   DRAKE_DEMAND(ellipsoids->size() == ellipsoid_bisection_options->size());
   while (iter_count < search_options.bilinear_iterations) {
-    const bool found_lagrangian = SearchLagrangian(
-        *h_sol, deriv_eps, lambda0_degree, l_degrees,
+    const auto search_lagrangian_ret = SearchLagrangian(
+        ret.h, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
         hdot_state_constraints_lagrangian_degrees, t_degree, s_degrees,
-        unsafe_state_constraints_lagrangian_degrees, search_options,
-        lambda0_sol, l_sol, hdot_state_constraints_lagrangian, t_sol, s_sol,
-        unsafe_state_constraints_lagrangian);
-    if (!found_lagrangian) {
-      return;
+        unsafe_state_constraints_lagrangian_degrees, search_options);
+    if (!search_lagrangian_ret.success) {
+      return ret;
+    } else {
+      ret.lambda0 = search_lagrangian_ret.lambda0;
+      ret.lambda1 = search_lagrangian_ret.lambda1;
+      ret.l = search_lagrangian_ret.l;
+      ret.hdot_state_constraints_lagrangian =
+          search_lagrangian_ret.hdot_state_constraints_lagrangian;
+      ret.t = search_lagrangian_ret.t;
+      ret.s = search_lagrangian_ret.s;
+      ret.unsafe_state_constraints_lagrangian =
+          search_lagrangian_ret.unsafe_state_constraints_lagrangian;
     }
 
     // Maximize the inner ellipsoids.
@@ -346,7 +367,7 @@ void ControlBarrier::Search(
          ellipsoid_idx < static_cast<int>(ellipsoids->size());
          ellipsoid_idx++) {
       auto& ellipsoid = (*ellipsoids)[ellipsoid_idx];
-      if (h_sol->EvaluateIndeterminates(x_, ellipsoid.c)(0) > 0) {
+      if (ret.h.EvaluateIndeterminates(x_, ellipsoid.c)(0) > 0) {
         inner_ellipsoid_flag[ellipsoid_idx] = true;
         double d_sol;
         symbolic::Polynomial r_sol;
@@ -354,7 +375,7 @@ void ControlBarrier::Search(
         auto& ellipsoid_bisection_option =
             (*ellipsoid_bisection_options)[ellipsoid_idx];
         MaximizeInnerEllipsoidSize(
-            x_, ellipsoid.c, ellipsoid.S, -(*h_sol), state_eq_constraints_,
+            x_, ellipsoid.c, ellipsoid.S, -ret.h, state_eq_constraints_,
             ellipsoid.r_degree, ellipsoid.eq_lagrangian_degrees,
             ellipsoid_bisection_option.d_max, ellipsoid_bisection_option.d_min,
             search_options.lagrangian_step_solver,
@@ -372,9 +393,10 @@ void ControlBarrier::Search(
     {
       // Now search for the barrier function.
       auto barrier_ret = this->ConstructBarrierProgram(
-          *lambda0_sol, *l_sol, hdot_state_constraints_lagrangian_degrees,
-          *t_sol, unsafe_state_constraints_lagrangian_degrees, h_degree,
-          deriv_eps, s_degrees);
+          ret.lambda0, ret.lambda1, ret.l,
+          hdot_state_constraints_lagrangian_degrees, ret.t,
+          unsafe_state_constraints_lagrangian_degrees, h_degree, deriv_eps,
+          s_degrees);
       std::vector<symbolic::Polynomial> r;
       VectorX<symbolic::Variable> rho;
       std::vector<VectorX<symbolic::Polynomial>>
@@ -412,54 +434,53 @@ void ControlBarrier::Search(
           search_options.barrier_step_solver_options,
           search_options.backoff_scale);
       if (result_barrier.is_success()) {
-        *h_sol = result_barrier.GetSolution(barrier_ret.h);
+        ret.h = result_barrier.GetSolution(barrier_ret.h);
         if (search_options.hsol_tiny_coeff_tol > 0) {
-          *h_sol = h_sol->RemoveTermsWithSmallCoefficients(
+          ret.h = ret.h.RemoveTermsWithSmallCoefficients(
               search_options.hsol_tiny_coeff_tol);
         }
+        GetPolynomialSolutions(result_barrier,
+                               barrier_ret.hdot_state_constraints_lagrangian,
+                               search_options.lsol_tiny_coeff_tol,
+                               &(ret.hdot_state_constraints_lagrangian));
         drake::log()->info("min h(x) on ellipsoid: {}",
                            result_barrier.GetSolution(rho).transpose());
-        s_sol->resize(barrier_ret.s.size());
+        ret.s.resize(barrier_ret.s.size());
+        ret.unsafe_state_constraints_lagrangian.resize(unsafe_regions_.size());
         for (int i = 0; i < static_cast<int>(unsafe_regions_.size()); ++i) {
           GetPolynomialSolutions(result_barrier, barrier_ret.s[i],
-                                 search_options.hsol_tiny_coeff_tol,
-                                 &(*s_sol)[i]);
+                                 search_options.lsol_tiny_coeff_tol,
+                                 &(ret.s[i]));
+          GetPolynomialSolutions(
+              result_barrier,
+              barrier_ret.unsafe_state_constraints_lagrangian[i],
+              search_options.lsol_tiny_coeff_tol,
+              &(ret.unsafe_state_constraints_lagrangian[i]));
         }
       } else {
         drake::log()->error("Failed to find the barrier.");
-        return;
+        return ret;
       }
     }
     iter_count++;
   }
+  return ret;
 }
 
-bool ControlBarrier::SearchLagrangian(
+ControlBarrier::SearchLagrangianReturn ControlBarrier::SearchLagrangian(
     const symbolic::Polynomial& h, double deriv_eps, int lambda0_degree,
-    const std::vector<int>& l_degrees,
+    std::optional<int> lambda1_degree, const std::vector<int>& l_degrees,
     const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
     const std::vector<int>& t_degree,
     const std::vector<std::vector<int>>& s_degrees,
     const std::vector<std::vector<int>>&
         unsafe_state_constraints_lagrangian_degrees,
-    const ControlBarrier::SearchOptions& search_options,
-    symbolic::Polynomial* lambda0_sol, VectorX<symbolic::Polynomial>* l_sol,
-    VectorX<symbolic::Polynomial>* hdot_state_constraints_lagrangian_sol,
-    std::vector<symbolic::Polynomial>* t_sol,
-    std::vector<VectorX<symbolic::Polynomial>>* s_sol,
-    std::vector<VectorX<symbolic::Polynomial>>*
-        unsafe_state_constraints_lagrangian_sol) const {
+    const ControlBarrier::SearchOptions& search_options) const {
+  ControlBarrier::SearchLagrangianReturn search_lagrangian_ret;
+  search_lagrangian_ret.success = true;
   {
-    symbolic::Polynomial lambda0;
-    MatrixX<symbolic::Variable> lambda0_gram;
-    VectorX<symbolic::Polynomial> l;
-    std::vector<MatrixX<symbolic::Variable>> l_grams;
-    VectorX<symbolic::Polynomial> hdot_state_constraints_lagrangian;
-    symbolic::Polynomial hdot_sos;
-    VectorX<symbolic::Monomial> hdot_monomials;
-    MatrixX<symbolic::Variable> hdot_gram;
     auto lagrangian_ret = this->ConstructLagrangianProgram(
-        h, deriv_eps, lambda0_degree, l_degrees,
+        h, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
         hdot_state_constraints_lagrangian_degrees);
     if (search_options.lagrangian_tiny_coeff_tol > 0) {
       RemoveTinyCoeff(lagrangian_ret.prog.get(),
@@ -473,24 +494,38 @@ bool ControlBarrier::SearchLagrangian(
                              search_options.lagrangian_step_solver_options,
                              &result_lagrangian);
     if (result_lagrangian.is_success()) {
-      *lambda0_sol = result_lagrangian.GetSolution(lagrangian_ret.lambda0);
+      search_lagrangian_ret.lambda0 =
+          result_lagrangian.GetSolution(lagrangian_ret.lambda0);
       GetPolynomialSolutions(result_lagrangian, lagrangian_ret.l,
-                             search_options.lsol_tiny_coeff_tol, l_sol);
-      GetPolynomialSolutions(result_lagrangian,
-                             lagrangian_ret.state_constraints_lagrangian,
                              search_options.lsol_tiny_coeff_tol,
-                             hdot_state_constraints_lagrangian_sol);
+                             &(search_lagrangian_ret.l));
+      GetPolynomialSolutions(
+          result_lagrangian, lagrangian_ret.state_constraints_lagrangian,
+          search_options.lsol_tiny_coeff_tol,
+          &(search_lagrangian_ret.hdot_state_constraints_lagrangian));
+      if (beta_plus_.has_value()) {
+        search_lagrangian_ret.lambda1 =
+            result_lagrangian.GetSolution(*(lagrangian_ret.lambda1));
+        if (search_options.lsol_tiny_coeff_tol > 0) {
+          search_lagrangian_ret.lambda1 =
+              search_lagrangian_ret.lambda1->RemoveTermsWithSmallCoefficients(
+                  search_options.lsol_tiny_coeff_tol);
+        }
+      }
     } else {
       drake::log()->error("Failed to find Lagrangian");
-      return false;
+      search_lagrangian_ret.success = false;
+      return search_lagrangian_ret;
     }
   }
 
   {
     // Find Lagrangian multiplier for each unsafe region.
-    t_sol->resize(unsafe_regions_.size());
-    s_sol->resize(unsafe_regions_.size());
-    unsafe_state_constraints_lagrangian_sol->resize(unsafe_regions_.size());
+    //
+    search_lagrangian_ret.t.resize(unsafe_regions_.size());
+    search_lagrangian_ret.s.resize(unsafe_regions_.size());
+    search_lagrangian_ret.unsafe_state_constraints_lagrangian.resize(
+        unsafe_regions_.size());
     for (int i = 0; i < static_cast<int>(unsafe_regions_.size()); ++i) {
       auto unsafe_ret = this->ConstructUnsafeRegionProgram(
           h, i, t_degree[i], s_degrees[i],
@@ -508,26 +543,28 @@ bool ControlBarrier::SearchLagrangian(
                                search_options.lagrangian_step_solver_options,
                                &result_unsafe);
       if (result_unsafe.is_success()) {
-        (*t_sol)[i] = result_unsafe.GetSolution(unsafe_ret.t);
+        search_lagrangian_ret.t[i] = result_unsafe.GetSolution(unsafe_ret.t);
         if (search_options.lsol_tiny_coeff_tol > 0) {
-          (*t_sol)[i] = (*t_sol)[i].RemoveTermsWithSmallCoefficients(
-              search_options.lsol_tiny_coeff_tol);
+          search_lagrangian_ret.t[i] =
+              search_lagrangian_ret.t[i].RemoveTermsWithSmallCoefficients(
+                  search_options.lsol_tiny_coeff_tol);
         }
         GetPolynomialSolutions(result_unsafe, unsafe_ret.s,
                                search_options.lsol_tiny_coeff_tol,
-                               &((*s_sol)[i]));
+                               &(search_lagrangian_ret.s[i]));
         GetPolynomialSolutions(
             result_unsafe, unsafe_ret.state_constraints_lagrangian,
             search_options.lsol_tiny_coeff_tol,
-            &((*unsafe_state_constraints_lagrangian_sol)[i]));
+            &(search_lagrangian_ret.unsafe_state_constraints_lagrangian[i]));
       } else {
         drake::log()->error(
             "Cannot find Lagrangian multipler for unsafe region {}", i);
-        return false;
+        search_lagrangian_ret.success = false;
+        return search_lagrangian_ret;
       }
     }
   }
-  return true;
+  return search_lagrangian_ret;
 }
 
 ControlBarrierBoxInputBound::ControlBarrierBoxInputBound(

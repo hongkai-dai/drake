@@ -68,6 +68,26 @@ class ControlBarrier {
       symbolic::Polynomial* hdot_poly, VectorX<symbolic::Monomial>* monomials,
       MatrixX<symbolic::Variable>* gram) const;
 
+  struct LagrangianReturn {
+    LagrangianReturn()
+        : prog{std::make_unique<solvers::MathematicalProgram>()} {}
+
+    // Add the move constructor and move assignment operator so that we can
+    // return this struct which has a unique_ptr.
+    LagrangianReturn(LagrangianReturn&&) = default;
+    LagrangianReturn& operator=(LagrangianReturn&&) = default;
+
+    std::unique_ptr<solvers::MathematicalProgram> prog;
+    symbolic::Polynomial lambda0;
+    MatrixX<symbolic::Variable> lambda0_gram;
+    VectorX<symbolic::Polynomial> l;
+    std::vector<MatrixX<symbolic::Variable>> l_grams;
+    VectorX<symbolic::Polynomial> state_constraints_lagrangian;
+    symbolic::Polynomial hdot_sos;
+    VectorX<symbolic::Monomial> hdot_monomials;
+    MatrixX<symbolic::Variable> hdot_gram;
+  };
+
   /**
    * Given the CBF h(x), constructs the program to find the Lagrangian λ₀(x) and
    * lᵢ(x)
@@ -76,17 +96,28 @@ class ControlBarrier {
    * λ₀(x), lᵢ(x) is sos
    * </pre>
    */
-  std::unique_ptr<solvers::MathematicalProgram> ConstructLagrangianProgram(
+  LagrangianReturn ConstructLagrangianProgram(
       const symbolic::Polynomial& h, double deriv_eps, int lambda0_degree,
       const std::vector<int>& l_degrees,
-      const std::vector<int>& state_constraints_lagrangian_degrees,
-      symbolic::Polynomial* lambda0, MatrixX<symbolic::Variable>* lambda0_gram,
-      VectorX<symbolic::Polynomial>* l,
-      std::vector<MatrixX<symbolic::Variable>>* l_grams,
-      VectorX<symbolic::Polynomial>* state_constraints_lagrangian,
-      symbolic::Polynomial* hdot_sos,
-      VectorX<symbolic::Monomial>* hdot_monomials,
-      MatrixX<symbolic::Variable>* hdot_gram) const;
+      const std::vector<int>& state_constraints_lagrangian_degrees) const;
+
+  struct UnsafeReturn {
+    UnsafeReturn() : prog{std::make_unique<solvers::MathematicalProgram>()} {}
+
+    // Add the move constructor and move assignment operator so that we can
+    // return this struct which has a unique_ptr.
+    UnsafeReturn(UnsafeReturn&&) = default;
+    UnsafeReturn& operator=(UnsafeReturn&&) = default;
+
+    std::unique_ptr<solvers::MathematicalProgram> prog;
+    symbolic::Polynomial t;
+    MatrixX<symbolic::Variable> t_gram;
+    VectorX<symbolic::Polynomial> s;
+    std::vector<MatrixX<symbolic::Variable>> s_grams;
+    VectorX<symbolic::Polynomial> state_constraints_lagrangian;
+    symbolic::Polynomial sos_poly;
+    MatrixX<symbolic::Variable> sos_poly_gram;
+  };
 
   /**
    * Given h(x), find the Lagrangian tⱼ(x) and sⱼ(x) to prove that the j'th
@@ -97,16 +128,27 @@ class ControlBarrier {
    * sⱼ(x) is sos.
    * </pre>
    */
-  std::unique_ptr<solvers::MathematicalProgram> ConstructUnsafeRegionProgram(
+  UnsafeReturn ConstructUnsafeRegionProgram(
       const symbolic::Polynomial& h, int region_index, int t_degree,
       const std::vector<int>& s_degrees,
-      const std::vector<int>& unsafe_state_constraints_lagrangian_degrees,
-      symbolic::Polynomial* t, MatrixX<symbolic::Variable>* t_gram,
-      VectorX<symbolic::Polynomial>* s,
-      std::vector<MatrixX<symbolic::Variable>>* s_grams,
-      VectorX<symbolic::Polynomial>* unsafe_state_constraints_lagrangian,
-      symbolic::Polynomial* sos_poly,
-      MatrixX<symbolic::Variable>* sos_poly_gram) const;
+      const std::vector<int>& state_constraints_lagrangian_degrees) const;
+
+  struct BarrierReturn {
+    BarrierReturn() : prog{std::make_unique<solvers::MathematicalProgram>()} {}
+
+    // Add the move constructor and move assignment operator so that we can
+    // return this struct which has a unique_ptr.
+    BarrierReturn(BarrierReturn&&) = default;
+    BarrierReturn& operator=(BarrierReturn&&) = default;
+    std::unique_ptr<solvers::MathematicalProgram> prog;
+    symbolic::Polynomial h;
+    symbolic::Polynomial hdot_sos;
+    MatrixX<symbolic::Variable> hdot_sos_gram;
+    std::vector<VectorX<symbolic::Polynomial>> s;
+    std::vector<std::vector<MatrixX<symbolic::Variable>>> s_grams;
+    std::vector<symbolic::Polynomial> unsafe_sos_polys;
+    std::vector<MatrixX<symbolic::Variable>> unsafe_sos_poly_grams;
+  };
 
   /**
    * Given Lagrangian multipliers λ₀(x), l(x), t(x), find the control barrier
@@ -120,7 +162,7 @@ class ControlBarrier {
    * </pre>
    * where eps in the objective is a small positive constant.
    */
-  std::unique_ptr<solvers::MathematicalProgram> ConstructBarrierProgram(
+  BarrierReturn ConstructBarrierProgram(
       const symbolic::Polynomial& lambda0,
       const VectorX<symbolic::Polynomial>& l,
       const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
@@ -128,13 +170,7 @@ class ControlBarrier {
       const std::vector<std::vector<int>>&
           unsafe_state_constraints_lagrangian_degrees,
       int h_degree, double deriv_eps,
-      const std::vector<std::vector<int>>& s_degrees, symbolic::Polynomial* h,
-      symbolic::Polynomial* hdot_sos,
-      MatrixX<symbolic::Variable>* hdot_sos_gram,
-      std::vector<VectorX<symbolic::Polynomial>>* s,
-      std::vector<std::vector<MatrixX<symbolic::Variable>>>* s_grams,
-      std::vector<symbolic::Polynomial>* unsafe_sos_polys,
-      std::vector<MatrixX<symbolic::Variable>>* unsafe_sos_poly_grams) const;
+      const std::vector<std::vector<int>>& s_degrees) const;
 
   /**
    * Add the cost

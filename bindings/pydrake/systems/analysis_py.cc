@@ -7,6 +7,9 @@
 #include "drake/bindings/pydrake/pydrake_pybind.h"
 #include "drake/common/scope_exit.h"
 #include "drake/systems/analysis/batch_eval.h"
+#include "drake/systems/analysis/clf_cbf_utils.h"
+#include "drake/systems/analysis/control_barrier.h"
+#include "drake/systems/analysis/control_lyapunov.h"
 #include "drake/systems/analysis/integrator_base.h"
 #include "drake/systems/analysis/monte_carlo.h"
 #include "drake/systems/analysis/region_of_attraction.h"
@@ -465,6 +468,107 @@ Parameter ``interruptible``:
     m.def("RegionOfAttraction", &RegionOfAttraction, py::arg("system"),
         py::arg("context"), py::arg("options") = RegionOfAttractionOptions(),
         doc.RegionOfAttraction.doc);
+  }
+
+  {
+    constexpr auto& cls_doc = pydrake_doc.drake.systems.analysis.ControlBarrier;
+    using Class = analysis::ControlBarrier;
+    auto control_barrier =
+        py::class_<Class>(m, "ControlBarrier", cls_doc.doc)
+            .def(
+                py::init<const Eigen::Ref<const VectorX<symbolic::Polynomial>>&,
+                    const Eigen::Ref<const MatrixX<symbolic::Polynomial>>&,
+                    std::optional<symbolic::Polynomial>,
+                    const Eigen::Ref<const VectorX<symbolic::Variable>>&,
+                    double, std::vector<VectorX<symbolic::Polynomial>>,
+                    const Eigen::Ref<const Eigen::MatrixXd>&,
+                    const Eigen::Ref<const VectorX<symbolic::Polynomial>>&>(),
+                py::arg("f"), py::arg("G"), py::arg("dynamics_denominator"),
+                py::arg("x"), py::arg("beta"), py::arg("unsafe_regions"),
+                py::arg("u_vertices"), py::arg("state_eq_constraints"),
+                cls_doc.ctor.doc)
+            .def(
+                "AddControlBarrierConstraint",
+                [](const analysis::ControlBarrier& self,
+                    solvers::MathematicalProgram* prog,
+                    const symbolic::Polynomial& lambda0,
+                    const VectorX<symbolic::Polynomial>& l,
+                    const VectorX<symbolic::Polynomial>&
+                        state_constraints_lagrangian,
+                    const symbolic::Polynomial& h, double deriv_eps,
+                    const std::optional<symbolic::Polynomial>& a) {
+                  symbolic::Polynomial hdot_poly;
+                  VectorX<symbolic::Monomial> monomials;
+                  MatrixX<symbolic::Variable> gram;
+                  self.AddControlBarrierConstraint(prog, lambda0, l,
+                      state_constraints_lagrangian, h, deriv_eps, a, &hdot_poly,
+                      &monomials, &gram);
+                  return std::make_tuple(hdot_poly, monomials, gram);
+                },
+                py::arg("prog"), py::arg("lambda0"), py::arg("l"),
+                py::arg("state_constraints_lagrangian"), py::arg("h"),
+                py::arg("deriv_eps"), py::arg("a"),
+                cls_doc.AddControlBarrierConstraint.doc);
+
+    py::class_<Class::LagrangianReturn>(control_barrier, "LagrangianReturn")
+        .def(
+            "prog",
+            [](const Class::LagrangianReturn& self) { return self.prog.get(); },
+            pybind11::return_value_policy::reference)
+        .def_readonly("lambda0", &Class::LagrangianReturn::lambda0)
+        .def_readonly("lambda0_gram", &Class::LagrangianReturn::lambda0_gram)
+        .def_readonly("l", &Class::LagrangianReturn::l)
+        .def_readonly("l_grams", &Class::LagrangianReturn::l_grams)
+        .def_readonly("state_constraints_lagrangian",
+            &Class::LagrangianReturn::state_constraints_lagrangian);
+
+    control_barrier.def("ConstructLagrangianProgram",
+        &Class::ConstructLagrangianProgram, py::arg("h"), py::arg("deriv_eps"),
+        py::arg("lambda0_degree"), py::arg("l_degrees"),
+        py::arg("state_constraints_lagrangian_degrees"),
+        cls_doc.ConstructLagrangianProgram.doc);
+
+    py::class_<Class::UnsafeReturn>(control_barrier, "UnsafeReturn")
+        .def(
+            "prog",
+            [](const Class::UnsafeReturn& self) { return self.prog.get(); },
+            pybind11::return_value_policy::reference)
+        .def_readonly("t", &Class::UnsafeReturn::t)
+        .def_readonly("t_gram", &Class::UnsafeReturn::t_gram)
+        .def_readonly("s", &Class::UnsafeReturn::s)
+        .def_readonly("s_grams", &Class::UnsafeReturn::s_grams)
+        .def_readonly("state_constraints_lagrangian",
+            &Class::UnsafeReturn::state_constraints_lagrangian)
+        .def_readonly("sos_poly", &Class::UnsafeReturn::sos_poly)
+        .def_readonly("sos_poly_gram", &Class::UnsafeReturn::sos_poly_gram);
+
+    control_barrier.def("ConstructUnsafeRegionProgram",
+        &Class::ConstructUnsafeRegionProgram, py::arg("h"),
+        py::arg("region_index"), py::arg("t_degree"), py::arg("s_degrees"),
+        py::arg("state_constraints_lagrangian_degrees"),
+        cls_doc.ConstructUnsafeRegionProgram.doc);
+
+    py::class_<Class::BarrierReturn>(control_barrier, "BarrierReturn")
+        .def(
+            "prog",
+            [](const Class::BarrierReturn& self) { return self.prog.get(); },
+            pybind11::return_value_policy::reference)
+        .def_readonly("h", &Class::BarrierReturn::h)
+        .def_readonly("hdot_sos", &Class::BarrierReturn::hdot_sos)
+        .def_readonly("hdot_sos_gram", &Class::BarrierReturn::hdot_sos_gram)
+        .def_readonly("s", &Class::BarrierReturn::s)
+        .def_readonly("s_grams", &Class::BarrierReturn::s_grams)
+        .def_readonly(
+            "unsafe_sos_polys", &Class::BarrierReturn::unsafe_sos_polys)
+        .def_readonly("unsafe_sos_poly_grams",
+            &Class::BarrierReturn::unsafe_sos_poly_grams);
+
+    control_barrier.def("ConstructBarrierProgram",
+        &Class::ConstructBarrierProgram, py::arg("lambda0"), py::arg("l"),
+        py::arg("hdot_state_constraints_lagrangian_degrees"), py::arg("t"),
+        py::arg("unsafe_state_constraints_lagrangian_degrees"),
+        py::arg("h_degree"), py::arg("deriv_eps"), py::arg("s_degrees"),
+        cls_doc.ConstructBarrierProgram.doc);
   }
 }
 

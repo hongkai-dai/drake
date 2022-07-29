@@ -113,77 +113,62 @@ TEST_F(SimpleLinearSystemTest, ControlBarrier) {
   const int lambda0_degree = 2;
   const std::vector<int> l_degrees = {2, 2, 2, 2};
   const std::vector<int> state_constraints_lagrangian_degrees{};
-  symbolic::Polynomial lambda0;
-  MatrixX<symbolic::Variable> lambda0_gram;
-  VectorX<symbolic::Polynomial> l;
-  std::vector<MatrixX<symbolic::Variable>> l_grams;
-  VectorX<symbolic::Polynomial> state_constraints_lagrangian;
-  symbolic::Polynomial hdot_sos;
-  VectorX<symbolic::Monomial> hdot_monomials;
-  MatrixX<symbolic::Variable> hdot_gram;
-  auto prog_lagrangian = dut.ConstructLagrangianProgram(
+  auto lagrangian_ret = dut.ConstructLagrangianProgram(
       h_init, deriv_eps, lambda0_degree, l_degrees,
-      state_constraints_lagrangian_degrees, &lambda0, &lambda0_gram, &l,
-      &l_grams, &state_constraints_lagrangian, &hdot_sos, &hdot_monomials,
-      &hdot_gram);
-  auto result_lagrangian = solvers::Solve(*prog_lagrangian);
+      state_constraints_lagrangian_degrees);
+  auto result_lagrangian = solvers::Solve(*(lagrangian_ret.prog));
   ASSERT_TRUE(result_lagrangian.is_success());
   const Eigen::MatrixXd lambda0_gram_sol =
-      result_lagrangian.GetSolution(lambda0_gram);
+      result_lagrangian.GetSolution(lagrangian_ret.lambda0_gram);
   EXPECT_TRUE(math::IsPositiveDefinite(lambda0_gram_sol));
-  symbolic::Polynomial lambda0_sol = result_lagrangian.GetSolution(lambda0);
+  symbolic::Polynomial lambda0_sol =
+      result_lagrangian.GetSolution(lagrangian_ret.lambda0);
   symbolic::Polynomial hdot_sos_expected = (1 + lambda0_sol) * (-1 - h_init);
   VectorX<symbolic::Polynomial> l_sol(u_vertices.cols());
   RowVectorX<symbolic::Polynomial> dhdx = h_init.Jacobian(x_);
   for (int i = 0; i < u_vertices.cols(); ++i) {
-    EXPECT_TRUE(
-        math::IsPositiveDefinite(result_lagrangian.GetSolution(l_grams[i])));
-    l_sol(i) = result_lagrangian.GetSolution(l[i]);
+    EXPECT_TRUE(math::IsPositiveDefinite(
+        result_lagrangian.GetSolution(lagrangian_ret.l_grams[i])));
+    l_sol(i) = result_lagrangian.GetSolution(lagrangian_ret.l[i]);
     hdot_sos_expected -= l_sol[i] * (-deriv_eps * h_init - dhdx.dot(f_) -
                                      dhdx.dot(G_ * u_vertices.col(i)));
   }
   EXPECT_PRED3(symbolic::test::PolynomialEqual,
-               result_lagrangian.GetSolution(hdot_sos).Expand(),
+               result_lagrangian.GetSolution(lagrangian_ret.hdot_sos).Expand(),
                hdot_sos_expected.Expand(), 1E-5);
   const Eigen::MatrixXd hdot_gram_sol =
-      result_lagrangian.GetSolution(hdot_gram);
+      result_lagrangian.GetSolution(lagrangian_ret.hdot_gram);
   EXPECT_TRUE(math::IsPositiveDefinite(hdot_gram_sol));
   EXPECT_PRED3(symbolic::test::PolynomialEqual, hdot_sos_expected.Expand(),
-               hdot_monomials.dot(hdot_gram_sol * hdot_monomials), 1E-5);
+               lagrangian_ret.hdot_monomials.dot(hdot_gram_sol *
+                                                 lagrangian_ret.hdot_monomials),
+               1E-5);
 
   const int t_degree = 0;
   const std::vector<int> s_degrees = {0, 0};
   const std::vector<int> unsafe_state_constraints_lagrangian_degrees{};
-  symbolic::Polynomial t;
-  MatrixX<symbolic::Variable> t_gram;
-  std::vector<VectorX<symbolic::Polynomial>> s(1);
-  std::vector<std::vector<MatrixX<symbolic::Variable>>> s_grams(1);
-  VectorX<symbolic::Polynomial> unsafe_state_constraints_lagrangian;
-  symbolic::Polynomial unsafe_sos_poly;
-  MatrixX<symbolic::Variable> unsafe_sos_poly_gram;
-  auto prog_unsafe = dut.ConstructUnsafeRegionProgram(
+  auto unsafe_ret = dut.ConstructUnsafeRegionProgram(
       h_init, 0, t_degree, s_degrees,
-      unsafe_state_constraints_lagrangian_degrees, &t, &t_gram, &(s[0]),
-      &(s_grams[0]), &unsafe_state_constraints_lagrangian, &unsafe_sos_poly,
-      &unsafe_sos_poly_gram);
-  const auto result_unsafe = solvers::Solve(*prog_unsafe);
+      unsafe_state_constraints_lagrangian_degrees);
+  const auto result_unsafe = solvers::Solve(*(unsafe_ret.prog));
   ASSERT_TRUE(result_unsafe.is_success());
-  const symbolic::Polynomial t_sol = result_unsafe.GetSolution(t);
-  EXPECT_TRUE(math::IsPositiveDefinite(result_unsafe.GetSolution(t_gram)));
-  VectorX<symbolic::Polynomial> s_sol(s[0].rows());
-  EXPECT_EQ(s[0].rows(), unsafe_regions[0].rows());
-  for (int i = 0; i < s[0].rows(); ++i) {
-    s_sol(i) = result_unsafe.GetSolution(s[0](i));
-    EXPECT_TRUE(
-        math::IsPositiveDefinite(result_unsafe.GetSolution(s_grams[0][i])));
+  const symbolic::Polynomial t_sol = result_unsafe.GetSolution(unsafe_ret.t);
+  EXPECT_TRUE(
+      math::IsPositiveDefinite(result_unsafe.GetSolution(unsafe_ret.t_gram)));
+  VectorX<symbolic::Polynomial> s_sol(unsafe_ret.s.rows());
+  EXPECT_EQ(unsafe_ret.s.rows(), unsafe_regions[0].rows());
+  for (int i = 0; i < unsafe_ret.s.rows(); ++i) {
+    s_sol(i) = result_unsafe.GetSolution(unsafe_ret.s(i));
+    EXPECT_TRUE(math::IsPositiveDefinite(
+        result_unsafe.GetSolution(unsafe_ret.s_grams[i])));
   }
   symbolic::Polynomial unsafe_sos_poly_expected =
       (1 + t_sol) * -h_init + s_sol.dot(unsafe_regions[0]);
   EXPECT_PRED3(symbolic::test::PolynomialEqual,
                unsafe_sos_poly_expected.Expand(),
-               result_unsafe.GetSolution(unsafe_sos_poly).Expand(), 1E-5);
+               result_unsafe.GetSolution(unsafe_ret.sos_poly).Expand(), 1E-5);
   EXPECT_TRUE(math::IsPositiveDefinite(
-      result_unsafe.GetSolution(unsafe_sos_poly_gram)));
+      result_unsafe.GetSolution(unsafe_ret.sos_poly_gram)));
 
   // Now search for barrier given Lagrangians.
   Eigen::MatrixXd verified_safe_states;
@@ -193,46 +178,44 @@ TEST_F(SimpleLinearSystemTest, ControlBarrier) {
 
   const std::vector<int> hdot_state_constraints_lagrangian_degrees{};
   const int h_degree = 2;
-  symbolic::Polynomial h;
-  std::vector<symbolic::Polynomial> unsafe_sos_polys;
-  std::vector<MatrixX<symbolic::Variable>> unsafe_sos_poly_grams;
   lambda0_sol = lambda0_sol.RemoveTermsWithSmallCoefficients(1e-10);
   const double eps = 1E-3;
-  auto prog_barrier = dut.ConstructBarrierProgram(
+  auto barrier_ret = dut.ConstructBarrierProgram(
       lambda0_sol, l_sol, hdot_state_constraints_lagrangian_degrees, {t_sol},
       {unsafe_state_constraints_lagrangian_degrees}, h_degree, deriv_eps,
-      {s_degrees}, &h, &hdot_sos, &hdot_gram, &s, &s_grams, &unsafe_sos_polys,
-      &unsafe_sos_poly_grams);
-  RemoveTinyCoeff(prog_barrier.get(), 1E-10);
-  auto result_barrier = solvers::Solve(*prog_barrier);
+      {s_degrees});
+  RemoveTinyCoeff(barrier_ret.prog.get(), 1E-10);
+  auto result_barrier = solvers::Solve(*(barrier_ret.prog));
   ASSERT_TRUE(result_barrier.is_success());
-  auto h_sol = result_barrier.GetSolution(h);
+  auto h_sol = result_barrier.GetSolution(barrier_ret.h);
   // Check sos for unsafe regions.
-  EXPECT_EQ(s.size(), unsafe_regions.size());
-  for (int i = 0; i < static_cast<int>(s.size()); ++i) {
-    EXPECT_EQ(s[i].rows(), unsafe_regions[i].rows());
-    s_sol.resize(s[i].rows());
-    for (int j = 0; j < s[i].rows(); ++j) {
-      EXPECT_TRUE(
-          math::IsPositiveDefinite(result_barrier.GetSolution(s_grams[i][j])));
-      s_sol[j] = result_barrier.GetSolution(s[i](j));
+  EXPECT_EQ(barrier_ret.s.size(), unsafe_regions.size());
+  for (int i = 0; i < static_cast<int>(barrier_ret.s.size()); ++i) {
+    EXPECT_EQ(barrier_ret.s[i].rows(), unsafe_regions[i].rows());
+    s_sol.resize(barrier_ret.s[i].rows());
+    for (int j = 0; j < barrier_ret.s[i].rows(); ++j) {
+      EXPECT_TRUE(math::IsPositiveDefinite(
+          result_barrier.GetSolution(barrier_ret.s_grams[i][j])));
+      s_sol[j] = result_barrier.GetSolution(barrier_ret.s[i](j));
     }
     unsafe_sos_poly_expected =
         (1 + t_sol) * -h_sol + s_sol.dot(unsafe_regions[i]);
     EXPECT_PRED3(
         symbolic::test::PolynomialEqual, unsafe_sos_poly_expected.Expand(),
-        result_barrier.GetSolution(unsafe_sos_polys[i]).Expand(), 1E-5);
+        result_barrier.GetSolution(barrier_ret.unsafe_sos_polys[i]).Expand(),
+        1E-5);
     EXPECT_TRUE(math::IsPositiveDefinite(
-        result_barrier.GetSolution(unsafe_sos_poly_grams[i])));
+        result_barrier.GetSolution(barrier_ret.unsafe_sos_poly_grams[i])));
   }
   {
     // Add cost to maximize min(h(x), 0) on sampled states.
     // Check h_sol on verified_safe_states;
-    auto prog_cost1 = prog_barrier->Clone();
-    dut.AddBarrierProgramCost(prog_cost1.get(), h, verified_safe_states,
-                              unverified_candidate_states, eps);
+    auto prog_cost1 = barrier_ret.prog->Clone();
+    dut.AddBarrierProgramCost(prog_cost1.get(), barrier_ret.h,
+                              verified_safe_states, unverified_candidate_states,
+                              eps);
     result_barrier = solvers::Solve(*prog_cost1);
-    h_sol = result_barrier.GetSolution(h);
+    h_sol = result_barrier.GetSolution(barrier_ret.h);
     EXPECT_TRUE(
         (h_sol.EvaluateIndeterminates(x_, verified_safe_states).array() >= 0)
             .all());
@@ -249,7 +232,7 @@ TEST_F(SimpleLinearSystemTest, ControlBarrier) {
   }
   {
     // Add cost to maximize min(h(x)) within some ellipsoids.
-    auto prog_cost2 = prog_barrier->Clone();
+    auto prog_cost2 = barrier_ret.prog->Clone();
     std::vector<ControlBarrier::Ellipsoid> ellipsoids;
     std::vector<ControlBarrier::EllipsoidBisectionOption>
         ellipsoid_bisection_options;
@@ -265,17 +248,18 @@ TEST_F(SimpleLinearSystemTest, ControlBarrier) {
     VectorX<symbolic::Variable> rho;
     std::vector<VectorX<symbolic::Polynomial>>
         ellipsoids_state_constraints_lagrangian;
-    dut.AddBarrierProgramCost(prog_cost2.get(), h, ellipsoids, &r, &rho,
-                              &ellipsoids_state_constraints_lagrangian);
+    dut.AddBarrierProgramCost(prog_cost2.get(), barrier_ret.h, ellipsoids, &r,
+                              &rho, &ellipsoids_state_constraints_lagrangian);
     Eigen::MatrixXd h_monomial_vals;
     VectorX<symbolic::Variable> h_coeff_vars;
     Eigen::Vector2d x_anchor(0.1, 0.2);
-    EvaluatePolynomial(h, x_, x_anchor, &h_monomial_vals, &h_coeff_vars);
+    EvaluatePolynomial(barrier_ret.h, x_, x_anchor, &h_monomial_vals,
+                       &h_coeff_vars);
     prog_cost2->AddLinearConstraint(h_monomial_vals.row(0), -kInf, 100,
                                     h_coeff_vars);
     result_barrier = solvers::Solve(*prog_cost2);
     ASSERT_TRUE(result_barrier.is_success());
-    h_sol = result_barrier.GetSolution(h);
+    h_sol = result_barrier.GetSolution(barrier_ret.h);
     const auto rho_sol = result_barrier.GetSolution(rho);
     for (int i = 0; i < static_cast<int>(ellipsoids.size()); ++i) {
       CheckEllipsoidInSublevelSet(x_, ellipsoids[i].c, ellipsoids[i].S,

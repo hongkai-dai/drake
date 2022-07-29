@@ -118,9 +118,23 @@ controllers::LinearQuadraticRegulatorResult SynthesizeTrigLqr(
   return lqr_result;
 }
 
+template <typename T>
+ToTrigStateConverter<T>::ToTrigStateConverter() : LeafSystem<T>(SystemTypeTag<ToTrigStateConverter>{}) {
+  this->DeclareVectorInputPort("state", 6);
+  this->DeclareVectorOutputPort("x_trig", 7, &ToTrigStateConverter<T>::CalcTrigState);
+}
+
+template <typename T>
+void ToTrigStateConverter<T>::CalcTrigState(const Context<T>& context, BasicVector<T>* x_trig) const {
+  const Vector6<T> x_orig = this->get_input_port().Eval(context);
+  x_trig->get_mutable_value() = ToTrigState<T>(x_orig);
+}
+
 }  // namespace analysis
 }  // namespace systems
 }  // namespace drake
 
 DRAKE_DEFINE_CLASS_TEMPLATE_INSTANTIATIONS_ON_DEFAULT_SCALARS(
     class ::drake::systems::analysis::QuadrotorPlant)
+DRAKE_DEFINE_CLASS_TEMPLATE_INSTANTIATIONS_ON_DEFAULT_SCALARS(
+    class ::drake::systems::analysis::ToTrigStateConverter)

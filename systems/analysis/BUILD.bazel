@@ -158,6 +158,7 @@ drake_cc_library(
         "//solvers:mosek_solver",
         "//solvers:csdp_solver",
         "//solvers:sos_basis_generator",
+        "//systems/framework:leaf_system",
     ],
 )
 
@@ -990,6 +991,7 @@ drake_cc_binary(
         ":quadrotor2d",
         ":simulator",
         ":simulator_config_functions",
+        "//geometry:scene_graph",
         "//solvers:solve",
         "//systems/controllers:linear_quadratic_regulator",
         "//systems/primitives:vector_log_sink",

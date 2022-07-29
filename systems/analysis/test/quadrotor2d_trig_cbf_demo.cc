@@ -3,17 +3,138 @@
 #include <iostream>
 #include <limits>
 
+#include "drake/geometry/scene_graph.h"
 #include "drake/solvers/common_solver_option.h"
 #include "drake/solvers/solve.h"
 #include "drake/systems/analysis/clf_cbf_utils.h"
 #include "drake/systems/analysis/control_barrier.h"
+#include "drake/systems/analysis/simulator_config_functions.h"
 #include "drake/systems/analysis/test/quadrotor2d.h"
 #include "drake/systems/controllers/linear_quadratic_regulator.h"
+#include "drake/systems/framework/diagram_builder.h"
+#include "drake/systems/primitives/vector_log_sink.h"
 
 namespace drake {
 namespace systems {
 namespace analysis {
 const double kInf = std::numeric_limits<double>::infinity();
+
+Eigen::Matrix<double, 4, 2> GetCbfAu() {
+  Eigen::Matrix<double, 4, 2> Au;
+  // clang-format off
+  Au << 1, 0,
+        0, 1,
+        -1, 0,
+        0, -1;
+  // clang-format on
+  return Au;
+}
+
+class QuadrotorCbfController : public CbfController {
+ public:
+  DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(QuadrotorCbfController)
+
+  QuadrotorCbfController(Eigen::Matrix<symbolic::Variable, 7, 1> x,
+                         Eigen::Matrix<symbolic::Polynomial, 7, 1> f,
+                         Eigen::Matrix<symbolic::Polynomial, 7, 2> G,
+                         symbolic::Polynomial cbf, double deriv_eps,
+                         double thrust_max)
+      : CbfController(x, f, G, std::nullopt /* dynamics_denominator */, cbf,
+                      deriv_eps),
+        thrust_max_{thrust_max} {}
+
+  virtual ~QuadrotorCbfController() {}
+
+ private:
+  void DoCalcControl(const Context<double>& context,
+                     BasicVector<double>* output) const {
+    const Eigen::VectorXd x_val = this->x_input_port().Eval(context);
+    symbolic::Environment env;
+    env.insert(this->x(), x_val);
+
+    solvers::MathematicalProgram prog;
+    const int nu = 2;
+    auto u = prog.NewContinuousVariables<2>("u");
+    prog.AddBoundingBoxConstraint(0, thrust_max_, u);
+    prog.AddQuadraticCost(Eigen::Matrix2d::Identity(), Eigen::Vector2d::Zero(),
+                          0, u);
+    const double dhdx_times_f_val = dhdx_times_f().Evaluate(env);
+    Eigen::RowVector2d dhdx_times_G_val;
+    for (int i = 0; i < nu; ++i) {
+      dhdx_times_G_val(i) = this->dhdx_times_G()(i).Evaluate(env);
+    }
+    const double h_val = this->cbf().Evaluate(env);
+    // dhdx * G * u + dhdx * f >= -eps * h
+    prog.AddLinearConstraint(dhdx_times_G_val,
+                             -deriv_eps() * h_val - dhdx_times_f_val, kInf, u);
+    const auto result = solvers::Solve(prog);
+    if (!result.is_success()) {
+      drake::log()->info("-dhdx*f - eps*h={}, dhdx*G={}",
+                         -dhdx_times_f_val - deriv_eps() * h_val,
+                         dhdx_times_G_val);
+      abort();
+    }
+    const Eigen::Vector2d u_val = result.GetSolution(u);
+    output->get_mutable_value() = u_val;
+  }
+
+ private:
+  double thrust_max_;
+};
+
+void Simulate(const Eigen::Matrix<symbolic::Variable, 7, 1>& x,
+              const symbolic::Polynomial& cbf, double thrust_max,
+              double deriv_eps, const Vector6d& initial_state,
+              double duration) {
+  systems::DiagramBuilder<double> builder;
+
+  auto quadrotor = builder.AddSystem<QuadrotorPlant<double>>();
+
+  auto state_converter = builder.AddSystem<ToTrigStateConverter<double>>();
+
+  Eigen::Matrix<symbolic::Polynomial, 7, 1> f;
+  Eigen::Matrix<symbolic::Polynomial, 7, 2> G;
+  TrigPolyDynamics(*quadrotor, x, &f, &G);
+
+  auto cbf_controller = builder.AddSystem<QuadrotorCbfController>(
+      x, f, G, cbf, deriv_eps, thrust_max);
+
+  auto state_logger =
+      LogVectorOutput(quadrotor->get_state_output_port(), &builder);
+
+  auto cbf_logger =
+      LogVectorOutput(cbf_controller->cbf_output_port(), &builder);
+
+  auto control_logger =
+      LogVectorOutput(cbf_controller->control_output_port(), &builder);
+
+  builder.Connect(quadrotor->get_state_output_port(),
+                  state_converter->get_input_port());
+  builder.Connect(state_converter->get_output_port(),
+                  cbf_controller->x_input_port());
+  builder.Connect(cbf_controller->control_output_port(),
+                  quadrotor->get_actuation_input_port());
+
+  auto diagram = builder.Build();
+
+  Simulator<double> simulator(*diagram);
+
+  ResetIntegratorFromFlags(&simulator, "implicit_euler", 0.01);
+
+  simulator.get_mutable_context().SetContinuousState(initial_state);
+  simulator.AdvanceTo(duration);
+
+  const Eigen::MatrixXd state_data =
+      state_logger->FindLog(simulator.get_context()).data();
+  std::cout << "z_min: " << state_data.row(1).minCoeff() << "\n";
+  std::cout << "z_max: " << state_data.row(1).maxCoeff() << "\n";
+
+  const Eigen::RowVectorXd cbf_data = cbf_logger->FindLog(simulator.get_context()).data().row(0);
+  std::cout << "cbf min: " << cbf_data.minCoeff() << "\n";
+
+  unused(control_logger);
+  unused(cbf_logger);
+}
 
 symbolic::Polynomial FindCbfInit(
     const Eigen::Matrix<symbolic::Variable, 7, 1>& x, int h_degree) {
@@ -487,9 +608,12 @@ int DoMain() {
 
   std::optional<std::string> load_cbf_file = std::nullopt;
   load_cbf_file = "sos_data/quadrotor2d_trig_cbf4.txt";
-  const symbolic::Polynomial h_sol = SearchWithSlackA(
-      plant, x, thrust_max, deriv_eps, unsafe_regions, x_safe, load_cbf_file);
-  Save(h_sol, "sos_data/quadrotor2d_trig_cbf5.txt");
+  symbolic::Polynomial h_sol = Load(symbolic::Variables(x), *load_cbf_file);
+  //const symbolic::Polynomial h_sol = SearchWithSlackA(
+  //    plant, x, thrust_max, deriv_eps, unsafe_regions, x_safe, load_cbf_file);
+  //Save(h_sol, "sos_data/quadrotor2d_trig_cbf5.txt");
+
+  Simulate(x, h_sol, thrust_max, deriv_eps, Vector6d::Zero(), 10);
 
   // const symbolic::Polynomial h_sol = Search(plant, x, thrust_max, deriv_eps,
   // unsafe_regions);

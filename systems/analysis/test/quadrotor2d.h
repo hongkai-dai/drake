@@ -38,6 +38,10 @@ class QuadrotorPlant : public LeafSystem<T> {
     return this->get_output_port(state_output_port_index_);
   }
 
+  const InputPort<T>& get_actuation_input_port() const {
+    return this->get_input_port();
+  }
+
  private:
   void DoCalcTimeDerivatives(
       const systems::Context<T>& context,
@@ -108,6 +112,21 @@ symbolic::Polynomial StateEqConstraint(
 controllers::LinearQuadraticRegulatorResult SynthesizeTrigLqr(
     const Eigen::Ref<const Eigen::Matrix<double, 7, 7>>& Q,
     const Eigen::Ref<const Eigen::Matrix2d>& R);
+
+template <typename T>
+class ToTrigStateConverter : public LeafSystem<T> {
+ public:
+  ToTrigStateConverter();
+
+  template <typename U>
+  explicit ToTrigStateConverter(const ToTrigStateConverter<U>&)
+      : ToTrigStateConverter<T>() {}
+
+  ~ToTrigStateConverter(){};
+
+ private:
+  void CalcTrigState(const Context<T>& context, BasicVector<T>* x_trig) const;
+};
 
 }  // namespace analysis
 }  // namespace systems

@@ -648,6 +648,47 @@ ControlBarrierBoxInputBound::ConstructLagrangianAndBProgram(
                        hdot_sos_constraint);
   return prog;
 }
+
+CbfController::CbfController(
+    const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+    const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
+    const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
+    std::optional<symbolic::Polynomial> dynamics_denominator,
+    symbolic::Polynomial cbf, double deriv_eps)
+    : LeafSystem<double>(),
+      x_{x},
+      f_{f},
+      G_{G},
+      dynamics_denominator_{std::move(dynamics_denominator)},
+      cbf_{std::move(cbf)},
+      deriv_eps_{deriv_eps} {
+  const int nx = f_.rows();
+  const int nu = G_.cols();
+  DRAKE_DEMAND(x_.rows() == nx);
+  const RowVectorX<symbolic::Polynomial> dhdx = cbf_.Jacobian(x_);
+  dhdx_times_f_ = dhdx.dot(f_);
+  dhdx_times_G_ = dhdx * G_;
+
+  x_input_index_ = this->DeclareVectorInputPort("x", nx).get_index();
+
+  control_output_index_ =
+      this->DeclareVectorOutputPort("control", nu, &CbfController::CalcControl)
+          .get_index();
+
+  cbf_output_index_ =
+      this->DeclareVectorOutputPort("cbf", 1, &CbfController::CalcCbf)
+          .get_index();
+}
+
+void CbfController::CalcCbf(const Context<double>& context,
+                            BasicVector<double>* output) const {
+  const Eigen::VectorXd x_val =
+      this->get_input_port(x_input_index_).Eval(context);
+  symbolic::Environment env;
+  env.insert(x_, x_val);
+  Eigen::VectorBlock<VectorX<double>> cbf_vec = output->get_mutable_value();
+  cbf_vec(0) = cbf_.Evaluate(env);
+}
 }  // namespace analysis
 }  // namespace systems
 }  // namespace drake

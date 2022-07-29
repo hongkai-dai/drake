@@ -5,6 +5,7 @@
 #include "drake/solvers/mathematical_program.h"
 #include "drake/solvers/mathematical_program_result.h"
 #include "drake/solvers/mosek_solver.h"
+#include "drake/systems/framework/leaf_system.h"
 
 namespace drake {
 namespace systems {
@@ -346,6 +347,75 @@ class ControlBarrierBoxInputBound {
   std::vector<VectorX<symbolic::Polynomial>> unsafe_regions_;
 };
 
+class CbfController : public systems::LeafSystem<double> {
+ public:
+  DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(CbfController)
+
+  CbfController(const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+                const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
+                const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
+                std::optional<symbolic::Polynomial> dynamics_denominator,
+                symbolic::Polynomial cbf, double deriv_eps);
+
+  virtual ~CbfController() {}
+
+  void CalcCbf(const Context<double>& context,
+               BasicVector<double>* output) const;
+
+  void CalcControl(const Context<double>& context,
+                   BasicVector<double>* output) const {
+    DoCalcControl(context, output);
+  }
+
+  const InputPort<double>& x_input_port() const {
+    return this->get_input_port(x_input_index_);
+  }
+
+  const OutputPort<double>& cbf_output_port() const {
+    return this->get_output_port(cbf_output_index_);
+  }
+
+  const OutputPort<double>& control_output_port() const {
+    return this->get_output_port(control_output_index_);
+  }
+
+ protected:
+  const VectorX<symbolic::Variable>& x() const { return x_; }
+
+  const VectorX<symbolic::Polynomial>& f() const { return f_; }
+
+  const MatrixX<symbolic::Polynomial>& G() const { return G_; }
+
+  const std::optional<symbolic::Polynomial>& dynamics_denominator() const {
+    return dynamics_denominator_;
+  }
+
+  const symbolic::Polynomial& cbf() const { return cbf_; }
+
+  double deriv_eps() const { return deriv_eps_; }
+
+  const symbolic::Polynomial& dhdx_times_f() const { return dhdx_times_f_; }
+
+  const RowVectorX<symbolic::Polynomial>& dhdx_times_G() const {
+    return dhdx_times_G_;
+  }
+
+ private:
+  virtual void DoCalcControl(const Context<double>& context,
+                             BasicVector<double>* output) const = 0;
+
+  VectorX<symbolic::Variable> x_;
+  VectorX<symbolic::Polynomial> f_;
+  MatrixX<symbolic::Polynomial> G_;
+  std::optional<symbolic::Polynomial> dynamics_denominator_;
+  symbolic::Polynomial cbf_;
+  double deriv_eps_;
+  symbolic::Polynomial dhdx_times_f_;
+  RowVectorX<symbolic::Polynomial> dhdx_times_G_;
+  InputPortIndex x_input_index_;
+  OutputPortIndex control_output_index_;
+  OutputPortIndex cbf_output_index_;
+};
 }  // namespace analysis
 }  // namespace systems
 }  // namespace drake

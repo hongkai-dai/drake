@@ -19,6 +19,11 @@ namespace systems {
 namespace analysis {
 const double kInf = std::numeric_limits<double>::infinity();
 
+enum Scenario {
+  kCeilingGround,
+  kBox,
+};
+
 Eigen::Matrix<double, 4, 2> GetCbfAu() {
   Eigen::Matrix<double, 4, 2> Au;
   // clang-format off
@@ -198,7 +203,7 @@ symbolic::Polynomial FindCbfInit(
 }
 
 [[maybe_unused]] symbolic::Polynomial SearchWithSlackA(
-    const QuadrotorPlant<double>& quadrotor,
+    Scenario scenario, const QuadrotorPlant<double>& quadrotor,
     const Eigen::Matrix<symbolic::Variable, 7, 1>& x, double thrust_max,
     double deriv_eps,
     const std::vector<VectorX<symbolic::Polynomial>>& unsafe_regions,
@@ -217,22 +222,34 @@ symbolic::Polynomial FindCbfInit(
   const std::optional<symbolic::Polynomial> dynamics_denominator = std::nullopt;
 
   const double beta_minus = -0.1;
-  const std::optional<double> beta_plus = std::nullopt;
+  std::optional<double> beta_plus = std::nullopt;
+  if (scenario == Scenario::kBox) {
+    beta_plus = 0.1;
+  }
   const ControlBarrier dut(f, G, dynamics_denominator, x, beta_minus, beta_plus,
                            unsafe_regions, u_vertices, state_constraints);
 
   // Set h_init to some values, it should satisfy h_init(x_safe) >= 0.
-  const int h_degree = 4;
+  const int h_degree = 2;
   const symbolic::Variables x_set(x);
   // symbolic::Polynomial h_init = FindCbfInit(x, h_degree);
   symbolic::Polynomial h_init;
   if (load_cbf_file.has_value()) {
     h_init = Load(x_set, load_cbf_file.value());
   } else {
-    const VectorX<symbolic::Monomial> h_monomials =
-        ComputeMonomialBasisNoConstant(x_set, h_degree / 2,
-                                       symbolic::internal::DegreeType::kAny);
-    h_init = symbolic::Polynomial(1 - h_monomials.dot(h_monomials));
+    switch (scenario) {
+      case Scenario::kCeilingGround: {
+        h_init =
+            symbolic::Polynomial(1 - x.cast<symbolic::Expression>().dot(x));
+        break;
+      }
+      case Scenario::kBox: {
+        h_init = symbolic::Polynomial(
+            pow(x(0) - 0.8, 2) +
+            x.tail<5>().cast<symbolic::Expression>().dot(x.tail<5>()) - 1);
+        break;
+      }
+    }
   }
   const Eigen::VectorXd h_init_x_safe =
       h_init.EvaluateIndeterminates(x, x_safe);
@@ -245,15 +262,28 @@ symbolic::Polynomial FindCbfInit(
   const int lambda0_degree = 4;
   const std::optional<int> lambda1_degree = std::nullopt;
   const std::vector<int> l_degrees = {2, 2, 2, 2};
-  const std::vector<int> hdot_eq_lagrangian_degrees = {6};
-  const int hdot_a_degree = 8;
+  const std::vector<int> hdot_eq_lagrangian_degrees = {h_degree +
+                                                       lambda0_degree - 2};
+  const int hdot_a_degree = h_degree + lambda0_degree;
 
   const std::vector<int> t_degrees = {0, 0};
-  const std::vector<std::vector<int>> s_degrees = {{h_degree - 2},
-                                                   {h_degree - 2}};
-  const std::vector<std::vector<int>> unsafe_eq_lagrangian_degrees = {
-      {h_degree - 2}, {h_degree - 2}};
-  const std::vector<int> unsafe_a_degrees = {h_degree, h_degree};
+  std::vector<std::vector<int>> s_degrees;
+  std::vector<std::vector<int>> unsafe_eq_lagrangian_degrees;
+  std::vector<int> unsafe_a_degrees;
+  switch (scenario) {
+    case Scenario::kCeilingGround: {
+      s_degrees = {{h_degree - 2}, {h_degree - 2}};
+      unsafe_eq_lagrangian_degrees = {{h_degree - 2}, {h_degree - 2}};
+      unsafe_a_degrees = {h_degree, h_degree};
+      break;
+    }
+    case Scenario::kBox: {
+      s_degrees = {{h_degree - 2, h_degree - 2, h_degree - 2, h_degree - 2}};
+      unsafe_eq_lagrangian_degrees = {{h_degree - 2}};
+      unsafe_a_degrees = {h_degree};
+      break;
+    }
+  };
 
   symbolic::Polynomial h_sol = h_init;
 
@@ -262,7 +292,7 @@ symbolic::Polynomial FindCbfInit(
   VectorX<symbolic::Polynomial> l_sol;
   int iter_count = 0;
   const int iter_max = 40;
-  const double a_is_zero_tol = 1E-8;
+  const double a_is_zero_tol = 3E-9;
   bool hdot_a_is_zero = false;
   std::vector<bool> unsafe_a_is_zero(unsafe_regions.size(), false);
   bool converged = false;
@@ -584,26 +614,54 @@ int DoMain() {
   const double thrust_max = 3 * thrust_equilibrium;
   const double deriv_eps = 0.5;
   // The unsafe region is the ground and the ceiling.
-  std::vector<VectorX<symbolic::Polynomial>> unsafe_regions(2);
-  unsafe_regions[0].resize(1);
-  unsafe_regions[0](0) = symbolic::Polynomial(x(1) + 0.3);
-  unsafe_regions[1].resize(1);
-  unsafe_regions[1](0) = symbolic::Polynomial(0.5 - x(1));
+  std::vector<VectorX<symbolic::Polynomial>> unsafe_regions;
+  Eigen::MatrixXd safe_states;
+  const Scenario scenario{Scenario::kBox};
+  switch (scenario) {
+    case Scenario::kCeilingGround: {
+      unsafe_regions.resize(2);
+      unsafe_regions[0].resize(1);
+      unsafe_regions[0](0) = symbolic::Polynomial(x(1) + 0.3);
+      unsafe_regions[1].resize(1);
+      unsafe_regions[1](0) = symbolic::Polynomial(0.5 - x(1));
+      safe_states.resize(6, 4);
+      safe_states.col(0) << 0, 0, 0, 0, 0, 0;
+      safe_states.col(1) << 0, 0.2, 0, 0, 0, 0;
+      safe_states.col(2) << 0, -0.2, 0, 0, 0, 0;
+      safe_states.col(3) << 0, 0.45, 0.1, 0, 0, 0;
+      break;
+    }
+    case Scenario::kBox: {
+      // A box 0.6 <= px <= 1
+      //       -0.2 <= pz <= 0.2
+      unsafe_regions.resize(1);
+      unsafe_regions[0].resize(4);
+      unsafe_regions[0](0) = symbolic::Polynomial(x(0) - 1);
+      unsafe_regions[0](1) = symbolic::Polynomial(0.6 - x(0));
+      unsafe_regions[0](2) = symbolic::Polynomial(x(1) - 0.1);
+      unsafe_regions[0](3) = symbolic::Polynomial(-0.2 - x(1));
+      safe_states.resize(6, 2);
+      safe_states.col(0) << 0, 0, 0, 0, 0, 0;
+      safe_states.col(1) << 0.5, 0, 0, 0, 0, 0;
+      break;
+    }
+  }
 
-  Eigen::MatrixXd safe_states(6, 4);
-  safe_states.col(0) << 0, 0, 0, 0, 0, 0;
-  safe_states.col(1) << 0, 0.2, 0, 0, 0, 0;
-  safe_states.col(2) << 0, -0.2, 0, 0, 0, 0;
-  safe_states.col(3) << 0, 0.45, 0.1, 0, 0, 0;
   Eigen::MatrixXd x_safe(7, safe_states.cols());
   for (int i = 0; i < safe_states.cols(); ++i) {
     x_safe.col(i) = ToTrigState<double>(safe_states.col(i));
   }
 
   std::optional<std::string> load_cbf_file = std::nullopt;
-  load_cbf_file = "sos_data/quadrotor2d_trig_cbf4.txt";
-  const symbolic::Polynomial h_sol = SearchWithSlackA(
-      plant, x, thrust_max, deriv_eps, unsafe_regions, x_safe, load_cbf_file);
+  load_cbf_file =
+      "/home/hongkaidai/sos_clf_cbf_data/quadrotor2d_cbf/"
+      "quadrotor2d_trig_cbf_box2.txt";
+  const symbolic::Polynomial h_sol =
+      SearchWithSlackA(scenario, plant, x, thrust_max, deriv_eps,
+                       unsafe_regions, x_safe, load_cbf_file);
+  Save(h_sol,
+       "/home/hongkaidai/sos_clf_cbf_data/quadrotor2d_cbf/"
+       "quadrotor2d_trig_cbf_box3.txt");
   // Save(h_sol, "sos_data/quadrotor2d_trig_cbf5.txt");
 
   // Simulate(x, h_sol, thrust_max, deriv_eps, Vector6d::Zero(), 10);

@@ -523,13 +523,15 @@ Parameter ``interruptible``:
         .def_readonly("l", &Class::LagrangianReturn::l)
         .def_readonly("l_grams", &Class::LagrangianReturn::l_grams)
         .def_readonly("state_constraints_lagrangian",
-            &Class::LagrangianReturn::state_constraints_lagrangian);
+            &Class::LagrangianReturn::state_constraints_lagrangian)
+        .def_readonly("a", &Class::LagrangianReturn::a)
+        .def_readonly("a_gram", &Class::LagrangianReturn::a_gram);
 
     control_barrier.def("ConstructLagrangianProgram",
         &Class::ConstructLagrangianProgram, py::arg("h"), py::arg("deriv_eps"),
         py::arg("lambda0_degree"), py::arg("lambda1_degree"),
         py::arg("l_degrees"), py::arg("state_constraints_lagrangian_degrees"),
-        cls_doc.ConstructLagrangianProgram.doc);
+        py::arg("a_degree"), cls_doc.ConstructLagrangianProgram.doc);
 
     py::class_<Class::UnsafeReturn>(control_barrier, "UnsafeReturn")
         .def(
@@ -542,13 +544,15 @@ Parameter ``interruptible``:
         .def_readonly("s_grams", &Class::UnsafeReturn::s_grams)
         .def_readonly("state_constraints_lagrangian",
             &Class::UnsafeReturn::state_constraints_lagrangian)
+        .def_readonly("a", &Class::UnsafeReturn::a)
+        .def_readonly("a_gram", &Class::UnsafeReturn::a_gram)
         .def_readonly("sos_poly", &Class::UnsafeReturn::sos_poly)
         .def_readonly("sos_poly_gram", &Class::UnsafeReturn::sos_poly_gram);
 
     control_barrier.def("ConstructUnsafeRegionProgram",
         &Class::ConstructUnsafeRegionProgram, py::arg("h"),
         py::arg("region_index"), py::arg("t_degree"), py::arg("s_degrees"),
-        py::arg("state_constraints_lagrangian_degrees"),
+        py::arg("state_constraints_lagrangian_degrees"), py::arg("a_degree"),
         cls_doc.ConstructUnsafeRegionProgram.doc);
 
     py::class_<Class::BarrierReturn>(control_barrier, "BarrierReturn")
@@ -559,19 +563,28 @@ Parameter ``interruptible``:
         .def_readonly("h", &Class::BarrierReturn::h)
         .def_readonly("hdot_sos", &Class::BarrierReturn::hdot_sos)
         .def_readonly("hdot_sos_gram", &Class::BarrierReturn::hdot_sos_gram)
+        .def_readonly("hdot_state_constraints_lagrangian",
+            &Class::BarrierReturn::hdot_state_constraints_lagrangian)
+        .def_readonly("hdot_a", &Class::BarrierReturn::hdot_a)
+        .def_readonly("hdot_a_gram", &Class::BarrierReturn::hdot_a_gram)
         .def_readonly("s", &Class::BarrierReturn::s)
         .def_readonly("s_grams", &Class::BarrierReturn::s_grams)
         .def_readonly(
             "unsafe_sos_polys", &Class::BarrierReturn::unsafe_sos_polys)
         .def_readonly("unsafe_sos_poly_grams",
-            &Class::BarrierReturn::unsafe_sos_poly_grams);
+            &Class::BarrierReturn::unsafe_sos_poly_grams)
+        .def_readonly("unsafe_state_constraints_lagrangian",
+            &Class::BarrierReturn::unsafe_state_constraints_lagrangian)
+        .def_readonly("unsafe_a", &Class::BarrierReturn::unsafe_a)
+        .def_readonly("unsafe_a_gram", &Class::BarrierReturn::unsafe_a_gram);
 
     control_barrier.def("ConstructBarrierProgram",
         &Class::ConstructBarrierProgram, py::arg("lambda0"), py::arg("lambda1"),
         py::arg("l"), py::arg("hdot_state_constraints_lagrangian_degrees"),
-        py::arg("t"), py::arg("unsafe_state_constraints_lagrangian_degrees"),
+        py::arg("hdot_a_degree"), py::arg("t"),
+        py::arg("unsafe_state_constraints_lagrangian_degrees"),
         py::arg("h_degree"), py::arg("deriv_eps"), py::arg("s_degrees"),
-        cls_doc.ConstructBarrierProgram.doc);
+        py::arg("unsafe_a_degrees"), cls_doc.ConstructBarrierProgram.doc);
   }
 }
 

@@ -89,6 +89,8 @@ class ControlBarrier {
     VectorX<symbolic::Polynomial> l;
     std::vector<MatrixX<symbolic::Variable>> l_grams;
     VectorX<symbolic::Polynomial> state_constraints_lagrangian;
+    std::optional<symbolic::Polynomial> a;
+    std::optional<MatrixX<symbolic::Variable>> a_gram;
     symbolic::Polynomial hdot_sos;
     VectorX<symbolic::Monomial> hdot_monomials;
     MatrixX<symbolic::Variable> hdot_gram;
@@ -98,14 +100,20 @@ class ControlBarrier {
    * Given the CBF h(x), constructs the program to find the Lagrangian λ₀(x) and
    * lᵢ(x)
    * <pre>
-   * (1+λ₀(x))(β⁻−h(x)) −∑ᵢlᵢ(x)(−εh−∂h/∂xf(x)−∂h/∂xG(x)uⁱ) −λ₁(x)(β⁺−h(x)) is
-   * sos λ₀(x), λ₁(x), lᵢ(x) is sos
+   * (1+λ₀(x))(β⁻−h(x)) −∑ᵢlᵢ(x)(−εh−∂h/∂xf(x)−∂h/∂xG(x)uⁱ) −λ₁(x)(β⁺−h(x))
+   *     + a(x)is sos
+   *  λ₀(x), λ₁(x), lᵢ(x), a(x) is sos
    * </pre>
+   * a(x) is the slack variable to relax the roblem such that this optimization
+   * is always feasible.
+   * @param a_degree The degree of the slack polynomial a(x). If
+   * a_degree=std::nullopt, then we use a(x)=0.
    */
   LagrangianReturn ConstructLagrangianProgram(
       const symbolic::Polynomial& h, double deriv_eps, int lambda0_degree,
       std::optional<int> lambda1_degree, const std::vector<int>& l_degrees,
-      const std::vector<int>& state_constraints_lagrangian_degrees) const;
+      const std::vector<int>& state_constraints_lagrangian_degrees,
+      std::optional<int> a_degree) const;
 
   struct UnsafeReturn {
     UnsafeReturn() : prog{std::make_unique<solvers::MathematicalProgram>()} {}
@@ -121,6 +129,8 @@ class ControlBarrier {
     VectorX<symbolic::Polynomial> s;
     std::vector<MatrixX<symbolic::Variable>> s_grams;
     VectorX<symbolic::Polynomial> state_constraints_lagrangian;
+    std::optional<symbolic::Polynomial> a;
+    std::optional<MatrixX<symbolic::Variable>> a_gram;
     symbolic::Polynomial sos_poly;
     MatrixX<symbolic::Variable> sos_poly_gram;
   };
@@ -137,7 +147,8 @@ class ControlBarrier {
   UnsafeReturn ConstructUnsafeRegionProgram(
       const symbolic::Polynomial& h, int region_index, int t_degree,
       const std::vector<int>& s_degrees,
-      const std::vector<int>& state_constraints_lagrangian_degrees) const;
+      const std::vector<int>& state_constraints_lagrangian_degrees,
+      std::optional<int> a_degree) const;
 
   struct BarrierReturn {
     BarrierReturn() : prog{std::make_unique<solvers::MathematicalProgram>()} {}
@@ -152,12 +163,16 @@ class ControlBarrier {
     symbolic::Polynomial hdot_sos;
     MatrixX<symbolic::Variable> hdot_sos_gram;
     VectorX<symbolic::Polynomial> hdot_state_constraints_lagrangian;
+    std::optional<symbolic::Polynomial> hdot_a;
+    std::optional<MatrixX<symbolic::Variable>> hdot_a_gram;
     std::vector<VectorX<symbolic::Polynomial>> s;
     std::vector<std::vector<MatrixX<symbolic::Variable>>> s_grams;
     std::vector<symbolic::Polynomial> unsafe_sos_polys;
     std::vector<MatrixX<symbolic::Variable>> unsafe_sos_poly_grams;
     std::vector<VectorX<symbolic::Polynomial>>
         unsafe_state_constraints_lagrangian;
+    std::vector<std::optional<symbolic::Polynomial>> unsafe_a;
+    std::vector<std::optional<MatrixX<symbolic::Variable>>> unsafe_a_gram;
   };
 
   /**
@@ -172,17 +187,21 @@ class ControlBarrier {
    *     h(xʲ) >= 0, xʲ ∈ verified_safe_states
    * </pre>
    * where eps in the objective is a small positive constant.
+   * @note We haven't imposed any cost on this program yet (even when we have
+   * the slack polynomial hdot_a and unsafe_a).
    */
   BarrierReturn ConstructBarrierProgram(
       const symbolic::Polynomial& lambda0,
       const std::optional<symbolic::Polynomial>& lambda1,
       const VectorX<symbolic::Polynomial>& l,
       const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
+      std::optional<int> hdot_a_degree,
       const std::vector<symbolic::Polynomial>& t,
       const std::vector<std::vector<int>>&
           unsafe_state_constraints_lagrangian_degrees,
       int h_degree, double deriv_eps,
-      const std::vector<std::vector<int>>& s_degrees) const;
+      const std::vector<std::vector<int>>& s_degrees,
+      const std::vector<std::optional<int>>& unsafe_a_degrees) const;
 
   /**
    * Add the cost
@@ -309,10 +328,14 @@ class ControlBarrier {
     std::optional<symbolic::Polynomial> lambda1;
     VectorX<symbolic::Polynomial> l;
     VectorX<symbolic::Polynomial> hdot_state_constraints_lagrangian;
+    std::optional<symbolic::Polynomial> hdot_a;
+    std::optional<Eigen::MatrixXd> hdot_a_gram;
     std::vector<symbolic::Polynomial> t;
     std::vector<VectorX<symbolic::Polynomial>> s;
     std::vector<VectorX<symbolic::Polynomial>>
         unsafe_state_constraints_lagrangian;
+    std::vector<std::optional<symbolic::Polynomial>> unsafe_a;
+    std::vector<std::optional<Eigen::MatrixXd>> unsafe_a_grams;
   };
   /**
    * Search Lagrangian multiplier λ₀(x), l(x), t(x), s(x) to prove that h(x) is
@@ -323,10 +346,11 @@ class ControlBarrier {
       const symbolic::Polynomial& h, double deriv_eps, int lambda0_degree,
       std::optional<int> lambda1_degree, const std::vector<int>& l_degrees,
       const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
-      const std::vector<int>& t_degree,
+      std::optional<int> hdot_a_degree, const std::vector<int>& t_degree,
       const std::vector<std::vector<int>>& s_degrees,
       const std::vector<std::vector<int>>&
           unsafe_state_constraints_lagrangian_degrees,
+      const std::vector<std::optional<int>>& unsafe_a_degrees,
       const SearchOptions& search_options) const;
 
  private:

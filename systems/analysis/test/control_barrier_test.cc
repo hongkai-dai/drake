@@ -115,9 +115,10 @@ TEST_F(SimpleLinearSystemTest, ControlBarrier) {
   const int lambda1_degree = 2;
   const std::vector<int> l_degrees = {2, 2, 2, 2};
   const std::vector<int> state_constraints_lagrangian_degrees{};
+  const std::optional<int> hdot_a_degree = std::nullopt;
   auto lagrangian_ret = dut.ConstructLagrangianProgram(
       h_init, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
-      state_constraints_lagrangian_degrees);
+      state_constraints_lagrangian_degrees, hdot_a_degree);
   auto result_lagrangian = solvers::Solve(*(lagrangian_ret.prog));
   ASSERT_TRUE(result_lagrangian.is_success());
   const Eigen::MatrixXd lambda0_gram_sol =
@@ -153,9 +154,10 @@ TEST_F(SimpleLinearSystemTest, ControlBarrier) {
   const int t_degree = 0;
   const std::vector<int> s_degrees = {0, 0};
   const std::vector<int> unsafe_state_constraints_lagrangian_degrees{};
+  const std::optional<int> unsafe_a_degrees = std::nullopt;
   auto unsafe_ret = dut.ConstructUnsafeRegionProgram(
       h_init, 0, t_degree, s_degrees,
-      unsafe_state_constraints_lagrangian_degrees);
+      unsafe_state_constraints_lagrangian_degrees, unsafe_a_degrees);
   const auto result_unsafe = solvers::Solve(*(unsafe_ret.prog));
   ASSERT_TRUE(result_unsafe.is_success());
   const symbolic::Polynomial t_sol = result_unsafe.GetSolution(unsafe_ret.t);
@@ -188,9 +190,9 @@ TEST_F(SimpleLinearSystemTest, ControlBarrier) {
   const double eps = 1E-3;
   auto barrier_ret = dut.ConstructBarrierProgram(
       lambda0_sol, lambda1_sol, l_sol,
-      hdot_state_constraints_lagrangian_degrees, {t_sol},
+      hdot_state_constraints_lagrangian_degrees, hdot_a_degree, {t_sol},
       {unsafe_state_constraints_lagrangian_degrees}, h_degree, deriv_eps,
-      {s_degrees});
+      {s_degrees}, {unsafe_a_degrees});
   RemoveTinyCoeff(barrier_ret.prog.get(), 1E-10);
   auto result_barrier = solvers::Solve(*(barrier_ret.prog));
   ASSERT_TRUE(result_barrier.is_success());

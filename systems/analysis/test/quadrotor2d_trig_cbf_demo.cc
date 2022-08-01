@@ -522,8 +522,11 @@ symbolic::Polynomial FindCbfInit(
       solvers::CommonSolverOption::kPrintToConsole, 1);
   const auto search_lagrangian_ret = dut.SearchLagrangian(
       h_sol, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
-      hdot_eq_lagrangian_degrees, t_degrees, s_degrees,
-      unsafe_eq_lagrangian_degrees, search_options);
+      hdot_eq_lagrangian_degrees, std::nullopt /* hdot_a_degree */, t_degrees,
+      s_degrees, unsafe_eq_lagrangian_degrees,
+      std::vector<std::optional<int>>(unsafe_regions.size(),
+                                      std::nullopt) /* unsafe_a_degrees */,
+      search_options);
   drake::log()->info("h_sol is valid? {}", search_lagrangian_ret.success);
   return h_sol;
 }

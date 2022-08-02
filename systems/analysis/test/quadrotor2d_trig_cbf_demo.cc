@@ -221,7 +221,7 @@ symbolic::Polynomial FindCbfInit(
 
   const std::optional<symbolic::Polynomial> dynamics_denominator = std::nullopt;
 
-  const double beta_minus = -0.1;
+  const double beta_minus = -0.;
   std::optional<double> beta_plus = std::nullopt;
   if (scenario == Scenario::kBox) {
     beta_plus = 0.1;
@@ -269,7 +269,8 @@ symbolic::Polynomial FindCbfInit(
   const std::vector<int> t_degrees = {0, 0};
   std::vector<std::vector<int>> s_degrees;
   std::vector<std::vector<int>> unsafe_eq_lagrangian_degrees;
-  std::vector<int> unsafe_a_degrees;
+  std::vector<std::optional<int>> unsafe_a_degrees;
+  Eigen::VectorXd h_x_safe_min = Eigen::VectorXd::Constant(x_safe.cols(), 0.01);
   switch (scenario) {
     case Scenario::kCeilingGround: {
       s_degrees = {{h_degree - 2}, {h_degree - 2}};
@@ -285,250 +286,30 @@ symbolic::Polynomial FindCbfInit(
     }
   };
 
-  symbolic::Polynomial h_sol = h_init;
+  double hdot_a_zero_tol = 3E-9;
+  double unsafe_a_zero_tol = 1E-9;
+  ControlBarrier::SearchWithSlackAOptions search_options(
+      hdot_a_zero_tol, unsafe_a_zero_tol, true, 1, std::vector<double>{1., 1.});
+  search_options.bilinear_iterations = 100;
+  const auto search_result = dut.SearchWithSlackA(
+      h_init, h_degree, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
+      hdot_eq_lagrangian_degrees, hdot_a_degree, t_degrees, s_degrees,
+      unsafe_eq_lagrangian_degrees, unsafe_a_degrees, x_safe, h_x_safe_min,
+      search_options);
+  std::cout << search_result.h << "\n";
 
-  symbolic::Polynomial lambda0_sol;
-  std::optional<symbolic::Polynomial> lambda1_sol;
-  VectorX<symbolic::Polynomial> l_sol;
-  int iter_count = 0;
-  const int iter_max = 40;
-  const double a_is_zero_tol = 3E-9;
-  bool hdot_a_is_zero = false;
-  std::vector<bool> unsafe_a_is_zero(unsafe_regions.size(), false);
-  bool converged = false;
-  while (iter_count < iter_max && !converged) {
-    {
-      // Search for hdot Lagrangian and a(x)
-      solvers::MathematicalProgram prog;
-      prog.AddIndeterminates(x);
-      symbolic::Polynomial lambda0;
-      std::tie(lambda0, std::ignore) =
-          prog.NewSosPolynomial(x_set, lambda0_degree);
-      std::optional<symbolic::Polynomial> lambda1;
-      VectorX<symbolic::Polynomial> l(4);
-      for (int i = 0; i < 4; ++i) {
-        std::tie(l(i), std::ignore) =
-            prog.NewSosPolynomial(x_set, l_degrees[i]);
-      }
-      VectorX<symbolic::Polynomial> hdot_eq_lagrangians(1);
-      hdot_eq_lagrangians(0) =
-          prog.NewFreePolynomial(x_set, hdot_eq_lagrangian_degrees[0]);
-      std::optional<symbolic::Polynomial> a = std::nullopt;
-      std::optional<MatrixX<symbolic::Variable>> a_gram = std::nullopt;
-      if (!hdot_a_is_zero) {
-        a.emplace(symbolic::Polynomial());
-        a_gram.emplace(MatrixX<symbolic::Variable>());
-        std::tie(*a, *a_gram) = prog.NewSosPolynomial(x_set, hdot_a_degree);
-      }
-      symbolic::Polynomial hdot_sos;
-      VectorX<symbolic::Monomial> hdot_monomials;
-      MatrixX<symbolic::Variable> hdot_gram;
-      dut.AddControlBarrierConstraint(&prog, lambda0, lambda1, l,
-                                      hdot_eq_lagrangians, h_sol, deriv_eps, a,
-                                      &hdot_sos, &hdot_monomials, &hdot_gram);
-      if (a_gram.has_value()) {
-        // Add the cost to minimize the trace of a_gram;
-        prog.AddLinearCost(a_gram->cast<symbolic::Expression>().trace());
-      }
-      solvers::SolverOptions solver_options;
-      solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
-      const auto result = solvers::Solve(prog, std::nullopt, solver_options);
-      if (result.is_success()) {
-        lambda0_sol = result.GetSolution(lambda0);
-        if (a_gram.has_value()) {
-          const auto a_gram_sol = result.GetSolution(*a_gram);
-          drake::log()->info("hdot_a_gram.trace()={}", a_gram_sol.trace());
-          if (a_gram_sol.trace() <= a_is_zero_tol) {
-            hdot_a_is_zero = true;
-          }
-        }
-        GetPolynomialSolutions(result, l, 0., &l_sol);
-      } else {
-        drake::log()->error("Failed to find Lagrangian for hdot condition");
-        return h_sol;
-      }
-    }
-    VectorX<symbolic::Polynomial> t_sol(unsafe_regions.size());
-    {
-      // Search Lagrangian for unsafe regions.
-      for (int i = 0; i < static_cast<int>(unsafe_regions.size()); ++i) {
-        solvers::MathematicalProgram prog;
-        prog.AddIndeterminates(x);
-        symbolic::Polynomial t;
-        std::tie(t, std::ignore) = prog.NewSosPolynomial(x_set, t_degrees[i]);
-        VectorX<symbolic::Polynomial> s(unsafe_regions[i].rows());
-        for (int j = 0; j < s.rows(); ++j) {
-          std::tie(s(j), std::ignore) =
-              prog.NewSosPolynomial(x_set, s_degrees[i][j]);
-        }
-        VectorX<symbolic::Polynomial> unsafe_eq_lagrangian(1);
-        unsafe_eq_lagrangian(0) =
-            prog.NewFreePolynomial(x_set, unsafe_eq_lagrangian_degrees[i][0]);
-        std::optional<symbolic::Polynomial> a = std::nullopt;
-        std::optional<MatrixX<symbolic::Variable>> a_gram = std::nullopt;
-        if (!unsafe_a_is_zero[i]) {
-          a.emplace(symbolic::Polynomial());
-          a_gram.emplace(MatrixX<symbolic::Variable>());
-          std::tie(*a, *a_gram) =
-              prog.NewSosPolynomial(x_set, unsafe_a_degrees[i]);
-        }
-        symbolic::Polynomial unsafe_sos_poly =
-            (1 + t) * -h_sol + s.dot(unsafe_regions[i]) -
-            unsafe_eq_lagrangian.dot(state_constraints) +
-            a.value_or(symbolic::Polynomial());
-        prog.AddSosConstraint(unsafe_sos_poly);
-        if (a_gram.has_value()) {
-          prog.AddLinearCost(a_gram->cast<symbolic::Expression>().trace());
-        }
-        solvers::SolverOptions solver_options;
-        solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole,
-                                 0);
-        const auto result = solvers::Solve(prog, std::nullopt, solver_options);
-        if (result.is_success()) {
-          t_sol(i) = result.GetSolution(t);
-          if (a_gram.has_value()) {
-            const auto a_gram_sol = result.GetSolution(*a_gram);
-            drake::log()->info("unsafe region {} a_gram.trace()={}", i,
-                               a_gram_sol.trace());
-            if (a_gram_sol.trace() <= a_is_zero_tol) {
-              unsafe_a_is_zero[i] = true;
-            }
-          }
-        } else {
-          drake::log()->error("Cannot find Lagrangian for unsafe region {}", i);
-          return h_sol;
-        }
-      }
-    }
-    if (hdot_a_is_zero &&
-        std::all_of(unsafe_a_is_zero.begin(), unsafe_a_is_zero.end(),
-                    [](int flag) { return flag; })) {
-      converged = true;
-      break;
-    }
-
-    {
-      // Find h_sol
-      solvers::MathematicalProgram prog;
-      prog.AddIndeterminates(x);
-      symbolic::Polynomial h = prog.NewFreePolynomial(x_set, h_degree);
-      VectorX<symbolic::Polynomial> hdot_eq_lagrangian(1);
-      hdot_eq_lagrangian(0) =
-          prog.NewFreePolynomial(x_set, hdot_eq_lagrangian_degrees[0]);
-      std::optional<symbolic::Polynomial> hdot_a = std::nullopt;
-      std::optional<MatrixX<symbolic::Variable>> hdot_a_gram = std::nullopt;
-      if (!hdot_a_is_zero) {
-        hdot_a.emplace(symbolic::Polynomial());
-        hdot_a_gram.emplace(MatrixX<symbolic::Variable>());
-        std::tie(*hdot_a, *hdot_a_gram) =
-            prog.NewSosPolynomial(x_set, hdot_a_degree);
-      }
-      symbolic::Polynomial hdot_sos;
-      VectorX<symbolic::Monomial> hdot_monomials;
-      MatrixX<symbolic::Variable> hdot_sos_gram;
-      dut.AddControlBarrierConstraint(
-          &prog, lambda0_sol, lambda1_sol, l_sol, hdot_eq_lagrangian, h,
-          deriv_eps, hdot_a, &hdot_sos, &hdot_monomials, &hdot_sos_gram);
-      if (hdot_a_gram.has_value()) {
-        prog.AddLinearCost(hdot_a_gram->cast<symbolic::Expression>().trace());
-      }
-
-      // Add constraint for each unsafe region.
-      std::vector<std::optional<symbolic::Polynomial>> unsafe_a(
-          unsafe_regions.size(), std::nullopt);
-      std::vector<std::optional<MatrixX<symbolic::Variable>>> unsafe_a_gram(
-          unsafe_regions.size(), std::nullopt);
-      for (int i = 0; i < static_cast<int>(unsafe_regions.size()); ++i) {
-        VectorX<symbolic::Polynomial> s(unsafe_regions[i].rows());
-        for (int j = 0; j < unsafe_regions[i].rows(); ++j) {
-          std::tie(s(j), std::ignore) =
-              prog.NewSosPolynomial(x_set, s_degrees[i][j]);
-        }
-        VectorX<symbolic::Polynomial> unsafe_eq_lagrangian(1);
-        unsafe_eq_lagrangian(0) =
-            prog.NewFreePolynomial(x_set, unsafe_eq_lagrangian_degrees[i][0]);
-        if (!unsafe_a_is_zero[i]) {
-          unsafe_a[i].emplace(symbolic::Polynomial());
-          unsafe_a_gram[i].emplace(MatrixX<symbolic::Variable>());
-          std::tie(*unsafe_a[i], *unsafe_a_gram[i]) =
-              prog.NewSosPolynomial(x_set, unsafe_a_degrees[i]);
-        }
-        const symbolic::Polynomial unsafe_sos_poly =
-            (1 + t_sol(i)) * -h + s.dot(unsafe_regions[i]) -
-            unsafe_eq_lagrangian.dot(state_constraints) +
-            unsafe_a[i].value_or(symbolic::Polynomial());
-        prog.AddSosConstraint(unsafe_sos_poly);
-        if (unsafe_a_gram[i].has_value()) {
-          prog.AddLinearCost(
-              unsafe_a_gram[i]->cast<symbolic::Expression>().trace());
-        }
-      }
-      // Add constraint h(x_safe) >= 0.
-      {
-        Eigen::MatrixXd A_safe;
-        Eigen::VectorXd b_safe;
-        VectorX<symbolic::Variable> var_safe;
-        h.EvaluateWithAffineCoefficients(x, x_safe, &A_safe, &var_safe,
-                                         &b_safe);
-        const double h_safe_states_min = 0.01;
-        prog.AddLinearConstraint(
-            A_safe,
-            Eigen::VectorXd::Constant(b_safe.rows(), h_safe_states_min) -
-                b_safe,
-            Eigen::VectorXd::Constant(b_safe.rows(), kInf), var_safe);
-      }
-
-      solvers::SolverOptions solver_options;
-      solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 0);
-      const auto result = solvers::Solve(prog, std::nullopt, solver_options);
-      if (result.is_success()) {
-        h_sol = result.GetSolution(h);
-        drake::log()->info("barrier step in iter {}", iter_count);
-        if (hdot_a.has_value()) {
-          const auto hdot_a_gram_sol = result.GetSolution(*hdot_a_gram);
-          drake::log()->info("hdot_a_gram.trace()={}", hdot_a_gram_sol.trace());
-          if (hdot_a_gram_sol.trace() <= a_is_zero_tol) {
-            hdot_a_is_zero = true;
-          }
-        }
-        for (int i = 0; i < static_cast<int>(unsafe_regions.size()); ++i) {
-          if (unsafe_a_gram[i].has_value()) {
-            const auto unsafe_a_gram_sol =
-                result.GetSolution(*(unsafe_a_gram[i]));
-            drake::log()->info("unsafe region {} a_gram.trace()={}", i,
-                               unsafe_a_gram_sol.trace());
-            if (unsafe_a_gram_sol.trace() <= a_is_zero_tol) {
-              unsafe_a_is_zero[i] = true;
-            }
-          }
-        }
-      } else {
-        drake::log()->error("Cannot find h");
-        return h_sol;
-      }
-    }
-    if (hdot_a_is_zero &&
-        std::all_of(unsafe_a_is_zero.begin(), unsafe_a_is_zero.end(),
-                    [](int flag) { return flag; })) {
-      converged = true;
-      break;
-    }
-    iter_count++;
-  }
-
-  ControlBarrier::SearchOptions search_options;
   search_options.lagrangian_step_solver_options = solvers::SolverOptions();
   search_options.lagrangian_step_solver_options->SetOption(
       solvers::CommonSolverOption::kPrintToConsole, 1);
   const auto search_lagrangian_ret = dut.SearchLagrangian(
-      h_sol, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
+      search_result.h, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
       hdot_eq_lagrangian_degrees, std::nullopt /* hdot_a_degree */, t_degrees,
       s_degrees, unsafe_eq_lagrangian_degrees,
       std::vector<std::optional<int>>(unsafe_regions.size(),
                                       std::nullopt) /* unsafe_a_degrees */,
       search_options);
   drake::log()->info("h_sol is valid? {}", search_lagrangian_ret.success);
-  return h_sol;
+  return search_result.h;
 }
 
 [[maybe_unused]] symbolic::Polynomial Search(
@@ -619,7 +400,7 @@ int DoMain() {
   // The unsafe region is the ground and the ceiling.
   std::vector<VectorX<symbolic::Polynomial>> unsafe_regions;
   Eigen::MatrixXd safe_states;
-  const Scenario scenario{Scenario::kBox};
+  const Scenario scenario{Scenario::kCeilingGround};
   switch (scenario) {
     case Scenario::kCeilingGround: {
       unsafe_regions.resize(2);
@@ -627,11 +408,11 @@ int DoMain() {
       unsafe_regions[0](0) = symbolic::Polynomial(x(1) + 0.3);
       unsafe_regions[1].resize(1);
       unsafe_regions[1](0) = symbolic::Polynomial(0.5 - x(1));
-      safe_states.resize(6, 4);
+      safe_states.resize(6, 1);
       safe_states.col(0) << 0, 0, 0, 0, 0, 0;
-      safe_states.col(1) << 0, 0.2, 0, 0, 0, 0;
-      safe_states.col(2) << 0, -0.2, 0, 0, 0, 0;
-      safe_states.col(3) << 0, 0.45, 0.1, 0, 0, 0;
+      // safe_states.col(1) << 0, 0.2, 0, 0, 0, 0;
+      // safe_states.col(2) << 0, -0.2, 0, 0, 0, 0;
+      // safe_states.col(3) << 0, 0.45, 0.1, 0, 0, 0;
       break;
     }
     case Scenario::kBox: {
@@ -656,9 +437,9 @@ int DoMain() {
   }
 
   std::optional<std::string> load_cbf_file = std::nullopt;
-  load_cbf_file =
-      "/home/hongkaidai/sos_clf_cbf_data/quadrotor2d_cbf/"
-      "quadrotor2d_trig_cbf_box2.txt";
+  // load_cbf_file =
+  //    "/home/hongkaidai/sos_clf_cbf_data/quadrotor2d_cbf/"
+  //    "quadrotor2d_trig_cbf_box2.txt";
   const symbolic::Polynomial h_sol =
       SearchWithSlackA(scenario, plant, x, thrust_max, deriv_eps,
                        unsafe_regions, x_safe, load_cbf_file);

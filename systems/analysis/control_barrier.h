@@ -288,7 +288,12 @@ class ControlBarrier {
     double lsol_tiny_coeff_tol = 0;
   };
 
-  struct SearchReturn {
+  struct SearchResult {
+    SearchResult(int num_unsafe_regions)
+        : t(num_unsafe_regions),
+          s(num_unsafe_regions),
+          unsafe_state_constraints_lagrangian(num_unsafe_regions) {}
+    bool success;
     symbolic::Polynomial h;
     symbolic::Polynomial lambda0;
     std::optional<symbolic::Polynomial> lambda1;
@@ -308,7 +313,7 @@ class ControlBarrier {
    * @pre h_init(x_anchor) > 0
    * @param[in/out] ellipsoids The ellipsoids contained inside the safe region.
    */
-  SearchReturn Search(
+  SearchResult Search(
       const symbolic::Polynomial& h_init, int h_degree, double deriv_eps,
       int lambda0_degree, std::optional<int> lambda1_degree,
       const std::vector<int>& l_degrees,
@@ -322,7 +327,70 @@ class ControlBarrier {
       std::vector<ControlBarrier::Ellipsoid>* ellipsoids,
       std::vector<EllipsoidBisectionOption>* ellipsoid_bisection_options) const;
 
-  struct SearchLagrangianReturn {
+  struct SearchWithSlackAResult : public SearchResult {
+    SearchWithSlackAResult(int num_unsafe_regions)
+        : SearchResult(num_unsafe_regions),
+          unsafe_a(num_unsafe_regions),
+          unsafe_a_grams(num_unsafe_regions) {}
+    symbolic::Polynomial hdot_a;
+    Eigen::MatrixXd hdot_a_gram;
+    std::vector<symbolic::Polynomial> unsafe_a;
+    std::vector<Eigen::MatrixXd> unsafe_a_grams;
+  };
+
+  struct SearchWithSlackAOptions : public SearchOptions {
+    SearchWithSlackAOptions(double m_hdot_a_zero_tol,
+                            double m_unsafe_a_zero_tol, bool m_use_zero_a,
+                            double m_hdot_a_cost_weight,
+                            std::vector<double> m_unsafe_a_cost_weight)
+        : hdot_a_zero_tol(m_hdot_a_zero_tol),
+          unsafe_a_zero_tol(m_unsafe_a_zero_tol),
+          use_zero_a(m_use_zero_a),
+          hdot_a_cost_weight{m_hdot_a_cost_weight},
+          unsafe_a_cost_weight{std::move(m_unsafe_a_cost_weight)} {}
+
+    // When trace(hdot_a_gram) is smaller than this tolerance, we regard the
+    // polynomial hdot_a(x) as 0-polynomial.
+    double hdot_a_zero_tol;
+    // When trace(unsafe_a_gram) is smaller than this tolerance, we regard the
+    // polynomial unsafe_a(x) as 0-polynomial.
+    double unsafe_a_zero_tol;
+    // If set to true, then when trace(a_gram) is smaller than the
+    // zero-tolerance in the previous solve, in all subsequent sos condition, we
+    // use a(x)=0 afterwards.
+    bool use_zero_a;
+
+    // When searching for barrier h(x), the cost of the optimization program is
+    // hdot_a_cost_weight * hdot_a_gram.trace() + ∑ᵢ unsafe_a_cost_weight[i] *
+    // unsafe_a_grams[i].trace()
+    double hdot_a_cost_weight;
+    std::vector<double> unsafe_a_cost_weight;
+  };
+
+  /**
+   * Search the barrier function h(x).
+   * We allow the initial h_init to be an invalid control barrier function. We
+   * relax the sos conditions with a slack sos polynomial a(x), and minimize
+   * a(x).
+   * @param x_safe. We will impose the constraint h(x_safe) >= h_x_safe_min
+   * @param h_x_safe_min. We will impose the constraint h(x_safe) >=
+   * h_x_safe_min
+   */
+  SearchWithSlackAResult SearchWithSlackA(
+      const symbolic::Polynomial& h_init, int h_degree, double deriv_eps,
+      int lambda0_degree, std::optional<int> lambda1_degree,
+      const std::vector<int>& l_degrees,
+      const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
+      std::optional<int> hdot_a_degree, const std::vector<int>& t_degree,
+      const std::vector<std::vector<int>>& s_degrees,
+      const std::vector<std::vector<int>>&
+          unsafe_state_constraints_lagrangian_degrees,
+      const std::vector<std::optional<int>> unsafe_a_degrees,
+      const Eigen::Ref<const Eigen::MatrixXd>& x_safe,
+      const Eigen::Ref<const Eigen::VectorXd>& h_x_safe_min,
+      const SearchWithSlackAOptions& search_options) const;
+
+  struct SearchLagrangianResult {
     bool success;
     symbolic::Polynomial lambda0;
     std::optional<symbolic::Polynomial> lambda1;
@@ -342,7 +410,7 @@ class ControlBarrier {
    * a valid CBF, whose super-level set doesn't contain any unsafe regions.
    * @return success Returns true if the Lagrangian multipliers are found.
    */
-  SearchLagrangianReturn SearchLagrangian(
+  SearchLagrangianResult SearchLagrangian(
       const symbolic::Polynomial& h, double deriv_eps, int lambda0_degree,
       std::optional<int> lambda1_degree, const std::vector<int>& l_degrees,
       const std::vector<int>& hdot_state_constraints_lagrangian_degrees,

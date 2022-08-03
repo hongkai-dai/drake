@@ -69,10 +69,10 @@ void SetLagrangianResult(
 ControlBarrier::ControlBarrier(
     const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
     const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
-    std::optional<symbolic::Polynomial> dynamics_denominator,
-    const Eigen::Ref<const VectorX<symbolic::Variable>>& x, double beta_minus,
-    std::optional<double> beta_plus,
-    std::vector<VectorX<symbolic::Polynomial>> unsafe_regions,
+    const std::optional<symbolic::Polynomial> dynamics_denominator,
+    const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+    const double beta_minus, const std::optional<double> beta_plus,
+    const std::vector<VectorX<symbolic::Polynomial>> unsafe_regions,
     const Eigen::Ref<const Eigen::MatrixXd>& u_vertices,
     const Eigen::Ref<const VectorX<symbolic::Polynomial>>& state_eq_constraints)
     : f_{f},
@@ -127,10 +127,11 @@ void ControlBarrier::AddControlBarrierConstraint(
 }
 
 ControlBarrier::LagrangianReturn ControlBarrier::ConstructLagrangianProgram(
-    const symbolic::Polynomial& h, double deriv_eps, int lambda0_degree,
-    std::optional<int> lambda1_degree, const std::vector<int>& l_degrees,
+    const symbolic::Polynomial& h, const double deriv_eps,
+    const int lambda0_degree, const std::optional<int> lambda1_degree,
+    const std::vector<int>& l_degrees,
     const std::vector<int>& state_constraints_lagrangian_degrees,
-    std::optional<int> a_degree) const {
+    const std::optional<int> a_degree) const {
   DRAKE_DEMAND(static_cast<int>(l_degrees.size()) == u_vertices_.cols());
   LagrangianReturn ret{};
   ret.prog->AddIndeterminates(x_);
@@ -174,10 +175,10 @@ ControlBarrier::LagrangianReturn ControlBarrier::ConstructLagrangianProgram(
 }
 
 ControlBarrier::UnsafeReturn ControlBarrier::ConstructUnsafeRegionProgram(
-    const symbolic::Polynomial& h, int region_index, int t_degree,
+    const symbolic::Polynomial& h, const int region_index, const int t_degree,
     const std::vector<int>& s_degrees,
     const std::vector<int>& unsafe_state_constraints_lagrangian_degrees,
-    std::optional<int> a_degree) const {
+    const std::optional<int> a_degree) const {
   ControlBarrier::UnsafeReturn ret{};
   ret.prog->AddIndeterminates(x_);
   std::tie(ret.t, ret.t_gram) = ret.prog->NewSosPolynomial(
@@ -220,11 +221,11 @@ ControlBarrier::BarrierReturn ControlBarrier::ConstructBarrierProgram(
     const std::optional<symbolic::Polynomial>& lambda1,
     const VectorX<symbolic::Polynomial>& l,
     const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
-    std::optional<int> hdot_a_degree,
+    const std::optional<int> hdot_a_degree,
     const std::vector<symbolic::Polynomial>& t,
     const std::vector<std::vector<int>>&
         unsafe_state_constraints_lagrangian_degrees,
-    int h_degree, double deriv_eps,
+    const int h_degree, const double deriv_eps,
     const std::vector<std::vector<int>>& s_degrees,
     const std::vector<std::optional<int>>& unsafe_a_degrees) const {
   BarrierReturn ret{};
@@ -296,7 +297,8 @@ ControlBarrier::BarrierReturn ControlBarrier::ConstructBarrierProgram(
 void ControlBarrier::AddBarrierProgramCost(
     solvers::MathematicalProgram* prog, const symbolic::Polynomial& h,
     const Eigen::MatrixXd& verified_safe_states,
-    const Eigen::MatrixXd& unverified_candidate_states, double eps) const {
+    const Eigen::MatrixXd& unverified_candidate_states,
+    const double eps) const {
   // Add the constraint that the verified states all have h(x) >= 0
   Eigen::MatrixXd h_monomial_vals;
   VectorX<symbolic::Variable> h_coeff_vars;
@@ -361,9 +363,9 @@ void ControlBarrier::AddBarrierProgramCost(
 }
 
 ControlBarrier::SearchResult ControlBarrier::Search(
-    const symbolic::Polynomial& h_init, int h_degree, double deriv_eps,
-    int lambda0_degree, std::optional<int> lambda1_degree,
-    const std::vector<int>& l_degrees,
+    const symbolic::Polynomial& h_init, const int h_degree,
+    const double deriv_eps, const int lambda0_degree,
+    const std::optional<int> lambda1_degree, const std::vector<int>& l_degrees,
     const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
     const std::vector<int>& t_degree,
     const std::vector<std::vector<int>>& s_degrees,
@@ -523,11 +525,11 @@ ControlBarrier::SearchResult ControlBarrier::Search(
 }
 
 ControlBarrier::SearchWithSlackAResult ControlBarrier::SearchWithSlackA(
-    const symbolic::Polynomial& h_init, int h_degree, double deriv_eps,
-    int lambda0_degree, std::optional<int> lambda1_degree,
-    const std::vector<int>& l_degrees,
+    const symbolic::Polynomial& h_init, const int h_degree,
+    const double deriv_eps, const int lambda0_degree,
+    const std::optional<int> lambda1_degree, const std::vector<int>& l_degrees,
     const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
-    std::optional<int> hdot_a_degree, const std::vector<int>& t_degree,
+    const std::optional<int> hdot_a_degree, const std::vector<int>& t_degree,
     const std::vector<std::vector<int>>& s_degrees,
     const std::vector<std::vector<int>>&
         unsafe_state_constraints_lagrangian_degrees,
@@ -652,7 +654,7 @@ ControlBarrier::SearchWithSlackAResult ControlBarrier::SearchWithSlackA(
           if (search_result.hdot_a_gram.trace() <=
                   search_options.hdot_a_zero_tol &&
               search_options.use_zero_a) {
-            hdot_a_degree = std::nullopt;
+            hdot_a_degree_search = std::nullopt;
           }
         }
         for (int i = 0; i < static_cast<int>(unsafe_regions_.size()); ++i) {
@@ -699,10 +701,11 @@ ControlBarrier::SearchWithSlackAResult ControlBarrier::SearchWithSlackA(
 }
 
 ControlBarrier::SearchLagrangianResult ControlBarrier::SearchLagrangian(
-    const symbolic::Polynomial& h, double deriv_eps, int lambda0_degree,
-    std::optional<int> lambda1_degree, const std::vector<int>& l_degrees,
+    const symbolic::Polynomial& h, const double deriv_eps,
+    const int lambda0_degree, const std::optional<int> lambda1_degree,
+    const std::vector<int>& l_degrees,
     const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
-    std::optional<int> hdot_a_degree, const std::vector<int>& t_degree,
+    const std::optional<int> hdot_a_degree, const std::vector<int>& t_degree,
     const std::vector<std::vector<int>>& s_degrees,
     const std::vector<std::vector<int>>&
         unsafe_state_constraints_lagrangian_degrees,
@@ -817,7 +820,7 @@ ControlBarrierBoxInputBound::ControlBarrierBoxInputBound(
     const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
     const Eigen::Ref<const Eigen::MatrixXd>& candidate_safe_states,
-    std::vector<VectorX<symbolic::Polynomial>> unsafe_regions)
+    const std::vector<VectorX<symbolic::Polynomial>> unsafe_regions)
     : f_{f},
       G_{G},
       nx_{static_cast<int>(f.rows())},

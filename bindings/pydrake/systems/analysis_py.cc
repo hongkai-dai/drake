@@ -20,6 +20,7 @@
 #include "drake/systems/analysis/simulator_config_functions.h"
 #include "drake/systems/analysis/simulator_print_stats.h"
 #include "drake/systems/analysis/simulator_python_internal.h"
+#include "drake/systems/analysis/test/quadrotor2d.h"
 
 using std::unique_ptr;
 
@@ -216,6 +217,25 @@ PYBIND11_MODULE(analysis, m) {
             py::keep_alive<1, 2>(),
             // Keep alive, reference: `self` keeps `context` alive.
             py::keep_alive<1, 4>(), doc.RungeKutta2Integrator.ctor.doc);
+
+    // Systems with trignometric dynamics.
+    DefineTemplateClassWithDefault<analysis::Quadrotor2dTrigPlant<T>,
+        LeafSystem<T>>(m, "Quadrotor2dTrigPlant", GetPyParam<T>(),
+        doc.analysis.Quadrotor2dTrigPlant.doc)
+        .def(py::init<>(), doc.analysis.Quadrotor2dTrigPlant.ctor.doc)
+        .def("get_state_output_port",
+            &analysis::Quadrotor2dTrigPlant<T>::get_state_output_port,
+            py_rvp::reference_internal,
+            doc.analysis.Quadrotor2dTrigPlant.get_state_output_port.doc)
+        .def("get_actuation_input_port",
+            &analysis::Quadrotor2dTrigPlant<T>::get_actuation_input_port,
+            py_rvp::reference_internal,
+            doc.analysis.Quadrotor2dTrigPlant.get_actuation_input_port.doc);
+
+    DefineTemplateClassWithDefault<analysis::Quadrotor2dTrigStateConverter<T>,
+        LeafSystem<T>>(m, "Quadrotor2dTrigStateConverter", GetPyParam<T>(),
+        doc.analysis.Quadrotor2dTrigStateConverter.doc)
+        .def(py::init<>(), doc.analysis.Quadrotor2dTrigStateConverter.ctor.doc);
   };
   type_visit(bind_scalar_types, CommonScalarPack{});
 
@@ -480,7 +500,8 @@ Parameter ``interruptible``:
                     const Eigen::Ref<const MatrixX<symbolic::Polynomial>>&,
                     std::optional<symbolic::Polynomial>,
                     const Eigen::Ref<const VectorX<symbolic::Variable>>&,
-                    double, double, std::vector<VectorX<symbolic::Polynomial>>,
+                    double, std::optional<double>,
+                    std::vector<VectorX<symbolic::Polynomial>>,
                     const Eigen::Ref<const Eigen::MatrixXd>&,
                     const Eigen::Ref<const VectorX<symbolic::Polynomial>>&>(),
                 py::arg("f"), py::arg("G"), py::arg("dynamics_denominator"),
@@ -585,6 +606,157 @@ Parameter ``interruptible``:
         py::arg("unsafe_state_constraints_lagrangian_degrees"),
         py::arg("h_degree"), py::arg("deriv_eps"), py::arg("s_degrees"),
         py::arg("unsafe_a_degrees"), cls_doc.ConstructBarrierProgram.doc);
+
+    py::class_<Class::SearchOptions>(control_barrier, "SearchOptions")
+        .def_readwrite(
+            "barrier_step_solver", &Class::SearchOptions::barrier_step_solver)
+        .def_readwrite("lagrangian_step_solver",
+            &Class::SearchOptions::lagrangian_step_solver)
+        .def_readwrite(
+            "bilinear_iterations", &Class::SearchOptions::bilinear_iterations)
+        .def_readwrite("lagrangian_step_solver_options",
+            &Class::SearchOptions::lagrangian_step_solver_options)
+        .def_readwrite("barrier_step_solver_options",
+            &Class::SearchOptions::barrier_step_solver_options)
+        .def_readwrite("barrier_tiny_coeff_tol",
+            &Class::SearchOptions::barrier_tiny_coeff_tol)
+        .def_readwrite("lagrangian_tiny_coeff_tol",
+            &Class::SearchOptions::lagrangian_tiny_coeff_tol)
+        .def_readwrite(
+            "hsol_tiny_coeff_tol", &Class::SearchOptions::hsol_tiny_coeff_tol)
+        .def_readwrite(
+            "lsol_tiny_coeff_tol", &Class::SearchOptions::lsol_tiny_coeff_tol);
+
+    py::class_<Class::SearchResult>(control_barrier, "SearchResult")
+        .def_readonly("success", &Class::SearchResult::success)
+        .def_readonly("h", &Class::SearchResult::h)
+        .def_readonly("lambda0", &Class::SearchResult::lambda0)
+        .def_readonly("lambda1", &Class::SearchResult::lambda1)
+        .def_readonly("l", &Class::SearchResult::l)
+        .def_readonly("hdot_state_constraints_lagrangian",
+            &Class::SearchResult::hdot_state_constraints_lagrangian)
+        .def_readonly("t", &Class::SearchResult::t)
+        .def_readonly("s", &Class::SearchResult::s)
+        .def_readonly("unsafe_state_constraints_lagrangian",
+            &Class::SearchResult::unsafe_state_constraints_lagrangian);
+
+    py::class_<Class::SearchWithSlackAOptions, Class::SearchOptions>(
+        control_barrier, "SearchWithSlackAOptions")
+        .def(py::init<double, double, bool, double, std::vector<double>>(),
+            py::arg("hdot_a_zero_tol"), py::arg("unsafe_a_zero_tol"),
+            py::arg("use_zero_a"), py::arg("hdot_a_cost_weight"),
+            py::arg("unsafe_a_cost_weight"),
+            cls_doc.SearchWithSlackAOptions.ctor.doc)
+        .def_readwrite(
+            "hdot_a_zero_tol", &Class::SearchWithSlackAOptions::hdot_a_zero_tol)
+        .def_readwrite("unsafe_a_zero_tol",
+            &Class::SearchWithSlackAOptions::unsafe_a_zero_tol)
+        .def_readwrite(
+            "use_zero_a", &Class::SearchWithSlackAOptions::use_zero_a)
+        .def_readwrite("hdot_a_cost_weight",
+            &Class::SearchWithSlackAOptions::hdot_a_cost_weight)
+        .def_readwrite("unsafe_a_cost_weight",
+            &Class::SearchWithSlackAOptions::unsafe_a_cost_weight);
+
+    py::class_<Class::SearchWithSlackAResult, Class::SearchResult>(
+        control_barrier, "SearchWithSlackAResult")
+        .def_readonly("hdot_a", &Class::SearchWithSlackAResult::hdot_a)
+        .def_readonly(
+            "hdot_a_gram", &Class::SearchWithSlackAResult::hdot_a_gram)
+        .def_readonly("unsafe_a", &Class::SearchWithSlackAResult::unsafe_a)
+        .def_readonly(
+            "unsafe_a_grams", &Class::SearchWithSlackAResult::unsafe_a_grams);
+
+    control_barrier.def("SearchWithSlackA",
+        &analysis::ControlBarrier::SearchWithSlackA, py::arg("h_init"),
+        py::arg("h_degree"), py::arg("deriv_eps"), py::arg("lambda0_degree"),
+        py::arg("lambda1_degree"), py::arg("l_degrees"),
+        py::arg("hdot_state_constraints_lagrangian_degrees"),
+        py::arg("hdot_a_degree"), py::arg("t_degree"), py::arg("s_degrees"),
+        py::arg("unsafe_state_constraints_lagrangian_degrees"),
+        py::arg("unsafe_a_degrees"), py::arg("x_safe"), py::arg("h_x_safe_min"),
+        py::arg("search_options"), cls_doc.SearchWithSlackA.doc);
+
+    py::class_<Class::SearchLagrangianResult>(
+        control_barrier, "SearchLagrangianResult")
+        .def_readonly("success", &Class::SearchLagrangianResult::success)
+        .def_readonly("lambda0", &Class::SearchLagrangianResult::lambda0)
+        .def_readonly("lambda1", &Class::SearchLagrangianResult::lambda1)
+        .def_readonly("l", &Class::SearchLagrangianResult::l)
+        .def_readonly("hdot_state_constraints_lagrangian",
+            &Class::SearchLagrangianResult::hdot_state_constraints_lagrangian)
+        .def_readonly("hdot_a", &Class::SearchLagrangianResult::hdot_a)
+        .def_readonly(
+            "hdot_a_gram", &Class::SearchLagrangianResult::hdot_a_gram)
+        .def_readonly("t", &Class::SearchLagrangianResult::t)
+        .def_readonly("s", &Class::SearchLagrangianResult::s)
+        .def_readonly("unsafe_state_constraints_lagrangian",
+            &Class::SearchLagrangianResult::unsafe_state_constraints_lagrangian)
+        .def_readonly("unsafe_a", &Class::SearchLagrangianResult::unsafe_a)
+        .def_readonly(
+            "unsafe_a_grams", &Class::SearchLagrangianResult::unsafe_a_grams);
+
+    control_barrier.def("SearchLagrangian", &Class::SearchLagrangian,
+        py::arg("h"), py::arg("deriv_eps"), py::arg("lambda0_degree"),
+        py::arg("lambda1_degree"), py::arg("l_degrees"),
+        py::arg("hdot_state_constraints_lagrangian_degrees"),
+        py::arg("hdot_a_degree"), py::arg("t_degree"), py::arg("s_degrees"),
+        py::arg("unsafe_state_constraints_lagrangian_degrees"),
+        py::arg("unsafe_a_degrees"), py::arg("search_options"),
+        cls_doc.SearchLagrangian.doc);
+  }
+
+  {
+    // clf_cbf_utils
+    m.def(
+        "GetPolynomialSolutions",
+        [](const solvers::MathematicalProgramResult& result,
+            const VectorX<symbolic::Polynomial>& p, double zero_coeff_tol) {
+          VectorX<symbolic::Polynomial> p_sol;
+          analysis::GetPolynomialSolutions(result, p, zero_coeff_tol, &p_sol);
+          return p_sol;
+        },
+        py::arg("result"), py::arg("p"), py::arg("zero_coeff_tol"));
+  }
+
+  {
+    // Quadrotor2d.
+
+    AddTemplateFunction(m, "ToQuadrotor2dTrigState",
+        &analysis::ToQuadrotor2dTrigState<double>, GetPyParam<double>());
+    AddTemplateFunction(
+        m, "TrigDynamics",
+        [](const analysis::Quadrotor2dTrigPlant<double>& quadrotor,
+            const Eigen::Ref<const Eigen::VectorXd>& x,
+            const Eigen::Ref<const Eigen::Vector2d>& u) {
+          return analysis::TrigDynamics<double>(quadrotor, x, u);
+        },
+        GetPyParam<double>());
+
+    m.def(
+        "TrigPolyDynamics",
+        [](const analysis::Quadrotor2dTrigPlant<double>& quadrotor,
+            const Eigen::Ref<const Eigen::Matrix<symbolic::Variable, 7, 1>>&
+                x) {
+          Eigen::Matrix<symbolic::Polynomial, 7, 1> f;
+          Eigen::Matrix<symbolic::Polynomial, 7, 2> G;
+          analysis::TrigPolyDynamics(quadrotor, x, &f, &G);
+          return std::make_tuple(f, G);
+        },
+        py::arg("quadrotor"), py::arg("x"),
+        pydrake_doc.drake.systems.analysis.TrigPolyDynamics.doc);
+
+    m.def(
+        "EquilibriumThrust",
+        [](const analysis::Quadrotor2dTrigPlant<double>& quadrotor) {
+          return analysis::EquilibriumThrust(quadrotor);
+        },
+        py::arg("quadrotor"),
+        pydrake_doc.drake.systems.analysis.EquilibriumThrust.doc);
+
+    m.def("Quadrotor2dStateEqConstraint",
+        &analysis::Quadrotor2dStateEqConstraint, py::arg("x"),
+        pydrake_doc.drake.systems.analysis.Quadrotor2dStateEqConstraint.doc);
   }
 }
 

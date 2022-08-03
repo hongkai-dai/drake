@@ -6,8 +6,8 @@ namespace drake {
 namespace systems {
 namespace analysis {
 template <typename T>
-QuadrotorPlant<T>::QuadrotorPlant()
-    : LeafSystem<T>(systems::SystemTypeTag<QuadrotorPlant>{}) {
+Quadrotor2dTrigPlant<T>::Quadrotor2dTrigPlant()
+    : LeafSystem<T>(systems::SystemTypeTag<Quadrotor2dTrigPlant>{}) {
   this->DeclareVectorInputPort("u", 2);
 
   auto state_index = this->DeclareContinuousState(6);
@@ -18,11 +18,11 @@ QuadrotorPlant<T>::QuadrotorPlant()
 
 template <typename T>
 template <typename U>
-QuadrotorPlant<T>::QuadrotorPlant(const QuadrotorPlant<U>&)
-    : QuadrotorPlant() {}
+Quadrotor2dTrigPlant<T>::Quadrotor2dTrigPlant(const Quadrotor2dTrigPlant<U>&)
+    : Quadrotor2dTrigPlant() {}
 
 template <typename T>
-void QuadrotorPlant<T>::DoCalcTimeDerivatives(
+void Quadrotor2dTrigPlant<T>::DoCalcTimeDerivatives(
     const systems::Context<T>& context,
     systems::ContinuousState<T>* derivatives) const {
   const auto x = context.get_continuous_state_vector().CopyToVector();
@@ -39,7 +39,7 @@ void QuadrotorPlant<T>::DoCalcTimeDerivatives(
 }
 
 void TrigPolyDynamics(
-    const QuadrotorPlant<double>& quadrotor,
+    const Quadrotor2dTrigPlant<double>& quadrotor,
     const Eigen::Ref<const Eigen::Matrix<symbolic::Variable, 7, 1>>& x,
     Eigen::Matrix<symbolic::Polynomial, 7, 1>* f,
     Eigen::Matrix<symbolic::Polynomial, 7, 2>* G) {
@@ -63,12 +63,12 @@ void TrigPolyDynamics(
   (*G)(6, 1) = -(*G)(6, 0);
 }
 
-double EquilibriumThrust(const QuadrotorPlant<double>& quadrotor) {
+double EquilibriumThrust(const Quadrotor2dTrigPlant<double>& quadrotor) {
   return quadrotor.mass() * quadrotor.gravity() / 2;
 }
 
 void PolynomialControlAffineDynamics(
-    const QuadrotorPlant<double>& quadrotor,
+    const Quadrotor2dTrigPlant<double>& quadrotor,
     const Vector6<symbolic::Variable>& x, Vector6<symbolic::Polynomial>* f,
     Eigen::Matrix<symbolic::Polynomial, 6, 2>* G) {
   for (int i = 0; i < 3; ++i) {
@@ -92,15 +92,15 @@ void PolynomialControlAffineDynamics(
   (*G)(5, 1) = -(*G)(5, 0);
 }
 
-symbolic::Polynomial StateEqConstraint(
+symbolic::Polynomial Quadrotor2dStateEqConstraint(
     const Eigen::Ref<const Eigen::Matrix<symbolic::Variable, 7, 1>>& x) {
   return symbolic::Polynomial(x(2) * x(2) + x(3) * x(3) + 2 * x(3));
 }
 
-controllers::LinearQuadraticRegulatorResult SynthesizeTrigLqr(
+controllers::LinearQuadraticRegulatorResult SynthesizeQuadrotor2dTrigLqr(
     const Eigen::Ref<const Eigen::Matrix<double, 7, 7>>& Q,
     const Eigen::Ref<const Eigen::Matrix2d>& R) {
-  QuadrotorPlant<double> quadrotor;
+  Quadrotor2dTrigPlant<double> quadrotor;
   const double thrust_equilibrium = EquilibriumThrust(quadrotor);
   Eigen::VectorXd xu_des = Eigen::VectorXd::Zero(9);
   xu_des.tail<2>() = Eigen::Vector2d(thrust_equilibrium, thrust_equilibrium);
@@ -119,15 +119,18 @@ controllers::LinearQuadraticRegulatorResult SynthesizeTrigLqr(
 }
 
 template <typename T>
-ToTrigStateConverter<T>::ToTrigStateConverter() : LeafSystem<T>(SystemTypeTag<ToTrigStateConverter>{}) {
+Quadrotor2dTrigStateConverter<T>::Quadrotor2dTrigStateConverter()
+    : LeafSystem<T>(SystemTypeTag<Quadrotor2dTrigStateConverter>{}) {
   this->DeclareVectorInputPort("state", 6);
-  this->DeclareVectorOutputPort("x_trig", 7, &ToTrigStateConverter<T>::CalcTrigState);
+  this->DeclareVectorOutputPort(
+      "x_trig", 7, &Quadrotor2dTrigStateConverter<T>::CalcTrigState);
 }
 
 template <typename T>
-void ToTrigStateConverter<T>::CalcTrigState(const Context<T>& context, BasicVector<T>* x_trig) const {
+void Quadrotor2dTrigStateConverter<T>::CalcTrigState(
+    const Context<T>& context, BasicVector<T>* x_trig) const {
   const Vector6<T> x_orig = this->get_input_port().Eval(context);
-  x_trig->get_mutable_value() = ToTrigState<T>(x_orig);
+  x_trig->get_mutable_value() = ToQuadrotor2dTrigState<T>(x_orig);
 }
 
 }  // namespace analysis
@@ -135,6 +138,6 @@ void ToTrigStateConverter<T>::CalcTrigState(const Context<T>& context, BasicVect
 }  // namespace drake
 
 DRAKE_DEFINE_CLASS_TEMPLATE_INSTANTIATIONS_ON_DEFAULT_SCALARS(
-    class ::drake::systems::analysis::QuadrotorPlant)
+    class ::drake::systems::analysis::Quadrotor2dTrigPlant)
 DRAKE_DEFINE_CLASS_TEMPLATE_INSTANTIATIONS_ON_DEFAULT_SCALARS(
-    class ::drake::systems::analysis::ToTrigStateConverter)
+    class ::drake::systems::analysis::Quadrotor2dTrigStateConverter)

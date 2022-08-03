@@ -30,7 +30,7 @@ const double kInf = std::numeric_limits<double>::infinity();
     const symbolic::Polynomial& clf, double deriv_eps, const Vector6d& x0,
     double duration) {
   systems::DiagramBuilder<double> builder;
-  auto quadrotor = builder.AddSystem<QuadrotorPlant<double>>();
+  auto quadrotor = builder.AddSystem<Quadrotor2dTrigPlant<double>>();
   Eigen::Matrix<double, 4, 2> Au;
   Au.topRows<2>() = Eigen::Matrix2d::Identity();
   Au.bottomRows<2>() = -Eigen::Matrix2d::Identity();
@@ -73,7 +73,7 @@ const double kInf = std::numeric_limits<double>::infinity();
 }
 
 [[maybe_unused]] void SearchWTaylorDynamics() {
-  QuadrotorPlant<double> quadrotor;
+  Quadrotor2dTrigPlant<double> quadrotor;
 
   // Synthesize an LQR controller.
   auto context = quadrotor.CreateDefaultContext();

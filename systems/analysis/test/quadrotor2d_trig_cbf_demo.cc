@@ -93,9 +93,10 @@ void Simulate(const Eigen::Matrix<symbolic::Variable, 7, 1>& x,
               double duration) {
   systems::DiagramBuilder<double> builder;
 
-  auto quadrotor = builder.AddSystem<QuadrotorPlant<double>>();
+  auto quadrotor = builder.AddSystem<Quadrotor2dTrigPlant<double>>();
 
-  auto state_converter = builder.AddSystem<ToTrigStateConverter<double>>();
+  auto state_converter =
+      builder.AddSystem<Quadrotor2dTrigStateConverter<double>>();
 
   Eigen::Matrix<symbolic::Polynomial, 7, 1> f;
   Eigen::Matrix<symbolic::Polynomial, 7, 2> G;
@@ -151,8 +152,8 @@ symbolic::Polynomial FindCbfInit(
   lqr_Q_diag << 1, 1, 1, 1, 10, 10, 10;
   const Eigen::MatrixXd lqr_Q = lqr_Q_diag.asDiagonal();
   const Eigen::Matrix2d lqr_R = 10 * Eigen::Matrix2d::Identity();
-  const auto lqr_result = SynthesizeTrigLqr(lqr_Q, lqr_R);
-  QuadrotorPlant<double> quadrotor2d;
+  const auto lqr_result = SynthesizeQuadrotor2dTrigLqr(lqr_Q, lqr_R);
+  Quadrotor2dTrigPlant<double> quadrotor2d;
   const double thrust_equilibrium = EquilibriumThrust(quadrotor2d);
   const Vector2<symbolic::Expression> u_lqr =
       -lqr_result.K * x +
@@ -169,7 +170,7 @@ symbolic::Polynomial FindCbfInit(
   const int d = h_degree / 2;
   const double deriv_eps = 0.0001;
   const Vector1<symbolic::Polynomial> state_eq_constraints(
-      StateEqConstraint(x));
+      Quadrotor2dStateEqConstraint(x));
   const std::vector<int> positivity_ceq_lagrangian_degrees{{h_degree - 2}};
   const std::vector<int> derivative_ceq_lagrangian_degrees{
       {static_cast<int>(std::ceil((h_degree + 1) / 2.) * 2 - 2)}};
@@ -203,7 +204,7 @@ symbolic::Polynomial FindCbfInit(
 }
 
 [[maybe_unused]] symbolic::Polynomial SearchWithSlackA(
-    Scenario scenario, const QuadrotorPlant<double>& quadrotor,
+    Scenario scenario, const Quadrotor2dTrigPlant<double>& quadrotor,
     const Eigen::Matrix<symbolic::Variable, 7, 1>& x, double thrust_max,
     double deriv_eps,
     const std::vector<VectorX<symbolic::Polynomial>>& unsafe_regions,
@@ -217,7 +218,8 @@ symbolic::Polynomial FindCbfInit(
   u_vertices << 0, 0, thrust_max, thrust_max,
                 0, thrust_max, 0, thrust_max;
   // clang-format on
-  const Vector1<symbolic::Polynomial> state_constraints(StateEqConstraint(x));
+  const Vector1<symbolic::Polynomial> state_constraints(
+      Quadrotor2dStateEqConstraint(x));
 
   const std::optional<symbolic::Polynomial> dynamics_denominator = std::nullopt;
 
@@ -313,7 +315,7 @@ symbolic::Polynomial FindCbfInit(
 }
 
 [[maybe_unused]] symbolic::Polynomial Search(
-    const QuadrotorPlant<double>& quadrotor,
+    const Quadrotor2dTrigPlant<double>& quadrotor,
     const Eigen::Matrix<symbolic::Variable, 7, 1>& x, double thrust_max,
     double deriv_eps,
     const std::vector<VectorX<symbolic::Polynomial>>& unsafe_regions) {
@@ -325,7 +327,8 @@ symbolic::Polynomial FindCbfInit(
   u_vertices << 0, 0, thrust_max, thrust_max,
                 0, thrust_max, 0, thrust_max;
   // clang-format on
-  const Vector1<symbolic::Polynomial> state_constraints(StateEqConstraint(x));
+  const Vector1<symbolic::Polynomial> state_constraints(
+      Quadrotor2dStateEqConstraint(x));
 
   const std::optional<symbolic::Polynomial> dynamics_denominator = std::nullopt;
 
@@ -379,7 +382,7 @@ symbolic::Polynomial FindCbfInit(
   state_samples.col(4) << 0, 0.2, 0.3 * M_PI, 0.1, 0.2, 0;
   Eigen::Matrix<double, 7, Eigen::Dynamic> x_samples(7, state_samples.cols());
   for (int i = 0; i < state_samples.cols(); ++i) {
-    x_samples.col(i) = ToTrigState<double>(state_samples.col(i));
+    x_samples.col(i) = ToQuadrotor2dTrigState<double>(state_samples.col(i));
   }
   std::cout << "h at samples: "
             << search_ret.h.EvaluateIndeterminates(x, x_samples).transpose()
@@ -389,7 +392,7 @@ symbolic::Polynomial FindCbfInit(
 }
 
 int DoMain() {
-  const QuadrotorPlant<double> plant{};
+  const Quadrotor2dTrigPlant<double> plant{};
   Eigen::Matrix<symbolic::Variable, 7, 1> x;
   for (int i = 0; i < 7; ++i) {
     x(i) = symbolic::Variable("x" + std::to_string(i));
@@ -433,7 +436,7 @@ int DoMain() {
 
   Eigen::MatrixXd x_safe(7, safe_states.cols());
   for (int i = 0; i < safe_states.cols(); ++i) {
-    x_safe.col(i) = ToTrigState<double>(safe_states.col(i));
+    x_safe.col(i) = ToQuadrotor2dTrigState<double>(safe_states.col(i));
   }
 
   std::optional<std::string> load_cbf_file = std::nullopt;

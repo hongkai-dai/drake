@@ -297,12 +297,12 @@ GTEST_TEST(FindCandidateLyapunov, Test) {
 GTEST_TEST(FindCandidateRegionalLyapunov, Test) {
   // Find a candidate Lyapunov for 2D quadrotor with trigonometric dynamics and
   // LQR controller.
-  QuadrotorPlant<double> quadrotor2d;
+  Quadrotor2dTrigPlant<double> quadrotor2d;
   Eigen::Matrix<double, 7, 1> lqr_Q_diag;
   lqr_Q_diag << 1, 1, 1, 1, 10, 10, 10;
   const Eigen::MatrixXd lqr_Q = lqr_Q_diag.asDiagonal();
   const Eigen::Matrix2d lqr_R = 10 * Eigen::Matrix2d::Identity();
-  const auto lqr_result = SynthesizeTrigLqr(lqr_Q, lqr_R);
+  const auto lqr_result = SynthesizeQuadrotor2dTrigLqr(lqr_Q, lqr_R);
   Eigen::Matrix<symbolic::Variable, 7, 1> x;
   for (int i = 0; i < 7; ++i) {
     x(i) = symbolic::Variable("x" + std::to_string(i));
@@ -324,7 +324,7 @@ GTEST_TEST(FindCandidateRegionalLyapunov, Test) {
   const int d = 1;
   const double deriv_eps = 0.0001;
   const Vector1<symbolic::Polynomial> state_eq_constraints(
-      StateEqConstraint(x));
+      Quadrotor2dStateEqConstraint(x));
   const std::vector<int> positivity_ceq_lagrangian_degrees{{V_degree - 2}};
   const std::vector<int> derivative_ceq_lagrangian_degrees{2};
   const Vector1<symbolic::Polynomial> state_ineq_constraints(

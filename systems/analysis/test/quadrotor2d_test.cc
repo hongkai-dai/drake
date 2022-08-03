@@ -9,7 +9,7 @@ namespace drake {
 namespace systems {
 namespace analysis {
 GTEST_TEST(Quadrotor, TestPolyDynamics) {
-  const QuadrotorPlant<double> dut;
+  const Quadrotor2dTrigPlant<double> dut;
   Vector6d x;
   x << 0.2, 0.3, 0.5, 1.2, 2.1, -2.5;
   const Eigen::Vector2d u(0.5, 0.9);
@@ -20,7 +20,7 @@ GTEST_TEST(Quadrotor, TestPolyDynamics) {
       dut.EvalTimeDerivatives(*context);
   const auto derivatives_val = derivatives.CopyToVector();
 
-  const auto x_trig = ToTrigState<double>(x);
+  const auto x_trig = ToQuadrotor2dTrigState<double>(x);
   EXPECT_TRUE(CompareMatrices(x_trig.tail<2>(), x.tail<2>()));
   EXPECT_TRUE(CompareMatrices(x_trig.tail<3>(), x.tail<3>()));
   EXPECT_EQ(x_trig(2), std::sin(x(2)));

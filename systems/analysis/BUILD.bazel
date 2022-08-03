@@ -32,6 +32,7 @@ drake_cc_package_library(
         ":integrator_base",
         ":lyapunov",
         ":monte_carlo",
+        ":quadrotor2d",
         ":radau_integrator",
         ":realtime_rate_calculator",
         ":region_of_attraction",

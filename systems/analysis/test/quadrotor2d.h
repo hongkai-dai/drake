@@ -14,17 +14,18 @@ namespace systems {
 namespace analysis {
 
 template <typename T>
-class QuadrotorPlant : public LeafSystem<T> {
+class Quadrotor2dTrigPlant : public LeafSystem<T> {
  public:
-  DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(QuadrotorPlant);
+  DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(Quadrotor2dTrigPlant);
 
-  QuadrotorPlant();
+  /// Default constructor
+  Quadrotor2dTrigPlant();
 
   /// Scalar-converting copy constructor.  See @ref system_scalar_conversion.
   template <typename U>
-  explicit QuadrotorPlant(const QuadrotorPlant<U>&);
+  explicit Quadrotor2dTrigPlant(const Quadrotor2dTrigPlant<U>&);
 
-  ~QuadrotorPlant(){};
+  ~Quadrotor2dTrigPlant(){};
 
   double mass() const { return mass_; }
 
@@ -55,7 +56,7 @@ class QuadrotorPlant : public LeafSystem<T> {
 };
 
 template <typename T>
-Eigen::Matrix<T, 7, 1> ToTrigState(
+Eigen::Matrix<T, 7, 1> ToQuadrotor2dTrigState(
     const Eigen::Ref<const Vector6<T>>& x_original) {
   Eigen::Matrix<T, 7, 1> x_trig;
   x_trig(0) = x_original(0);
@@ -74,7 +75,7 @@ Eigen::Matrix<T, 7, 1> ToTrigState(
  */
 template <typename T>
 Eigen::Matrix<T, 7, 1> TrigDynamics(
-    const QuadrotorPlant<double>& quadrotor,
+    const Quadrotor2dTrigPlant<double>& quadrotor,
     const Eigen::Ref<const Eigen::Matrix<T, 7, 1>>& x,
     const Eigen::Ref<const Vector2<T>>& u) {
   Eigen::Matrix<T, 7, 1> xdot;
@@ -94,35 +95,36 @@ Eigen::Matrix<T, 7, 1> TrigDynamics(
  * [pos_x, pos_y, sin(theta), cos(theta)-1, vel_x, vel_y, thetadot]
  */
 void TrigPolyDynamics(
-    const QuadrotorPlant<double>& quadrotor,
+    const Quadrotor2dTrigPlant<double>& quadrotor,
     const Eigen::Ref<const Eigen::Matrix<symbolic::Variable, 7, 1>>& x,
     Eigen::Matrix<symbolic::Polynomial, 7, 1>* f,
     Eigen::Matrix<symbolic::Polynomial, 7, 2>* G);
 
-double EquilibriumThrust(const QuadrotorPlant<double>& quadrotor);
+double EquilibriumThrust(const Quadrotor2dTrigPlant<double>& quadrotor);
 
 void PolynomialControlAffineDynamics(
-    const QuadrotorPlant<double>& quadrotor,
+    const Quadrotor2dTrigPlant<double>& quadrotor,
     const Vector6<symbolic::Variable>& x, Vector6<symbolic::Polynomial>* f,
     Eigen::Matrix<symbolic::Polynomial, 6, 2>* G);
 
-symbolic::Polynomial StateEqConstraint(
+symbolic::Polynomial Quadrotor2dStateEqConstraint(
     const Eigen::Ref<const Eigen::Matrix<symbolic::Variable, 7, 1>>& x);
 
-controllers::LinearQuadraticRegulatorResult SynthesizeTrigLqr(
+controllers::LinearQuadraticRegulatorResult SynthesizeQuadrotor2dTrigLqr(
     const Eigen::Ref<const Eigen::Matrix<double, 7, 7>>& Q,
     const Eigen::Ref<const Eigen::Matrix2d>& R);
 
 template <typename T>
-class ToTrigStateConverter : public LeafSystem<T> {
+class Quadrotor2dTrigStateConverter : public LeafSystem<T> {
  public:
-  ToTrigStateConverter();
+  Quadrotor2dTrigStateConverter();
 
   template <typename U>
-  explicit ToTrigStateConverter(const ToTrigStateConverter<U>&)
-      : ToTrigStateConverter<T>() {}
+  explicit Quadrotor2dTrigStateConverter(
+      const Quadrotor2dTrigStateConverter<U>&)
+      : Quadrotor2dTrigStateConverter<T>() {}
 
-  ~ToTrigStateConverter(){};
+  ~Quadrotor2dTrigStateConverter(){};
 
  private:
   void CalcTrigState(const Context<T>& context, BasicVector<T>* x_trig) const;

@@ -29,7 +29,7 @@ const double kInf = std::numeric_limits<double>::infinity();
   lqr_Q_diag << 1, 1, 1, 1, 10, 10, 10;
   const Eigen::MatrixXd lqr_Q = lqr_Q_diag.asDiagonal();
   const Eigen::Matrix2d lqr_R = 10 * Eigen::Matrix2d::Identity();
-  const auto lqr_result = SynthesizeTrigLqr(lqr_Q, lqr_R);
+  const auto lqr_result = SynthesizeQuadrotor2dTrigLqr(lqr_Q, lqr_R);
   Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(lqr_result.S);
   std::cout << "minimal eigenvalue of LQR S: " << es.eigenvalues().minCoeff()
             << "\n";
@@ -44,7 +44,7 @@ const double kInf = std::numeric_limits<double>::infinity();
   }
   Eigen::Matrix<symbolic::Polynomial, 7, 1> f;
   Eigen::Matrix<symbolic::Polynomial, 7, 2> G;
-  QuadrotorPlant<double> quadrotor;
+  Quadrotor2dTrigPlant<double> quadrotor;
   TrigPolyDynamics(quadrotor, x, &f, &G);
   const double thrust_equilibrium = EquilibriumThrust(quadrotor);
   symbolic::Polynomial V(x.cast<symbolic::Expression>().dot(lqr_result.S * x));
@@ -112,7 +112,7 @@ const double kInf = std::numeric_limits<double>::infinity();
 
 [[maybe_unused]] symbolic::Polynomial FindTrigRegionalClf(
     int V_degree, const Eigen::Matrix<symbolic::Variable, 7, 1>& x) {
-  QuadrotorPlant<double> quadrotor2d;
+  Quadrotor2dTrigPlant<double> quadrotor2d;
   const auto lqr_result = TrigDynamicsLQR();
   const double thrust_equilibrium = EquilibriumThrust(quadrotor2d);
   const Vector2<symbolic::Expression> u_lqr =
@@ -130,7 +130,7 @@ const double kInf = std::numeric_limits<double>::infinity();
   const int d = V_degree / 2;
   const double deriv_eps = 0.0001;
   const Vector1<symbolic::Polynomial> state_eq_constraints(
-      StateEqConstraint(x));
+      Quadrotor2dStateEqConstraint(x));
   const std::vector<int> positivity_ceq_lagrangian_degrees{{V_degree - 2}};
   const std::vector<int> derivative_ceq_lagrangian_degrees{
       {static_cast<int>(std::ceil((V_degree + 1) / 2.) * 2 - 2)}};
@@ -165,7 +165,7 @@ const double kInf = std::numeric_limits<double>::infinity();
 
 [[maybe_unused]] symbolic::Polynomial FindTrigClfInitBySample(
     int V_degree, const Eigen::Matrix<symbolic::Variable, 7, 1>& x) {
-  QuadrotorPlant<double> quadrotor;
+  Quadrotor2dTrigPlant<double> quadrotor;
   Eigen::Matrix<symbolic::Polynomial, 7, 1> f;
   Eigen::Matrix<symbolic::Polynomial, 7, 2> G;
   TrigPolyDynamics(quadrotor, x, &f, &G);
@@ -203,7 +203,7 @@ const double kInf = std::numeric_limits<double>::infinity();
       10 * Eigen::Matrix2d::Identity());
 
   for (int i = 0; i < state_mesh.cols(); ++i) {
-    x_val.col(i) = ToTrigState<double>(state_mesh.col(i));
+    x_val.col(i) = ToQuadrotor2dTrigState<double>(state_mesh.col(i));
     xdot_val.col(i) =
         TrigDynamics<double>(quadrotor, x_val.col(i),
                              -lqr_result.K * state_mesh.col(i) + u_equilibrium);
@@ -246,11 +246,11 @@ void ValidateTrigClfInit(
   Eigen::MatrixXd x_validate(7, state_validate.cols());
 
   const auto lqr_result = TrigDynamicsLQR();
-  QuadrotorPlant<double> quadrotor;
+  Quadrotor2dTrigPlant<double> quadrotor;
   const double thrust_equilibrium = EquilibriumThrust(quadrotor);
   Eigen::MatrixXd xdot_lqr_validate(7, x_validate.cols());
   for (int i = 0; i < state_validate.cols(); ++i) {
-    x_validate.col(i) = ToTrigState<double>(state_validate.col(i));
+    x_validate.col(i) = ToQuadrotor2dTrigState<double>(state_validate.col(i));
     const Eigen::Vector2d u_lqr =
         -lqr_result.K * x_validate.col(i) +
         Eigen::Vector2d(thrust_equilibrium, thrust_equilibrium);
@@ -300,7 +300,7 @@ void ValidateTrigClfInit(
 }
 
 [[maybe_unused]] void SearchWTrigDynamics() {
-  QuadrotorPlant<double> quadrotor;
+  Quadrotor2dTrigPlant<double> quadrotor;
   Eigen::Matrix<symbolic::Variable, 7, 1> x;
   for (int i = 0; i < 7; ++i) {
     x(i) = symbolic::Variable("x" + std::to_string(i));
@@ -316,7 +316,8 @@ void ValidateTrigClfInit(
   u_vertices << 0, 0, thrust_max, thrust_max,
                 0, thrust_max, 0, thrust_max;
   // clang-format on
-  const Vector1<symbolic::Polynomial> state_constraints(StateEqConstraint(x));
+  const Vector1<symbolic::Polynomial> state_constraints(
+      Quadrotor2dStateEqConstraint(x));
   symbolic::Polynomial V_init;
   const int V_degree = 2;
   {
@@ -384,7 +385,7 @@ void ValidateTrigClfInit(
     state_samples.col(3) << 1, 0., -M_PI / 2, 0, 0, 0;
     Eigen::MatrixXd x_samples(7, state_samples.cols());
     for (int i = 0; i < state_samples.cols(); ++i) {
-      x_samples.col(i) = ToTrigState<double>(state_samples.col(i));
+      x_samples.col(i) = ToQuadrotor2dTrigState<double>(state_samples.col(i));
     }
 
     const double positivity_eps = 0.0001;

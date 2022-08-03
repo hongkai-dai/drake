@@ -23,7 +23,7 @@ namespace analysis {
 const double kInf = std::numeric_limits<double>::infinity();
 
 int DoMain() {
-  QuadrotorPlant<double> quadrotor;
+  Quadrotor2dTrigPlant<double> quadrotor;
 
   // Synthesize an LQR controller.
   const double thrust_equilibrium = EquilibriumThrust(quadrotor);

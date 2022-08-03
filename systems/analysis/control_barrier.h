@@ -405,6 +405,7 @@ class ControlBarrier {
     std::vector<std::optional<symbolic::Polynomial>> unsafe_a;
     std::vector<std::optional<Eigen::MatrixXd>> unsafe_a_grams;
   };
+
   /**
    * Search Lagrangian multiplier λ₀(x), l(x), t(x), s(x) to prove that h(x) is
    * a valid CBF, whose super-level set doesn't contain any unsafe regions.

@@ -100,6 +100,18 @@ void TrigPolyDynamics(
     Eigen::Matrix<symbolic::Polynomial, 7, 1>* f,
     Eigen::Matrix<symbolic::Polynomial, 7, 2>* G);
 
+/**
+ * Computes the affine dynamics xdot = f(x) + G(x) * u.
+ * The state is [sin(theta1), cos(theta1)-1, vel_x1, vel_y1, thetadot1,
+ * pos_x2-posx1, pos_y2-pos_y1, sin(theta2), cos(theta2)-1, vel_x2, vel_y2,
+ * thetadot2)
+ */
+void TrigPolyDynamicsTwinQuadrotor(
+    const Quadrotor2dTrigPlant<double>& quadrotor,
+    const Eigen::Ref<const Eigen::Matrix<symbolic::Variable, 12, 1>>& x,
+    Eigen::Matrix<symbolic::Polynomial, 12, 1>* f,
+    Eigen::Matrix<symbolic::Polynomial, 12, 4>* G);
+
 double EquilibriumThrust(const Quadrotor2dTrigPlant<double>& quadrotor);
 
 void PolynomialControlAffineDynamics(
@@ -109,6 +121,9 @@ void PolynomialControlAffineDynamics(
 
 symbolic::Polynomial Quadrotor2dStateEqConstraint(
     const Eigen::Ref<const Eigen::Matrix<symbolic::Variable, 7, 1>>& x);
+
+Vector2<symbolic::Polynomial> TwinQuadrotor2dStateEqConstraint(
+    const Eigen::Ref<const Eigen::Matrix<symbolic::Variable, 12, 1>>& x);
 
 controllers::LinearQuadraticRegulatorResult SynthesizeQuadrotor2dTrigLqr(
     const Eigen::Ref<const Eigen::Matrix<double, 7, 7>>& Q,

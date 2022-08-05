@@ -223,6 +223,8 @@ PYBIND11_MODULE(analysis, m) {
         LeafSystem<T>>(m, "Quadrotor2dTrigPlant", GetPyParam<T>(),
         doc.analysis.Quadrotor2dTrigPlant.doc)
         .def(py::init<>(), doc.analysis.Quadrotor2dTrigPlant.ctor.doc)
+        .def("length", &analysis::Quadrotor2dTrigPlant<T>::length,
+            doc.analysis.Quadrotor2dTrigPlant.length.doc)
         .def("get_state_output_port",
             &analysis::Quadrotor2dTrigPlant<T>::get_state_output_port,
             py_rvp::reference_internal,
@@ -747,6 +749,19 @@ Parameter ``interruptible``:
         pydrake_doc.drake.systems.analysis.TrigPolyDynamics.doc);
 
     m.def(
+        "TrigPolyDynamicsTwinQuadrotor",
+        [](const analysis::Quadrotor2dTrigPlant<double>& quadrotor,
+            const Eigen::Ref<const Eigen::Matrix<symbolic::Variable, 12, 1>>&
+                x) {
+          Eigen::Matrix<symbolic::Polynomial, 12, 1> f;
+          Eigen::Matrix<symbolic::Polynomial, 12, 4> G;
+          analysis::TrigPolyDynamicsTwinQuadrotor(quadrotor, x, &f, &G);
+          return std::make_tuple(f, G);
+        },
+        py::arg("quadrotor"), py::arg("x"),
+        pydrake_doc.drake.systems.analysis.TrigPolyDynamicsTwinQuadrotor.doc);
+
+    m.def(
         "EquilibriumThrust",
         [](const analysis::Quadrotor2dTrigPlant<double>& quadrotor) {
           return analysis::EquilibriumThrust(quadrotor);
@@ -757,6 +772,11 @@ Parameter ``interruptible``:
     m.def("Quadrotor2dStateEqConstraint",
         &analysis::Quadrotor2dStateEqConstraint, py::arg("x"),
         pydrake_doc.drake.systems.analysis.Quadrotor2dStateEqConstraint.doc);
+
+    m.def("TwinQuadrotor2dStateEqConstraint",
+        &analysis::TwinQuadrotor2dStateEqConstraint, py::arg("x"),
+        pydrake_doc.drake.systems.analysis.TwinQuadrotor2dStateEqConstraint
+            .doc);
   }
 }
 

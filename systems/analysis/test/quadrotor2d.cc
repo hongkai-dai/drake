@@ -63,6 +63,42 @@ void TrigPolyDynamics(
   (*G)(6, 1) = -(*G)(6, 0);
 }
 
+void TrigPolyDynamicsTwinQuadrotor(
+    const Quadrotor2dTrigPlant<double>& quadrotor,
+    const Eigen::Ref<const Eigen::Matrix<symbolic::Variable, 12, 1>>& x,
+    Eigen::Matrix<symbolic::Polynomial, 12, 1>* f,
+    Eigen::Matrix<symbolic::Polynomial, 12, 4>* G) {
+  (*f)(0) = symbolic::Polynomial((x(1) + 1) * x(4));
+  (*f)(1) = symbolic::Polynomial(-x(0) * x(4));
+  (*f)(2) = symbolic::Polynomial();
+  (*f)(3) = symbolic::Polynomial(-quadrotor.gravity());
+  (*f)(4) = symbolic::Polynomial();
+  (*f)(5) = symbolic::Polynomial(x(9) - x(2));
+  (*f)(6) = symbolic::Polynomial(x(10) - x(3));
+  (*f)(7) = symbolic::Polynomial((x(8) + 1) * x(11));
+  (*f)(8) = symbolic::Polynomial(-x(7) * x(11));
+  (*f)(9) = symbolic::Polynomial();
+  (*f)(10) = symbolic::Polynomial(-quadrotor.gravity());
+  (*f)(11) = symbolic::Polynomial();
+  for (int i = 0; i < 12; ++i) {
+    for (int j = 0; j < 4; ++j) {
+      (*G)(i, j) = symbolic::Polynomial();
+    }
+  }
+  (*G)(2, 0) = symbolic::Polynomial(-x(0) / quadrotor.mass());
+  (*G)(2, 1) = (*G)(2, 0);
+  (*G)(3, 0) = symbolic::Polynomial((x(1) + 1) / quadrotor.mass());
+  (*G)(3, 1) = (*G)(3, 0);
+  (*G)(4, 0) = symbolic::Polynomial(quadrotor.length() / quadrotor.inertia());
+  (*G)(4, 1) = -(*G)(4, 0);
+  (*G)(9, 2) = symbolic::Polynomial(-x(7) / quadrotor.mass());
+  (*G)(9, 3) = (*G)(9, 2);
+  (*G)(10, 2) = symbolic::Polynomial((x(8) + 1) / quadrotor.mass());
+  (*G)(10, 3) = (*G)(10, 2);
+  (*G)(11, 2) = symbolic::Polynomial(quadrotor.length() / quadrotor.inertia());
+  (*G)(11, 3) = -(*G)(11, 2);
+}
+
 double EquilibriumThrust(const Quadrotor2dTrigPlant<double>& quadrotor) {
   return quadrotor.mass() * quadrotor.gravity() / 2;
 }
@@ -95,6 +131,13 @@ void PolynomialControlAffineDynamics(
 symbolic::Polynomial Quadrotor2dStateEqConstraint(
     const Eigen::Ref<const Eigen::Matrix<symbolic::Variable, 7, 1>>& x) {
   return symbolic::Polynomial(x(2) * x(2) + x(3) * x(3) + 2 * x(3));
+}
+
+Vector2<symbolic::Polynomial> TwinQuadrotor2dStateEqConstraint(
+    const Eigen::Ref<const Eigen::Matrix<symbolic::Variable, 12, 1>>& x) {
+  return Vector2<symbolic::Polynomial>(
+      symbolic::Polynomial(x(0) * x(0) + x(1) * x(1) + 2 * x(1)),
+      symbolic::Polynomial(x(7) * x(7) + x(8) * x(8) + 2 * x(8)));
 }
 
 controllers::LinearQuadraticRegulatorResult SynthesizeQuadrotor2dTrigLqr(

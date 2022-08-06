@@ -219,6 +219,11 @@ class ControlBarrier {
   /**
    * An ellipsoid as
    * (x−c)ᵀS(x−c) ≤ d
+   *
+   * We will maximize the minimal value of h(x) on the ellipsoid as
+   * h(x)-ρ - r(x) * (d−(x−c)ᵀS(x−c)) is sos.
+   * r(x) is sos.
+   * Hence we need to specify the degree of r(x)
    */
   struct Ellipsoid {
     Ellipsoid(const Eigen::Ref<const Eigen::VectorXd>& m_c,
@@ -241,6 +246,8 @@ class ControlBarrier {
   };
 
   struct EllipsoidBisectionOption {
+    EllipsoidBisectionOption() = default;
+
     EllipsoidBisectionOption(double m_d_min, double m_d_max, double m_d_tol)
         : d_min{m_d_min}, d_max{m_d_max}, d_tol{m_d_tol} {
       DRAKE_DEMAND(d_max >= d_min);
@@ -249,6 +256,27 @@ class ControlBarrier {
     double d_min;
     double d_max;
     double d_tol;
+  };
+
+  /**
+   * We can search for the inscribed ellipsoid {x|(x−x*)ᵀS(x−x*) <=d} with the
+   * largest d through optimization
+   * max d
+   * s.t (1+t(x))((x-x*)ᵀS(x-x*)-d) - s(x)*-h(x) is sos
+   *     s(x) is sos
+   * Which proves that the ellipsoid is within the safe set {x | h(x)>=0}
+   */
+  struct EllipsoidMaximizeOption {
+    EllipsoidMaximizeOption() = default;
+
+    EllipsoidMaximizeOption(symbolic::Polynomial m_t, int m_s_degree,
+                            double m_backoff_scale)
+        : t{std::move(m_t)},
+          s_degree{m_s_degree},
+          backoff_scale{m_backoff_scale} {}
+    symbolic::Polynomial t;
+    int s_degree;
+    double backoff_scale;
   };
 
   /**
@@ -269,11 +297,14 @@ class ControlBarrier {
   struct SearchOptions {
     solvers::SolverId barrier_step_solver{solvers::MosekSolver::id()};
     solvers::SolverId lagrangian_step_solver{solvers::MosekSolver::id()};
+    solvers::SolverId ellipsoid_step_solver{solvers::MosekSolver::id()};
     int bilinear_iterations{10};
     double backoff_scale{0.};
     std::optional<solvers::SolverOptions> lagrangian_step_solver_options{
         std::nullopt};
     std::optional<solvers::SolverOptions> barrier_step_solver_options{
+        std::nullopt};
+    std::optional<solvers::SolverOptions> ellipsoid_step_solver_options{
         std::nullopt};
     // Small coefficient in the constraints can cause numerical issues. We will
     // set the coefficient of linear constraints smaller than these tolerance to
@@ -307,10 +338,9 @@ class ControlBarrier {
 
   /**
    * @param x_anchor When searching for the barrier function h(x), we will
-   * require h(x_anchor) <= h_init(x_anchor) to prevent scaling the barrier
+   * require h(x_anchor) <= h_x_anchor_max to prevent scaling the barrier
    * function to infinity. This is because any positive scaling of a barrier
    * function is still a barrier function with the same verified safe set.
-   * @pre h_init(x_anchor) > 0
    * @param[in/out] ellipsoids The ellipsoids contained inside the safe region.
    */
   SearchResult Search(
@@ -318,14 +348,16 @@ class ControlBarrier {
       int lambda0_degree, std::optional<int> lambda1_degree,
       const std::vector<int>& l_degrees,
       const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
-      const std::vector<int>& t_degree,
+      const std::vector<int>& t_degrees,
       const std::vector<std::vector<int>>& s_degrees,
       const std::vector<std::vector<int>>&
           unsafe_state_constraints_lagrangian_degrees,
-      const Eigen::Ref<const Eigen::VectorXd>& x_anchor,
+      const Eigen::Ref<const Eigen::VectorXd>& x_anchor, double h_x_anchor_max,
       const SearchOptions& search_options,
       std::vector<ControlBarrier::Ellipsoid>* ellipsoids,
-      std::vector<EllipsoidBisectionOption>* ellipsoid_bisection_options) const;
+      std::vector<
+          std::variant<EllipsoidBisectionOption, EllipsoidMaximizeOption>>*
+          ellipsoid_options) const;
 
   struct SearchWithSlackAResult : public SearchResult {
     SearchWithSlackAResult(int num_unsafe_regions)
@@ -381,7 +413,7 @@ class ControlBarrier {
       int lambda0_degree, std::optional<int> lambda1_degree,
       const std::vector<int>& l_degrees,
       const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
-      std::optional<int> hdot_a_degree, const std::vector<int>& t_degree,
+      std::optional<int> hdot_a_degree, const std::vector<int>& t_degrees,
       const std::vector<std::vector<int>>& s_degrees,
       const std::vector<std::vector<int>>&
           unsafe_state_constraints_lagrangian_degrees,
@@ -415,7 +447,7 @@ class ControlBarrier {
       const symbolic::Polynomial& h, double deriv_eps, int lambda0_degree,
       std::optional<int> lambda1_degree, const std::vector<int>& l_degrees,
       const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
-      std::optional<int> hdot_a_degree, const std::vector<int>& t_degree,
+      std::optional<int> hdot_a_degree, const std::vector<int>& t_degrees,
       const std::vector<std::vector<int>>& s_degrees,
       const std::vector<std::vector<int>>&
           unsafe_state_constraints_lagrangian_degrees,

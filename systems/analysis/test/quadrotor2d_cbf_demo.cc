@@ -89,13 +89,16 @@ int DoMain() {
   const std::vector<std::vector<int>>
       unsafe_state_constraints_lagrangian_degrees{{}, {}};
   std::vector<ControlBarrier::Ellipsoid> ellipsoids;
-  std::vector<ControlBarrier::EllipsoidBisectionOption>
-      ellipsoid_bisection_options;
+  std::vector<std::variant<ControlBarrier::EllipsoidBisectionOption,
+                           ControlBarrier::EllipsoidMaximizeOption>>
+      ellipsoid_options;
   ellipsoids.emplace_back(
       Vector6d::Zero(), Matrix6<double>::Identity(), 0., 0,
       std::vector<int>() /* state_constraints_lagrangian_degree */);
-  ellipsoid_bisection_options.emplace_back(0, 2, 0.001);
+  ellipsoid_options.push_back(
+      ControlBarrier::EllipsoidBisectionOption(0, 2, 0.001));
   const Vector6d x_anchor = Vector6d::Zero();
+  const double h_x_anchor_max = h_init.EvaluateIndeterminates(x, x_anchor)(0);
   ControlBarrier::SearchOptions search_options;
   search_options.hsol_tiny_coeff_tol = 1E-8;
   search_options.lsol_tiny_coeff_tol = 1E-8;
@@ -112,8 +115,8 @@ int DoMain() {
   const auto search_ret = dut.Search(
       h_init, h_degree, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
       hdot_state_constraints_lagrangian_degrees, t_degree, s_degrees,
-      unsafe_state_constraints_lagrangian_degrees, x_anchor, search_options,
-      &ellipsoids, &ellipsoid_bisection_options);
+      unsafe_state_constraints_lagrangian_degrees, x_anchor, h_x_anchor_max,
+      search_options, &ellipsoids, &ellipsoid_options);
   std::cout << "h_sol: " << search_ret.h << "\n";
   return 0;
 }

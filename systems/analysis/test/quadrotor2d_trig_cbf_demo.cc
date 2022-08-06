@@ -350,15 +350,18 @@ symbolic::Polynomial FindCbfInit(
       unsafe_state_constraints_lagrangian_degrees{{h_degree - 1},
                                                   {h_degree - 1}};
   std::vector<ControlBarrier::Ellipsoid> ellipsoids;
-  std::vector<ControlBarrier::EllipsoidBisectionOption>
-      ellipsoid_bisection_options;
+  std::vector<std::variant<ControlBarrier::EllipsoidBisectionOption,
+                           ControlBarrier::EllipsoidMaximizeOption>>
+      ellipsoid_options;
   ellipsoids.emplace_back(Eigen::Matrix<double, 7, 1>::Zero(),
                           Eigen::Matrix<double, 7, 7>::Identity(), 0,
                           h_degree - 2, std::vector<int>{{h_degree - 1}});
-  ellipsoid_bisection_options.emplace_back(0, 2, 0.01);
+  ellipsoid_options.push_back(
+      ControlBarrier::EllipsoidBisectionOption(0, 2, 0.01));
 
   const Eigen::Matrix<double, 7, 1> x_anchor =
       Eigen::Matrix<double, 7, 1>::Zero();
+  const double h_x_anchor_max = h_init.EvaluateIndeterminates(x, x_anchor)(0);
   ControlBarrier::SearchOptions search_options;
   search_options.hsol_tiny_coeff_tol = 1E-8;
   search_options.lagrangian_step_solver_options = solvers::SolverOptions();
@@ -367,11 +370,11 @@ symbolic::Polynomial FindCbfInit(
   search_options.barrier_step_solver_options = solvers::SolverOptions();
   search_options.barrier_step_solver_options->SetOption(
       solvers::CommonSolverOption::kPrintToConsole, 1);
-  const auto search_ret =
-      dut.Search(h_init, h_degree, deriv_eps, lambda0_degree, lambda1_degree,
-                 l_degrees, hdot_eq_lagrangian_degrees, t_degree, s_degrees,
-                 unsafe_state_constraints_lagrangian_degrees, x_anchor,
-                 search_options, &ellipsoids, &ellipsoid_bisection_options);
+  const auto search_ret = dut.Search(
+      h_init, h_degree, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
+      hdot_eq_lagrangian_degrees, t_degree, s_degrees,
+      unsafe_state_constraints_lagrangian_degrees, x_anchor, h_x_anchor_max,
+      search_options, &ellipsoids, &ellipsoid_options);
   std::cout << "h_sol: " << search_ret.h << "\n";
 
   Eigen::Matrix<double, 6, Eigen::Dynamic> state_samples(6, 5);

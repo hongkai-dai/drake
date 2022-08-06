@@ -493,6 +493,25 @@ Parameter ``interruptible``:
   }
 
   {
+    // ControlLyapunov
+    constexpr auto& cls_doc =
+        pydrake_doc.drake.systems.analysis.ControlLyapunov;
+    using Class = analysis::ControlLyapunov;
+    auto control_lyapunov =
+        py::class_<Class>(m, "ControlLyapunov", cls_doc.doc)
+            .def(py::init<const Eigen::Ref<const VectorX<symbolic::Variable>>&,
+                     const Eigen::Ref<const VectorX<symbolic::Polynomial>>&,
+                     const Eigen::Ref<const MatrixX<symbolic::Polynomial>>&,
+                     const std::optional<symbolic::Polynomial>&,
+                     const Eigen::Ref<const Eigen::MatrixXd>&,
+                     const Eigen::Ref<const VectorX<symbolic::Polynomial>>&>(),
+                py::arg("x"), py::arg("f"), py::arg("G"),
+                py::arg("dynamics_denominator"), py::arg("u_vertices"),
+                py::arg("state_constraints"), cls_doc.ctor.doc);
+  }
+
+  {
+    // ControlBarrier
     constexpr auto& cls_doc = pydrake_doc.drake.systems.analysis.ControlBarrier;
     using Class = analysis::ControlBarrier;
     auto control_barrier =
@@ -609,17 +628,40 @@ Parameter ``interruptible``:
         py::arg("h_degree"), py::arg("deriv_eps"), py::arg("s_degrees"),
         py::arg("unsafe_a_degrees"), cls_doc.ConstructBarrierProgram.doc);
 
+    control_barrier.def(
+        "AddBarrierProgramCost",
+        [](const Class& self, solvers::MathematicalProgram* prog,
+            const symbolic::Polynomial& h,
+            const std::vector<Class::Ellipsoid>& inner_ellipsoids) {
+          std::vector<symbolic::Polynomial> r;
+          VectorX<symbolic::Variable> rho;
+          std::vector<VectorX<symbolic::Polynomial>>
+              ellipsoids_state_constraints_lagrangian;
+          self.AddBarrierProgramCost(prog, h, inner_ellipsoids, &r, &rho,
+              &ellipsoids_state_constraints_lagrangian);
+          return std::make_tuple(
+              r, rho, ellipsoids_state_constraints_lagrangian);
+        },
+        py::arg("prog"), py::arg("h"), py::arg("inner_ellipsoids"),
+        cls_doc.AddBarrierProgramCost.doc_6args);
+
     py::class_<Class::SearchOptions>(control_barrier, "SearchOptions")
+        .def(py::init<>())
         .def_readwrite(
             "barrier_step_solver", &Class::SearchOptions::barrier_step_solver)
         .def_readwrite("lagrangian_step_solver",
             &Class::SearchOptions::lagrangian_step_solver)
+        .def_readwrite("ellipsoid_step_solver",
+            &Class::SearchOptions::ellipsoid_step_solver)
         .def_readwrite(
             "bilinear_iterations", &Class::SearchOptions::bilinear_iterations)
+        .def_readwrite("backoff_scale", &Class::SearchOptions::backoff_scale)
         .def_readwrite("lagrangian_step_solver_options",
             &Class::SearchOptions::lagrangian_step_solver_options)
         .def_readwrite("barrier_step_solver_options",
             &Class::SearchOptions::barrier_step_solver_options)
+        .def_readwrite("ellipsoid_step_solver_options",
+            &Class::SearchOptions::ellipsoid_step_solver_options)
         .def_readwrite("barrier_tiny_coeff_tol",
             &Class::SearchOptions::barrier_tiny_coeff_tol)
         .def_readwrite("lagrangian_tiny_coeff_tol",
@@ -641,6 +683,51 @@ Parameter ``interruptible``:
         .def_readonly("s", &Class::SearchResult::s)
         .def_readonly("unsafe_state_constraints_lagrangian",
             &Class::SearchResult::unsafe_state_constraints_lagrangian);
+
+    py::class_<Class::Ellipsoid>(
+        control_barrier, "Ellipsoid", cls_doc.Ellipsoid.doc)
+        .def(py::init<const Eigen::Ref<const Eigen::VectorXd>&,
+                 const Eigen::Ref<const Eigen::MatrixXd>&, double, int,
+                 std::vector<int>>(),
+            py::arg("c"), py::arg("S"), py::arg("d"), py::arg("r_degree"),
+            py::arg("eq_lagrangian_degrees"), cls_doc.Ellipsoid.ctor.doc)
+        .def_readwrite("c", &Class::Ellipsoid::c)
+        .def_readwrite("S", &Class::Ellipsoid::S)
+        .def_readwrite("d", &Class::Ellipsoid::d)
+        .def_readwrite("r_degree", &Class::Ellipsoid::r_degree)
+        .def_readwrite(
+            "eq_lagrangian_degrees", &Class::Ellipsoid::eq_lagrangian_degrees);
+
+    py::class_<Class::EllipsoidBisectionOption>(
+        control_barrier, "EllipsoidBisectionOption")
+        .def(py::init<>(), cls_doc.EllipsoidBisectionOption.ctor.doc)
+        .def(py::init<double, double, double>(), py::arg("d_min"),
+            py::arg("d_max"), py::arg("d_tol"),
+            cls_doc.EllipsoidBisectionOption.ctor.doc)
+        .def_readwrite("d_min", &Class::EllipsoidBisectionOption::d_min)
+        .def_readwrite("d_max", &Class::EllipsoidBisectionOption::d_max)
+        .def_readwrite("d_tol", &Class::EllipsoidBisectionOption::d_tol);
+
+    py::class_<Class::EllipsoidMaximizeOption>(
+        control_barrier, "EllipsoidMaximizeOption")
+        .def(py::init<>(), cls_doc.EllipsoidMaximizeOption.ctor.doc)
+        .def(py::init<symbolic::Polynomial, int, double>(), py::arg("t"),
+            py::arg("s_degree"), py::arg("backoff_scale"),
+            cls_doc.EllipsoidMaximizeOption.ctor.doc)
+        .def_readwrite("t", &Class::EllipsoidMaximizeOption::t)
+        .def_readwrite("s_degree", &Class::EllipsoidMaximizeOption::s_degree)
+        .def_readwrite(
+            "backoff_scale", &Class::EllipsoidMaximizeOption::backoff_scale);
+
+    control_barrier.def("Search", &Class::Search, py::arg("h_init"),
+        py::arg("h_degree"), py::arg("deriv_eps"), py::arg("lambda0_degree"),
+        py::arg("lambda1_degree"), py::arg("l_degrees"),
+        py::arg("hdot_state_constraints_lagrangian_degrees"),
+        py::arg("t_degrees"), py::arg("s_degrees"),
+        py::arg("unsafe_state_constraints_lagrangian_degrees"),
+        py::arg("x_anchor"), py::arg("h_x_anchor_max"),
+        py::arg("search_options"), py::arg("ellipsoids"),
+        py::arg("ellipsoid_options"), cls_doc.Search.doc);
 
     py::class_<Class::SearchWithSlackAOptions, Class::SearchOptions>(
         control_barrier, "SearchWithSlackAOptions")
@@ -674,7 +761,7 @@ Parameter ``interruptible``:
         py::arg("h_degree"), py::arg("deriv_eps"), py::arg("lambda0_degree"),
         py::arg("lambda1_degree"), py::arg("l_degrees"),
         py::arg("hdot_state_constraints_lagrangian_degrees"),
-        py::arg("hdot_a_degree"), py::arg("t_degree"), py::arg("s_degrees"),
+        py::arg("hdot_a_degree"), py::arg("t_degrees"), py::arg("s_degrees"),
         py::arg("unsafe_state_constraints_lagrangian_degrees"),
         py::arg("unsafe_a_degrees"), py::arg("x_safe"), py::arg("h_x_safe_min"),
         py::arg("search_options"), cls_doc.SearchWithSlackA.doc);
@@ -702,7 +789,7 @@ Parameter ``interruptible``:
         py::arg("h"), py::arg("deriv_eps"), py::arg("lambda0_degree"),
         py::arg("lambda1_degree"), py::arg("l_degrees"),
         py::arg("hdot_state_constraints_lagrangian_degrees"),
-        py::arg("hdot_a_degree"), py::arg("t_degree"), py::arg("s_degrees"),
+        py::arg("hdot_a_degree"), py::arg("t_degrees"), py::arg("s_degrees"),
         py::arg("unsafe_state_constraints_lagrangian_degrees"),
         py::arg("unsafe_a_degrees"), py::arg("search_options"),
         cls_doc.SearchLagrangian.doc);
@@ -711,14 +798,43 @@ Parameter ``interruptible``:
   {
     // clf_cbf_utils
     m.def(
-        "GetPolynomialSolutions",
-        [](const solvers::MathematicalProgramResult& result,
-            const VectorX<symbolic::Polynomial>& p, double zero_coeff_tol) {
-          VectorX<symbolic::Polynomial> p_sol;
-          analysis::GetPolynomialSolutions(result, p, zero_coeff_tol, &p_sol);
-          return p_sol;
-        },
-        py::arg("result"), py::arg("p"), py::arg("zero_coeff_tol"));
+         "GetPolynomialSolutions",
+         [](const solvers::MathematicalProgramResult& result,
+             const VectorX<symbolic::Polynomial>& p, double zero_coeff_tol) {
+           VectorX<symbolic::Polynomial> p_sol;
+           analysis::GetPolynomialSolutions(result, p, zero_coeff_tol, &p_sol);
+           return p_sol;
+         },
+         py::arg("result"), py::arg("p"), py::arg("zero_coeff_tol"))
+        .def(
+            "MaximizeInnerEllipsoidSize",
+            [](const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+                const Eigen::Ref<const Eigen::VectorXd>& x_star,
+                const Eigen::Ref<const Eigen::MatrixXd>& S,
+                const symbolic::Polynomial& f, const symbolic::Polynomial& t,
+                int s_degree,
+                const std::optional<VectorX<symbolic::Polynomial>>&
+                    eq_constraints,
+                const std::vector<int>& eq_lagrangian_degrees,
+                const solvers::SolverId& solver_id,
+                const std::optional<solvers::SolverOptions>& solver_options,
+                double backoff_scale) {
+              double d_sol;
+              symbolic::Polynomial s_sol;
+              VectorX<symbolic::Polynomial> eq_lagrangian_sol;
+              bool is_success = analysis::MaximizeInnerEllipsoidSize(x, x_star,
+                  S, f, t, s_degree, eq_constraints, eq_lagrangian_degrees,
+                  solver_id, solver_options, backoff_scale, &d_sol, &s_sol,
+                  &eq_lagrangian_sol);
+              return std::make_tuple(
+                  is_success, d_sol, s_sol, eq_lagrangian_sol);
+            },
+            py::arg("x"), py::arg("x_star"), py::arg("S"), py::arg("f"),
+            py::arg("t"), py::arg("s_degree"), py::arg("eq_constraints"),
+            py::arg("eq_lagrangian_degrees"), py::arg("solver_id"),
+            py::arg("solver_options"), py::arg("backoff_scale"),
+            pydrake_doc.drake.systems.analysis.MaximizeInnerEllipsoidSize
+                .doc_14args);
   }
 
   {

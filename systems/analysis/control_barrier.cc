@@ -367,35 +367,25 @@ ControlBarrier::SearchResult ControlBarrier::Search(
     const double deriv_eps, const int lambda0_degree,
     const std::optional<int> lambda1_degree, const std::vector<int>& l_degrees,
     const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
-    const std::vector<int>& t_degree,
+    const std::vector<int>& t_degrees,
     const std::vector<std::vector<int>>& s_degrees,
     const std::vector<std::vector<int>>&
         unsafe_state_constraints_lagrangian_degrees,
-    const Eigen::Ref<const Eigen::VectorXd>& x_anchor,
+    const Eigen::Ref<const Eigen::VectorXd>& x_anchor, double h_x_anchor_max,
     const SearchOptions& search_options,
     std::vector<ControlBarrier::Ellipsoid>* ellipsoids,
-    std::vector<EllipsoidBisectionOption>* ellipsoid_bisection_options) const {
+    std::vector<
+        std::variant<EllipsoidBisectionOption, EllipsoidMaximizeOption>>*
+        ellipsoid_options) const {
   SearchResult ret(unsafe_regions_.size());
   ret.success = false;
   ret.h = h_init;
-  double h_at_x_anchor{};
-  {
-    symbolic::Environment env;
-    env.insert(x_, x_anchor);
-    h_at_x_anchor = h_init.Evaluate(env);
-    if (h_at_x_anchor <= 0) {
-      throw std::runtime_error(fmt::format(
-          "ControlBarrier::Search(): h_init(x_anchor) = {}, should be > 0",
-          h_at_x_anchor));
-    }
-  }
-
   int iter_count = 0;
 
   // inner_ellipsoid_flag[i] is true if and only if the center of ellipsoids[i]
   // is covered in the safe region h(x) >= 0.
   std::vector<bool> inner_ellipsoid_flag(ellipsoids->size(), false);
-  DRAKE_DEMAND(ellipsoids->size() == ellipsoid_bisection_options->size());
+  DRAKE_DEMAND(ellipsoids->size() == ellipsoid_options->size());
   const std::optional<int> hdot_a_degree = std::nullopt;
   const std::vector<std::optional<int>> unsafe_a_degrees(unsafe_regions_.size(),
                                                          std::nullopt);
@@ -403,7 +393,7 @@ ControlBarrier::SearchResult ControlBarrier::Search(
     drake::log()->info("iter {}", iter_count);
     const auto search_lagrangian_ret = SearchLagrangian(
         ret.h, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
-        hdot_state_constraints_lagrangian_degrees, hdot_a_degree, t_degree,
+        hdot_state_constraints_lagrangian_degrees, hdot_a_degree, t_degrees,
         s_degrees, unsafe_state_constraints_lagrangian_degrees,
         unsafe_a_degrees, search_options);
     SetLagrangianResult(search_lagrangian_ret, &ret);
@@ -427,19 +417,37 @@ ControlBarrier::SearchResult ControlBarrier::Search(
         double d_sol;
         symbolic::Polynomial r_sol;
         VectorX<symbolic::Polynomial> ellipsoid_c_lagrangian_sol;
-        auto& ellipsoid_bisection_option =
-            (*ellipsoid_bisection_options)[ellipsoid_idx];
-        MaximizeInnerEllipsoidSize(
-            x_, ellipsoid.c, ellipsoid.S, -ret.h, state_eq_constraints_,
-            ellipsoid.r_degree, ellipsoid.eq_lagrangian_degrees,
-            ellipsoid_bisection_option.d_max, ellipsoid_bisection_option.d_min,
-            search_options.lagrangian_step_solver,
-            search_options.lagrangian_step_solver_options,
-            ellipsoid_bisection_option.d_tol, &d_sol, &r_sol,
-            &ellipsoid_c_lagrangian_sol);
+        if (std::holds_alternative<EllipsoidBisectionOption>(
+                (*ellipsoid_options)[ellipsoid_idx])) {
+          auto& ellipsoid_bisection_option = std::get<EllipsoidBisectionOption>(
+              (*ellipsoid_options)[ellipsoid_idx]);
+
+          MaximizeInnerEllipsoidSize(
+              x_, ellipsoid.c, ellipsoid.S, -ret.h, state_eq_constraints_,
+              ellipsoid.r_degree, ellipsoid.eq_lagrangian_degrees,
+              ellipsoid_bisection_option.d_max,
+              ellipsoid_bisection_option.d_min,
+              search_options.ellipsoid_step_solver,
+              search_options.ellipsoid_step_solver_options,
+              ellipsoid_bisection_option.d_tol, &d_sol, &r_sol,
+              &ellipsoid_c_lagrangian_sol);
+          ellipsoid_bisection_option.d_min = d_sol;
+        } else {
+          symbolic::Polynomial s_sol;
+          const EllipsoidMaximizeOption ellipsoid_maximize_option =
+              std::get<EllipsoidMaximizeOption>(
+                  (*ellipsoid_options)[ellipsoid_idx]);
+          MaximizeInnerEllipsoidSize(
+              x_, ellipsoid.c, ellipsoid.S, -ret.h, ellipsoid_maximize_option.t,
+              ellipsoid_maximize_option.s_degree, state_eq_constraints_,
+              ellipsoid.eq_lagrangian_degrees,
+              search_options.ellipsoid_step_solver,
+              search_options.ellipsoid_step_solver_options,
+              ellipsoid_maximize_option.backoff_scale, &d_sol, &s_sol,
+              &ellipsoid_c_lagrangian_sol);
+        }
         drake::log()->info("Ellipsoid[{}] d {}", ellipsoid_idx, d_sol);
         ellipsoid.d = d_sol;
-        ellipsoid_bisection_option.d_min = d_sol;
       } else {
         inner_ellipsoid_flag[ellipsoid_idx] = false;
       }
@@ -469,14 +477,14 @@ ControlBarrier::SearchResult ControlBarrier::Search(
                                   &ellipsoid_state_constraints_lagrangian);
       // To prevent scaling h arbitrarily to infinity, we constrain
       // h(x_anchor)
-      // <= h_init(x_anchor).
+      // <= h_x_anchor_max
       {
         Eigen::MatrixXd h_monomial_vals;
         VectorX<symbolic::Variable> h_coeff_vars;
         EvaluatePolynomial(barrier_ret.h, x_, x_anchor, &h_monomial_vals,
                            &h_coeff_vars);
         barrier_ret.prog->AddLinearConstraint(h_monomial_vals.row(0), -kInf,
-                                              h_at_x_anchor, h_coeff_vars);
+                                              h_x_anchor_max, h_coeff_vars);
       }
 
       if (search_options.barrier_tiny_coeff_tol > 0) {
@@ -529,7 +537,7 @@ ControlBarrier::SearchWithSlackAResult ControlBarrier::SearchWithSlackA(
     const double deriv_eps, const int lambda0_degree,
     const std::optional<int> lambda1_degree, const std::vector<int>& l_degrees,
     const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
-    const std::optional<int> hdot_a_degree, const std::vector<int>& t_degree,
+    const std::optional<int> hdot_a_degree, const std::vector<int>& t_degrees,
     const std::vector<std::vector<int>>& s_degrees,
     const std::vector<std::vector<int>>&
         unsafe_state_constraints_lagrangian_degrees,
@@ -552,7 +560,7 @@ ControlBarrier::SearchWithSlackAResult ControlBarrier::SearchWithSlackA(
       const auto search_lagrangian_result = this->SearchLagrangian(
           search_result.h, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
           hdot_state_constraints_lagrangian_degrees, hdot_a_degree_search,
-          t_degree, s_degrees, unsafe_state_constraints_lagrangian_degrees,
+          t_degrees, s_degrees, unsafe_state_constraints_lagrangian_degrees,
           unsafe_a_degrees_search, search_options);
       if (search_lagrangian_result.success) {
         SetLagrangianResult(search_lagrangian_result, &search_result);
@@ -705,7 +713,7 @@ ControlBarrier::SearchLagrangianResult ControlBarrier::SearchLagrangian(
     const int lambda0_degree, const std::optional<int> lambda1_degree,
     const std::vector<int>& l_degrees,
     const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
-    const std::optional<int> hdot_a_degree, const std::vector<int>& t_degree,
+    const std::optional<int> hdot_a_degree, const std::vector<int>& t_degrees,
     const std::vector<std::vector<int>>& s_degrees,
     const std::vector<std::vector<int>>&
         unsafe_state_constraints_lagrangian_degrees,
@@ -770,7 +778,7 @@ ControlBarrier::SearchLagrangianResult ControlBarrier::SearchLagrangian(
     search_lagrangian_ret.unsafe_a_grams.resize(unsafe_regions_.size());
     for (int i = 0; i < static_cast<int>(unsafe_regions_.size()); ++i) {
       auto unsafe_ret = this->ConstructUnsafeRegionProgram(
-          h, i, t_degree[i], s_degrees[i],
+          h, i, t_degrees[i], s_degrees[i],
           unsafe_state_constraints_lagrangian_degrees[i], unsafe_a_degrees[i]);
       if (search_options.lagrangian_tiny_coeff_tol > 0) {
         RemoveTinyCoeff(unsafe_ret.prog.get(),

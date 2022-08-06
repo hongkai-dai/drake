@@ -313,21 +313,26 @@ TEST_F(SimpleLinearSystemTest, ControlBarrierSearch) {
       unsafe_state_constraints_lagrangian_degrees = {{}};
 
   std::vector<ControlBarrier::Ellipsoid> ellipsoids;
-  std::vector<ControlBarrier::EllipsoidBisectionOption>
-      ellipsoid_bisection_options;
+  std::vector<std::variant<ControlBarrier::EllipsoidBisectionOption,
+                           ControlBarrier::EllipsoidMaximizeOption>>
+      ellipsoid_options;
   ellipsoids.emplace_back(Eigen::Vector2d(0.1, 0.2),
                           Eigen::Matrix2d::Identity(), 0, 0,
                           std::vector<int>());
-  ellipsoid_bisection_options.emplace_back(0, 2, 0.01);
+  ellipsoid_options.push_back(
+      ControlBarrier::EllipsoidBisectionOption(0, 2, 0.01));
   ellipsoids.emplace_back(Eigen::Vector2d(0.5, -0.9),
                           Eigen::Matrix2d::Identity(), 0, 0,
                           std::vector<int>());
-  ellipsoid_bisection_options.emplace_back(0, 2, 0.01);
+  ellipsoid_options.push_back(
+      ControlBarrier::EllipsoidBisectionOption(0, 2, 0.01));
   ellipsoids.emplace_back(Eigen::Vector2d(0.5, -1.9),
                           Eigen::Matrix2d::Identity(), 0, 0,
                           std::vector<int>());
-  ellipsoid_bisection_options.emplace_back(0, 2, 0.01);
+  ellipsoid_options.push_back(
+      ControlBarrier::EllipsoidBisectionOption(0, 2, 0.01));
   const Eigen::Vector2d x_anchor(0.3, 0.5);
+  const double h_x_anchor_max = h_init.EvaluateIndeterminates(x_, x_anchor)(0);
 
   ControlBarrier::SearchOptions search_options;
   search_options.hsol_tiny_coeff_tol = 1E-8;
@@ -351,8 +356,8 @@ TEST_F(SimpleLinearSystemTest, ControlBarrierSearch) {
   const auto search_ret = dut.Search(
       h_init, h_degree, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
       hdot_state_constraints_lagrangian_degrees, t_degree, s_degrees,
-      unsafe_state_constraints_lagrangian_degrees, x_anchor, search_options,
-      &ellipsoids, &ellipsoid_bisection_options);
+      unsafe_state_constraints_lagrangian_degrees, x_anchor, h_x_anchor_max,
+      search_options, &ellipsoids, &ellipsoid_options);
 }
 
 TEST_F(SimpleLinearSystemTest, ConstructLagrangianAndBProgram) {

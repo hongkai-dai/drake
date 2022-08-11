@@ -309,7 +309,7 @@ symbolic::Polynomial FindCbfInit(
       s_degrees, unsafe_eq_lagrangian_degrees,
       std::vector<std::optional<int>>(unsafe_regions.size(),
                                       std::nullopt) /* unsafe_a_degrees */,
-      search_options);
+      search_options, std::nullopt /* backoff_scale */);
   drake::log()->info("h_sol is valid? {}", search_lagrangian_ret.success);
   return search_result.h;
 }

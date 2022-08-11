@@ -655,7 +655,8 @@ Parameter ``interruptible``:
             &Class::SearchOptions::ellipsoid_step_solver)
         .def_readwrite(
             "bilinear_iterations", &Class::SearchOptions::bilinear_iterations)
-        .def_readwrite("backoff_scale", &Class::SearchOptions::backoff_scale)
+        .def_readwrite("barrier_step_backoff_scale",
+            &Class::SearchOptions::barrier_step_backoff_scale)
         .def_readwrite("lagrangian_step_solver_options",
             &Class::SearchOptions::lagrangian_step_solver_options)
         .def_readwrite("barrier_step_solver_options",
@@ -745,7 +746,9 @@ Parameter ``interruptible``:
         .def_readwrite("hdot_a_cost_weight",
             &Class::SearchWithSlackAOptions::hdot_a_cost_weight)
         .def_readwrite("unsafe_a_cost_weight",
-            &Class::SearchWithSlackAOptions::unsafe_a_cost_weight);
+            &Class::SearchWithSlackAOptions::unsafe_a_cost_weight)
+        .def_readwrite("lagrangian_step_backoff_scale",
+            &Class::SearchWithSlackAOptions::lagrangian_step_backoff_scale);
 
     py::class_<Class::SearchWithSlackAResult, Class::SearchResult>(
         control_barrier, "SearchWithSlackAResult")
@@ -792,7 +795,7 @@ Parameter ``interruptible``:
         py::arg("hdot_a_degree"), py::arg("t_degrees"), py::arg("s_degrees"),
         py::arg("unsafe_state_constraints_lagrangian_degrees"),
         py::arg("unsafe_a_degrees"), py::arg("search_options"),
-        cls_doc.SearchLagrangian.doc);
+        py::arg("backoff_scale"), cls_doc.SearchLagrangian.doc);
   }
 
   {

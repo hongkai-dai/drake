@@ -130,22 +130,17 @@ void SearchWTrigDynamics() {
   bool maximize_init_rho = false;
   if (maximize_init_rho) {
     // Maximize rho such that V(x) <= rho defines a valid ROA.
-    std::vector<MatrixX<symbolic::Variable>> l_grams;
-    symbolic::Variable rho_var;
-    symbolic::Polynomial vdot_sos;
-    VectorX<symbolic::Monomial> vdot_monomials;
-    MatrixX<symbolic::Variable> vdot_gram;
     const int d_degree = lambda0_degree / 2 + 1;
-    auto prog = dut.ConstructLagrangianProgram(
-        V_init, symbolic::Polynomial(), d_degree, l_degrees, p_degrees,
-        deriv_eps, &l, &l_grams, &p, &rho_var, &vdot_sos, &vdot_monomials,
-        &vdot_gram);
+    auto lagrangian_ret =
+        dut.ConstructLagrangianProgram(V_init, symbolic::Polynomial(), d_degree,
+                                       l_degrees, p_degrees, deriv_eps);
     solvers::SolverOptions solver_options;
     solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
     drake::log()->info("Maximize rho for the initial Clf");
-    const auto result = solvers::Solve(*prog, std::nullopt, solver_options);
+    const auto result =
+        solvers::Solve(*(lagrangian_ret.prog), std::nullopt, solver_options);
     DRAKE_DEMAND(result.is_success());
-    const double rho_sol = result.GetSolution(rho_var);
+    const double rho_sol = result.GetSolution(lagrangian_ret.rho);
     std::cout << fmt::format("V_init(x) <= {}\n", rho_sol);
     V_init = V_init / rho_sol;
     Save(V_init, "quadrotor3d_trig_clf_max_rho.txt");
@@ -154,12 +149,11 @@ void SearchWTrigDynamics() {
     V_init = Load(x_set, "quadrotor3d_trig_clf_max_rho.txt");
   }
 
-  symbolic::Polynomial V_sol;
   {
     ControlLyapunov::SearchOptions search_options;
     search_options.d_converge_tol = 0.;
     search_options.bilinear_iterations = 25;
-    search_options.backoff_scale = 0.01;
+    search_options.lyap_step_backoff_scale = 0.01;
     search_options.lsol_tiny_coeff_tol = 1E-8;
     search_options.lyap_tiny_coeff_tol = 1E-8;
     search_options.lagrangian_step_solver_options = solvers::SolverOptions();
@@ -182,19 +176,18 @@ void SearchWTrigDynamics() {
     const int positivity_d = V_degree / 2;
     const std::vector<int> positivity_eq_lagrangian_degrees{{V_degree - 2}};
     VectorX<symbolic::Polynomial> positivity_eq_lagrangian;
-    symbolic::Polynomial lambda0_sol;
-    VectorX<symbolic::Polynomial> l_sol;
-    VectorX<symbolic::Polynomial> p_sol;
     const bool minimize_max = true;
     SearchResultDetails search_result_details;
-    dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
-               positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
-               deriv_eps, x_samples, std::nullopt /* in_roa_samples */,
-               minimize_max, search_options, &V_sol, &positivity_eq_lagrangian,
-               &lambda0_sol, &l_sol, &p_sol, &search_result_details);
-    std::cout << "V(x_samples): "
-              << V_sol.EvaluateIndeterminates(x, x_samples).transpose() << "\n";
-    Save(V_sol, "quadrotor3d_trig_clf_sol.txt");
+    const auto search_result =
+        dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
+                   positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
+                   deriv_eps, x_samples, std::nullopt /* in_roa_samples */,
+                   minimize_max, search_options);
+    std::cout
+        << "V(x_samples): "
+        << search_result.V.EvaluateIndeterminates(x, x_samples).transpose()
+        << "\n";
+    Save(search_result.V, "quadrotor3d_trig_clf_sol.txt");
   }
 }
 

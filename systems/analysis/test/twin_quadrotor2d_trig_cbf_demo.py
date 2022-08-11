@@ -37,7 +37,7 @@ def Search(
 
     dynamics_denominator = None
 
-    beta_minus = -0.01 
+    beta_minus = -0.0 
 
     beta_plus = 0.1
 
@@ -48,8 +48,9 @@ def Search(
     h_degree = 2
     x_set = sym.Variables(x)
 
-    #h_init = sym.Polynomial(x[5] * x[5] + x[6] * x[6] - 0.5)
-    with open("twin_quadrotor2d_trig_cbf2.pickle", "rb") as input_file:
+    #h_init = sym.Polynomial(x[5] * x[5] + x[6] * x[6] + x[7] * x[7] - 0.2)
+    #with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor2d_cbf/twin_quadrotor2d_trig_cbf5.pickle", "rb") as input_file:
+    with open("twin_quadrotor2d_trig_cbf7.pickle", "rb") as input_file:
         h_init = clf_cbf_utils.deserialize_polynomial(
             x_set, pickle.load(input_file)["h"])
     h_init_x_safe = h_init.EvaluateIndeterminates(x, x_safe)
@@ -80,10 +81,15 @@ def Search(
         search_options = analysis.ControlBarrier.SearchWithSlackAOptions(
             hdot_a_zero_tol, unsafe_a_zero_tol, use_zero_a=True,
             hdot_a_cost_weight=1., unsafe_a_cost_weight=[1.])
-        search_options.bilinear_iterations = 10
+        search_options.bilinear_iterations = 100
         search_options.lagrangian_step_solver_options = mp.SolverOptions()
         search_options.lagrangian_step_solver_options.SetOption(
             mp.CommonSolverOption.kPrintToConsole, 1)
+        search_options.barrier_step_solver_options = mp.SolverOptions()
+        search_options.barrier_step_solver_options.SetOption(
+            mp.CommonSolverOption.kPrintToConsole, 1)
+        search_options.barrier_step_backoff_scale = 0.03
+        search_options.lagrangian_step_backoff_scale = 0.04
         search_result = dut.SearchWithSlackA(
             h_init, h_degree, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
             hdot_eq_lagrangian_degrees, hdot_a_degree, t_degrees, s_degrees,
@@ -93,14 +99,14 @@ def Search(
             search_result.h, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
             hdot_eq_lagrangian_degrees, None, t_degrees, s_degrees,
             unsafe_eq_lagrangian_degrees, [None] * len(unsafe_regions),
-            search_options)
+            search_options, backoff_scale=None)
     else:
         ellipsoids = [analysis.ControlBarrier.Ellipsoid(
             c=x_safe[:, 0], S=np.eye(12), d=0., r_degree=0,
             eq_lagrangian_degrees=[0, 0])]
         ellipsoid_options = [
             analysis.ControlBarrier.EllipsoidMaximizeOption(
-                t=sym.Polynomial(), s_degree=0, backoff_scale=0.01)]
+                t=sym.Polynomial(), s_degree=0, backoff_scale=0.04)]
         search_options = analysis.ControlBarrier.SearchOptions()
         search_options.lagrangian_step_solver_options = mp.SolverOptions()
         search_options.lagrangian_step_solver_options.SetOption(
@@ -108,16 +114,18 @@ def Search(
         search_options.barrier_step_solver_options = mp.SolverOptions()
         search_options.barrier_step_solver_options.SetOption(
             mp.CommonSolverOption.kPrintToConsole, 1)
-        search_options.backoff_scale = 0.02
+        search_options.lsol_tiny_coeff_tol = 1E-6
+        search_options.hsol_tiny_coeff_tol = 1E-6
+        search_options.barrier_step_backoff_scale = 0.1
         x_anchor = x_safe[:, 0]
-        h_x_anchor_max = 1
+        h_x_anchor_max = h_init.EvaluateIndeterminates(x, x_anchor)[0] * 2
         search_result = dut.Search(
             h_init, h_degree, deriv_eps, lambda0_degree, lambda1_degree,
             l_degrees, hdot_eq_lagrangian_degrees, t_degrees, s_degrees,
             unsafe_eq_lagrangian_degrees, x_anchor, h_x_anchor_max,
             search_options, ellipsoids, ellipsoid_options)
 
-    with open("twin_quadrotor2d_trig_cbf3.pickle", "wb") as handle:
+    with open("twin_quadrotor2d_trig_cbf8.pickle", "wb") as handle:
         pickle.dump({
             "h": clf_cbf_utils.serialize_polynomial(search_result.h),
             "beta_plus": beta_plus, "beta_minus": beta_minus,
@@ -139,7 +147,7 @@ def DoMain():
         sym.Polynomial(x[5] ** 2 + x[6] ** 2 - quadrotor.length() ** 2 )])]
 
     safe_states = [None] * 1
-    safe_states[0] = [np.zeros(6), np.array([1, 0, 0, 0, 0, 0])]
+    safe_states[0] = [np.zeros(6), np.array([0, -1, 0, 0, 0, 0])]
     x_safe = np.empty((12, len(safe_states)))
     for i in range(len(safe_states)):
         x1 = analysis.ToQuadrotor2dTrigState(safe_states[i][0])

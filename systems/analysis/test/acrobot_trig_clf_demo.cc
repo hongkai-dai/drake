@@ -223,8 +223,6 @@ void SearchWTrigDynamics(double u_max,
   const std::vector<int> l_degrees{{2, 2}};
   const std::vector<int> p_degrees{{6, 6}};
   symbolic::Polynomial lambda0;
-  VectorX<symbolic::Polynomial> l;
-  VectorX<symbolic::Polynomial> p;
   const double deriv_eps = 0.1;
   symbolic::Polynomial V_init;
   double rho_val = 0.1;
@@ -261,16 +259,16 @@ void SearchWTrigDynamics(double u_max,
       VectorX<symbolic::Monomial> vdot_monomials;
       MatrixX<symbolic::Variable> vdot_gram;
       const int d_degree = lambda0_degree / 2 + 1;
-      auto prog = dut.ConstructLagrangianProgram(
+      auto lagrangian_ret = dut.ConstructLagrangianProgram(
           V_init, symbolic::Polynomial(), d_degree, l_degrees, p_degrees,
-          deriv_eps, &l, &l_grams, &p, &rho_var, &vdot_sos, &vdot_monomials,
-          &vdot_gram);
+          deriv_eps);
       solvers::SolverOptions solver_options;
       solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
       drake::log()->info("Maximize rho for the initial Clf");
-      const auto result = solvers::Solve(*prog, std::nullopt, solver_options);
+      const auto result =
+          solvers::Solve(*(lagrangian_ret.prog), std::nullopt, solver_options);
       DRAKE_DEMAND(result.is_success());
-      const double rho_sol = result.GetSolution(rho_var);
+      const double rho_sol = result.GetSolution(lagrangian_ret.rho);
       std::cout << fmt::format("V_init(x) <= {}\n", rho_sol);
       // V_init = V_init / rho_sol;
       V_init =
@@ -279,12 +277,11 @@ void SearchWTrigDynamics(double u_max,
     }
   }
 
-  symbolic::Polynomial V_sol;
   {
     ControlLyapunov::SearchOptions search_options;
     search_options.d_converge_tol = 0.;
     search_options.bilinear_iterations = 15;
-    search_options.backoff_scale = 0.04;
+    search_options.lyap_step_backoff_scale = 0.04;
     search_options.lagrangian_tiny_coeff_tol = 1E-6;
     search_options.lsol_tiny_coeff_tol = 1E-5;
     search_options.lyap_tiny_coeff_tol = 1E-5;
@@ -325,9 +322,6 @@ void SearchWTrigDynamics(double u_max,
     const std::vector<int> positivity_eq_lagrangian_degrees{
         {V_degree - 2, V_degree - 2}};
     VectorX<symbolic::Polynomial> positivity_eq_lagrangian;
-    symbolic::Polynomial lambda0_sol;
-    VectorX<symbolic::Polynomial> l_sol;
-    VectorX<symbolic::Polynomial> p_sol;
     const bool minimize_max = true;
     symbolic::Environment env;
     env.insert(x, x_samples.col(0));
@@ -335,17 +329,18 @@ void SearchWTrigDynamics(double u_max,
     std::cout << "V_init(x_samples): "
               << V_init.EvaluateIndeterminates(x, x_samples).transpose()
               << "\n";
-    SearchResultDetails search_result_details;
-    dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
-               positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
-               deriv_eps, x_samples, std::nullopt /* in_roa_samples */,
-               minimize_max, search_options, &V_sol, &positivity_eq_lagrangian,
-               &lambda0_sol, &l_sol, &p_sol, &search_result_details);
-    std::cout << "V(x_samples): "
-              << V_sol.EvaluateIndeterminates(x, x_samples).transpose() << "\n";
+    const auto search_result =
+        dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
+                   positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
+                   deriv_eps, x_samples, std::nullopt /* in_roa_samples */,
+                   minimize_max, search_options);
+    std::cout
+        << "V(x_samples): "
+        << search_result.V.EvaluateIndeterminates(x, x_samples).transpose()
+        << "\n";
     std::cout << "rho=" << search_options.rho << "\n";
     if (save_clf.has_value()) {
-      Save(V_sol, save_clf.value());
+      Save(search_result.V, save_clf.value());
     }
   }
 }

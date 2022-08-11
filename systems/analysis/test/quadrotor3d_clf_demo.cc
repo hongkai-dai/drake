@@ -183,7 +183,7 @@ struct Quadrotor {
       Eigen::Matrix<double, 12, 12>::Identity();
   ControlLyapunov::SearchOptions search_options;
   search_options.bilinear_iterations = 20;
-  search_options.backoff_scale = 0.02;
+  search_options.lyap_step_backoff_scale = 0.02;
   search_options.lyap_tiny_coeff_tol = 2E-7;
   search_options.Vsol_tiny_coeff_tol = 1E-7;
   search_options.lsol_tiny_coeff_tol = 1E-7;
@@ -195,20 +195,13 @@ struct Quadrotor {
   //    solvers::CommonSolverOption::kPrintToConsole, 1);
   ControlLyapunov::EllipsoidBisectionOption ellipsoid_bisection_option(0.01, 3,
                                                                        0.01);
-  symbolic::Polynomial lambda0;
-  VectorX<symbolic::Polynomial> l;
-  VectorX<symbolic::Polynomial> p_sol;
-  symbolic::Polynomial r;
-  VectorX<symbolic::Polynomial> positivity_eq_lagrangian_sol;
-  double d_sol;
-  VectorX<symbolic::Polynomial> ellipsoid_c_lagrangian_sol;
 
-  dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
-             positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
-             ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S, V_degree - 2,
-             search_options, ellipsoid_bisection_option, V_sol, &lambda0, &l,
-             &r, &p_sol, &positivity_eq_lagrangian_sol, &d_sol,
-             &ellipsoid_c_lagrangian_sol);
+  const auto search_result =
+      dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
+                 positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
+                 ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S,
+                 V_degree - 2, search_options, ellipsoid_bisection_option);
+  *V_sol = search_result.V;
 }
 
 [[maybe_unused]] void search_w_box_bounds(

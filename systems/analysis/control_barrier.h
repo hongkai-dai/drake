@@ -299,7 +299,7 @@ class ControlBarrier {
     solvers::SolverId lagrangian_step_solver{solvers::MosekSolver::id()};
     solvers::SolverId ellipsoid_step_solver{solvers::MosekSolver::id()};
     int bilinear_iterations{10};
-    double backoff_scale{0.};
+    double barrier_step_backoff_scale{0.};
     std::optional<solvers::SolverOptions> lagrangian_step_solver_options{
         std::nullopt};
     std::optional<solvers::SolverOptions> barrier_step_solver_options{
@@ -397,6 +397,7 @@ class ControlBarrier {
     // unsafe_a_grams[i].trace()
     double hdot_a_cost_weight;
     std::vector<double> unsafe_a_cost_weight;
+    double lagrangian_step_backoff_scale{0.};
   };
 
   /**
@@ -452,7 +453,8 @@ class ControlBarrier {
       const std::vector<std::vector<int>>&
           unsafe_state_constraints_lagrangian_degrees,
       const std::vector<std::optional<int>>& unsafe_a_degrees,
-      const SearchOptions& search_options) const;
+      const SearchOptions& search_options,
+      std::optional<double> backoff_scale) const;
 
  private:
   VectorX<symbolic::Polynomial> f_;

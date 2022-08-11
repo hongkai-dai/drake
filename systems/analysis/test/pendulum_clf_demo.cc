@@ -228,18 +228,13 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
   V_init = V_init.RemoveTermsWithSmallCoefficients(1e-6);
   // First maximize rho such that V(x)<=rho defines a valid ROA.
   {
-    std::vector<MatrixX<symbolic::Variable>> l_grams;
-    symbolic::Variable rho_var;
-    symbolic::Polynomial vdot_sos;
-    VectorX<symbolic::Monomial> vdot_monomials;
-    MatrixX<symbolic::Variable> vdot_gram;
-    auto prog = dut.ConstructLagrangianProgram(
-        V_init, symbolic::Polynomial(), 2, l_degrees, p_degrees, deriv_eps, &l,
-        &l_grams, &p, &rho_var, &vdot_sos, &vdot_monomials, &vdot_gram);
-    const auto result = solvers::Solve(*prog);
+    auto lagrangian_ret = dut.ConstructLagrangianProgram(
+        V_init, symbolic::Polynomial(), 2, l_degrees, p_degrees, deriv_eps);
+    const auto result = solvers::Solve(*(lagrangian_ret.prog));
     DRAKE_DEMAND(result.is_success());
-    std::cout << fmt::format("V_init(x) <= {}\n", result.GetSolution(rho_var));
-    V_init = V_init / result.GetSolution(rho_var);
+    std::cout << fmt::format("V_init(x) <= {}\n",
+                             result.GetSolution(lagrangian_ret.rho));
+    V_init = V_init / result.GetSolution(lagrangian_ret.rho);
   }
 
   const double positivity_eps = 0.0001;
@@ -257,7 +252,7 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
     search_options.lyap_step_solver_options = solvers::SolverOptions();
     // search_options.lyap_step_solver_options->SetOption(
     //    solvers::CommonSolverOption::kPrintToConsole, 1);
-    search_options.backoff_scale = 0.0;
+    search_options.lyap_step_backoff_scale = 0.0;
     search_options.lsol_tiny_coeff_tol = 1E-5;
     // There are tiny coefficients coming from numerical roundoff error.
     search_options.lyap_tiny_coeff_tol = 1E-7;
@@ -266,15 +261,12 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
     const double size_bisection_tol = 0.01;
     const ControlLyapunov::EllipsoidBisectionOption ellipsoid_bisection_option(
         size_min, size_max, size_bisection_tol);
-    symbolic::Polynomial r;
-    double d_sol;
-    VectorX<symbolic::Polynomial> ellipsoid_c_lagrangian_sol;
-    dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
-               positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
-               ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S,
-               V_degree - 2, search_options, ellipsoid_bisection_option, &V_sol,
-               &lambda0, &l, &r, &p, &positivity_eq_lagrangian_sol, &d_sol,
-               &ellipsoid_c_lagrangian_sol);
+    const auto search_result =
+        dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
+                   positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
+                   ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S,
+                   V_degree - 2, search_options, ellipsoid_bisection_option);
+    V_sol = search_result.V;
   } else {
     ControlLyapunov::SearchOptions search_options;
     search_options.d_converge_tol = 0.;
@@ -283,22 +275,18 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
     search_options.lyap_step_solver_options = solvers::SolverOptions();
     // search_options.lyap_step_solver_options->SetOption(
     //    solvers::CommonSolverOption::kPrintToConsole, 1);
-    search_options.backoff_scale = 0.0;
+    search_options.lyap_step_backoff_scale = 0.0;
     search_options.lsol_tiny_coeff_tol = 1E-5;
     // There are tiny coefficients coming from numerical roundoff error.
     search_options.lyap_tiny_coeff_tol = 1E-7;
     Eigen::MatrixXd x_samples(3, 1);
     x_samples.col(0) = ToTrigState<double>(0., 0, theta_des);
 
-    symbolic::Polynomial lambda0_sol;
-    VectorX<symbolic::Polynomial> l_sol;
-    VectorX<symbolic::Polynomial> p_sol;
-    SearchResultDetails search_result_details;
-    dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
-               positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
-               deriv_eps, x_samples, std::nullopt /* in_roa_samples */, true,
-               search_options, &V_sol, &positivity_eq_lagrangian_sol,
-               &lambda0_sol, &l_sol, &p_sol, &search_result_details);
+    const auto search_result = dut.Search(
+        V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
+        positivity_d, positivity_eq_lagrangian_degrees, p_degrees, deriv_eps,
+        x_samples, std::nullopt /* in_roa_samples */, true, search_options);
+    V_sol = search_result.V;
   }
   const double theta0 = 0.0;
   const double thetadot0 = 0.0;
@@ -343,19 +331,12 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
     const int d_degree = 2;
     const std::vector<int> l_degrees{2, 2};
     const std::vector<int> p_degrees{};
-    VectorX<symbolic::Polynomial> l;
-    std::vector<MatrixX<symbolic::Variable>> l_grams;
-    VectorX<symbolic::Polynomial> p;
-    symbolic::Variable rho;
-    symbolic::Polynomial vdot_sos;
-    VectorX<symbolic::Monomial> vdot_monomials;
-    MatrixX<symbolic::Variable> vdot_gram;
-    auto prog = dut.ConstructLagrangianProgram(
-        V_init, lambda0, d_degree, l_degrees, p_degrees, deriv_eps, &l,
-        &l_grams, &p, &rho, &vdot_sos, &vdot_monomials, &vdot_gram);
-    const auto result = solvers::Solve(*prog);
+    auto lagrangian_ret = dut.ConstructLagrangianProgram(
+        V_init, lambda0, d_degree, l_degrees, p_degrees, deriv_eps);
+    const auto result = solvers::Solve(*(lagrangian_ret.prog));
     DRAKE_DEMAND(result.is_success());
-    std::cout << V_init << " <= " << result.GetSolution(rho) << "\n";
+    std::cout << V_init << " <= " << result.GetSolution(lagrangian_ret.rho)
+              << "\n";
   }
   {
     const int lambda0_degree = 2;
@@ -370,7 +351,7 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
     const Eigen::Matrix2d S = Eigen::Matrix2d::Identity();
 
     ControlLyapunov::SearchOptions search_options;
-    search_options.backoff_scale = 0.02;
+    search_options.lyap_step_backoff_scale = 0.02;
     // There are tiny coefficients coming from numerical roundoff error.
     search_options.lyap_tiny_coeff_tol = 1E-10;
     const double size_min = 0.01;
@@ -378,21 +359,12 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
     const double size_bisection_tol = 0.01;
     const ControlLyapunov::EllipsoidBisectionOption ellipsoid_bisection_option(
         size_min, size_max, size_bisection_tol);
-    symbolic::Polynomial V_sol;
-    symbolic::Polynomial lambda0;
-    VectorX<symbolic::Polynomial> l;
-    symbolic::Polynomial r;
-    VectorX<symbolic::Polynomial> p;
-    VectorX<symbolic::Polynomial> positivity_eq_lagrangian;
-    double d;
-    VectorX<symbolic::Polynomial> ellipsoid_c_lagrangian_sol;
-    dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
-               positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
-               ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S,
-               V_degree - 2, search_options, ellipsoid_bisection_option, &V_sol,
-               &lambda0, &l, &r, &p, &positivity_eq_lagrangian, &d,
-               &ellipsoid_c_lagrangian_sol);
-    Simulate(x, theta_des, V_sol, u_bound, deriv_eps,
+    const auto search_result =
+        dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
+                   positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
+                   ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S,
+                   V_degree - 2, search_options, ellipsoid_bisection_option);
+    Simulate(x, theta_des, search_result.V, u_bound, deriv_eps,
              Eigen::Vector2d(M_PI + 0.6 * M_PI, 0), 10);
   }
 }

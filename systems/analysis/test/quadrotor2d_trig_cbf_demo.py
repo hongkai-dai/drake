@@ -64,7 +64,7 @@ def SearchWithSlackA(
         search_result.h, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
         hdot_eq_lagrangian_degrees, None, t_degrees, s_degrees,
         unsafe_eq_lagrangian_degrees, [None] * len(unsafe_regions),
-        search_options)
+        search_options, backoff_scale=None)
     return search_result.h
 
 

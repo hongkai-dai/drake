@@ -395,7 +395,7 @@ ControlBarrier::SearchResult ControlBarrier::Search(
         ret.h, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
         hdot_state_constraints_lagrangian_degrees, hdot_a_degree, t_degrees,
         s_degrees, unsafe_state_constraints_lagrangian_degrees,
-        unsafe_a_degrees, search_options);
+        unsafe_a_degrees, search_options, std::nullopt /* backoff_scale */);
     SetLagrangianResult(search_lagrangian_ret, &ret);
     DRAKE_DEMAND(!search_lagrangian_ret.hdot_a.has_value());
     for (int i = 0; i < static_cast<int>(unsafe_regions_.size()); ++i) {
@@ -495,7 +495,7 @@ ControlBarrier::SearchResult ControlBarrier::Search(
       const auto result_barrier = SearchWithBackoff(
           barrier_ret.prog.get(), search_options.barrier_step_solver,
           search_options.barrier_step_solver_options,
-          search_options.backoff_scale);
+          search_options.barrier_step_backoff_scale);
       if (result_barrier.is_success()) {
         ret.h = result_barrier.GetSolution(barrier_ret.h);
         if (search_options.hsol_tiny_coeff_tol > 0) {
@@ -561,7 +561,8 @@ ControlBarrier::SearchWithSlackAResult ControlBarrier::SearchWithSlackA(
           search_result.h, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
           hdot_state_constraints_lagrangian_degrees, hdot_a_degree_search,
           t_degrees, s_degrees, unsafe_state_constraints_lagrangian_degrees,
-          unsafe_a_degrees_search, search_options);
+          unsafe_a_degrees_search, search_options,
+          search_options.lagrangian_step_backoff_scale);
       if (search_lagrangian_result.success) {
         SetLagrangianResult(search_lagrangian_result, &search_result);
         if (hdot_a_degree_search.has_value()) {
@@ -646,7 +647,7 @@ ControlBarrier::SearchWithSlackAResult ControlBarrier::SearchWithSlackA(
       const auto result = SearchWithBackoff(
           barrier_ret.prog.get(), search_options.barrier_step_solver,
           search_options.barrier_step_solver_options,
-          search_options.backoff_scale);
+          search_options.barrier_step_backoff_scale);
       if (result.is_success()) {
         search_result.h = result.GetSolution(barrier_ret.h);
         GetPolynomialSolutions(
@@ -718,7 +719,8 @@ ControlBarrier::SearchLagrangianResult ControlBarrier::SearchLagrangian(
     const std::vector<std::vector<int>>&
         unsafe_state_constraints_lagrangian_degrees,
     const std::vector<std::optional<int>>& unsafe_a_degrees,
-    const ControlBarrier::SearchOptions& search_options) const {
+    const ControlBarrier::SearchOptions& search_options,
+    std::optional<double> backoff_scale) const {
   ControlBarrier::SearchLagrangianResult search_lagrangian_ret;
   search_lagrangian_ret.success = true;
   {
@@ -733,9 +735,15 @@ ControlBarrier::SearchLagrangianResult ControlBarrier::SearchLagrangian(
         solvers::MakeSolver(search_options.lagrangian_step_solver);
     solvers::MathematicalProgramResult result_lagrangian;
     drake::log()->info("search Lagrangian");
-    lagrangian_solver->Solve(*(lagrangian_ret.prog), std::nullopt,
-                             search_options.lagrangian_step_solver_options,
-                             &result_lagrangian);
+    if (backoff_scale.has_value()) {
+      result_lagrangian = SearchWithBackoff(
+          lagrangian_ret.prog.get(), search_options.lagrangian_step_solver,
+          search_options.lagrangian_step_solver_options, backoff_scale.value());
+    } else {
+      lagrangian_solver->Solve(*(lagrangian_ret.prog), std::nullopt,
+                               search_options.lagrangian_step_solver_options,
+                               &result_lagrangian);
+    }
     if (result_lagrangian.is_success()) {
       search_lagrangian_ret.lambda0 =
           result_lagrangian.GetSolution(lagrangian_ret.lambda0);

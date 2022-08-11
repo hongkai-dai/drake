@@ -128,19 +128,12 @@ const double kInf = std::numeric_limits<double>::infinity();
       const int d_degree = 2;
       const std::vector<int> l_degrees = {2, 2, 2, 2};
       const std::vector<int> p_degrees = {};
-      VectorX<symbolic::Polynomial> l;
-      std::vector<MatrixX<symbolic::Variable>> l_grams;
-      VectorX<symbolic::Polynomial> p;
-      symbolic::Variable rho;
-      symbolic::Polynomial vdot_sos;
-      VectorX<symbolic::Monomial> vdot_monomials;
-      MatrixX<symbolic::Variable> vdot_gram;
-      auto prog = dut.ConstructLagrangianProgram(
-          V_init, lambda0, d_degree, l_degrees, p_degrees, deriv_eps, &l,
-          &l_grams, &p, &rho, &vdot_sos, &vdot_monomials, &vdot_gram);
-      const auto result = solvers::Solve(*prog);
+      auto lagrangian_ret = dut.ConstructLagrangianProgram(
+          V_init, lambda0, d_degree, l_degrees, p_degrees, deriv_eps);
+      const auto result = solvers::Solve(*(lagrangian_ret.prog));
       DRAKE_DEMAND(result.is_success());
-      std::cout << V_init << " <= " << result.GetSolution(rho) << "\n";
+      std::cout << V_init << " <= " << result.GetSolution(lagrangian_ret.rho)
+                << "\n";
     }
     {
       const int lambda0_degree = 2;
@@ -155,7 +148,7 @@ const double kInf = std::numeric_limits<double>::infinity();
       const Matrix6<double> S = Matrix6<double>::Identity();
       ControlLyapunov::SearchOptions search_options;
       search_options.bilinear_iterations = 10;
-      search_options.backoff_scale = 0.02;
+      search_options.lyap_step_backoff_scale = 0.02;
       search_options.lyap_tiny_coeff_tol = 2E-7;
       search_options.Vsol_tiny_coeff_tol = 1E-7;
       search_options.lsol_tiny_coeff_tol = 1E-7;
@@ -165,21 +158,11 @@ const double kInf = std::numeric_limits<double>::infinity();
 
       ControlLyapunov::EllipsoidBisectionOption ellipsoid_bisection_option(
           0.01, 2, 0.01);
-      symbolic::Polynomial lambda0;
-      VectorX<symbolic::Polynomial> l;
-      symbolic::Polynomial r;
-      double d_sol;
-      VectorX<symbolic::Polynomial> positivity_eq_lagrangian_sol;
-      VectorX<symbolic::Polynomial> p_sol;
-      VectorX<symbolic::Polynomial> ellipsoid_c_lagrangian_sol;
 
       dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
                  positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
                  ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S,
-                 V_degree - 2, search_options, ellipsoid_bisection_option,
-                 &V_sol, &lambda0, &l, &r, &p_sol,
-                 &positivity_eq_lagrangian_sol, &d_sol,
-                 &ellipsoid_c_lagrangian_sol);
+                 V_degree - 2, search_options, ellipsoid_bisection_option);
     }
   }
 

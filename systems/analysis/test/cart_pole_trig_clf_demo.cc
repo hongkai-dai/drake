@@ -642,22 +642,17 @@ symbolic::Polynomial SearchWTrigDynamics(
         abort();
       }
     } else {
-      std::vector<MatrixX<symbolic::Variable>> l_grams;
-      symbolic::Variable rho_var;
-      symbolic::Polynomial vdot_sos;
-      VectorX<symbolic::Monomial> vdot_monomials;
-      MatrixX<symbolic::Variable> vdot_gram;
       const int d_degree = lambda0_degree / 2 + 1;
-      auto prog = dut.ConstructLagrangianProgram(
+      auto lagrangian_ret = dut.ConstructLagrangianProgram(
           V_init, symbolic::Polynomial(), d_degree, l_degrees, p_degrees,
-          deriv_eps, &l, &l_grams, &p, &rho_var, &vdot_sos, &vdot_monomials,
-          &vdot_gram);
+          deriv_eps);
       solvers::SolverOptions solver_options;
       solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
       drake::log()->info("Maximize rho for the initial Clf");
-      const auto result = solvers::Solve(*prog, std::nullopt, solver_options);
+      const auto result =
+          solvers::Solve(*(lagrangian_ret.prog), std::nullopt, solver_options);
       DRAKE_DEMAND(result.is_success());
-      rho_sol = result.GetSolution(rho_var);
+      rho_sol = result.GetSolution(lagrangian_ret.rho);
       std::cout << fmt::format("V_init(x) <= {}\n", rho_sol);
       V_init = V_init / rho_sol;
       rho_sol = 1;
@@ -680,7 +675,7 @@ symbolic::Polynomial SearchWTrigDynamics(
     ControlLyapunov::SearchOptions search_options;
     search_options.d_converge_tol = 0.0;
     search_options.bilinear_iterations = 20;
-    search_options.backoff_scale = 0.013;
+    search_options.lyap_step_backoff_scale = 0.013;
     // search_options.lagrangian_tiny_coeff_tol = 1E-5;
     search_options.lsol_tiny_coeff_tol = 1E-5;
     search_options.lyap_tiny_coeff_tol = 1E-7;
@@ -731,17 +726,12 @@ symbolic::Polynomial SearchWTrigDynamics(
       const double ellipsoid_backoff_scale = 0.02;
       const ControlLyapunov::EllipsoidMaximizeOption ellipsoid_maximize_option(
           symbolic::Polynomial(), 0, ellipsoid_backoff_scale);
-      symbolic::Polynomial r_sol;
-      VectorX<symbolic::Polynomial> positivity_eq_lagrangian_sol;
-      double ellipsoid_d_sol;
-      VectorX<symbolic::Polynomial> ellipsoid_c_lagrangian_sol;
-      dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
-                 positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
-                 ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S, r_degree,
-                 search_options, ellipsoid_maximize_option, &V_sol,
-                 &lambda0_sol, &l_sol, &r_sol, &p_sol,
-                 &positivity_eq_lagrangian_sol, &ellipsoid_d_sol,
-                 &ellipsoid_c_lagrangian_sol);
+      const auto search_result = dut.Search(
+          V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
+          positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
+          ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S, r_degree,
+          search_options, ellipsoid_maximize_option);
+      V_sol = search_result.V;
       std::cout << "V(x_swingup): "
                 << V_sol.EvaluateIndeterminates(x, x_swingup).transpose()
                 << "\n";
@@ -772,11 +762,12 @@ symbolic::Polynomial SearchWTrigDynamics(
       std::cout << "V_init(x_samples): "
                 << V_init.EvaluateIndeterminates(x, x_samples).transpose()
                 << "\n";
-      dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
-                 positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
-                 deriv_eps, x_samples, in_roa_samples, minimize_max,
-                 search_options, &V_sol, &positivity_eq_lagrangian,
-                 &lambda0_sol, &l_sol, &p_sol, search_result_details);
+      const auto search_result = dut.Search(
+          V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
+          positivity_d, positivity_eq_lagrangian_degrees, p_degrees, deriv_eps,
+          x_samples, in_roa_samples, minimize_max, search_options);
+      V_sol = search_result.V;
+      *search_result_details = search_result.search_result_details;
       std::cout << "V(x_swingup): "
                 << V_sol.EvaluateIndeterminates(x, x_swingup).transpose()
                 << "\n";

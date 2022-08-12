@@ -55,7 +55,7 @@ symbolic::Polynomial FindClfInit(
   const int d = V_degree / 2;
   const double deriv_eps = 0.1;
   const Vector1<symbolic::Polynomial> state_eq_constraints(
-      StateEqConstraint(x));
+      QuadrotorStateEqConstraint(x));
   const std::vector<int> positivity_ceq_lagrangian_degrees{{V_degree - 2}};
   const std::vector<int> derivative_ceq_lagrangian_degrees{
       {static_cast<int>(std::ceil((V_degree + 3) / 2.) * 2 - 2)}};
@@ -103,7 +103,8 @@ void SearchWTrigDynamics() {
   const Eigen::Matrix<double, 4, 16> u_vertices =
       math::CalculateReflectedGrayCodes<4>().transpose().cast<double>() *
       thrust_max;
-  const Vector1<symbolic::Polynomial> state_constraints(StateEqConstraint(x));
+  const Vector1<symbolic::Polynomial> state_constraints(
+      QuadrotorStateEqConstraint(x));
   symbolic::Polynomial V_init;
   const int V_degree = 2;
 
@@ -169,7 +170,7 @@ void SearchWTrigDynamics() {
     state_samples.col(3) << 1, 0., 0, M_PI / 2, 0, 0, 0, 0, 0, 0, 0, 0;
     Eigen::MatrixXd x_samples(13, state_samples.cols());
     for (int i = 0; i < state_samples.cols(); ++i) {
-      x_samples.col(i) = ToTrigState<double>(state_samples.col(i));
+      x_samples.col(i) = ToQuadrotorTrigState<double>(state_samples.col(i));
     }
 
     const double positivity_eps = 0.0001;

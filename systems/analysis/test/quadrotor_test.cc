@@ -15,7 +15,8 @@ GTEST_TEST(QuadrotorTrigPlant, TestDynamics) {
 
   Eigen::Matrix<double, 12, 1> x_original;
   x_original << 0.5, 2.1, 0.4, 0.6, -0.4, 1.3, 0.5, 1.2, -0.1, 0.4, 0.5, -0.2;
-  const Eigen::Matrix<double, 13, 1> x_trig = ToTrigState<double>(x_original);
+  const Eigen::Matrix<double, 13, 1> x_trig =
+      ToQuadrotorTrigState<double>(x_original);
   const Eigen::Vector4d u(0.4, 1.5, 0.9, 1.8);
 
   auto context = dut.CreateDefaultContext();
@@ -67,7 +68,7 @@ GTEST_TEST(QuadrotorTrigPlant, TrigPolyDynamics) {
 
   Eigen::Matrix<double, 12, 1> x_orig;
   x_orig << 0.5, 0.3, 1.2, -0.4, 0.6, -0.8, 1.2, -0.3, 1.5, -0.4, 1.2, 0.7;
-  const auto x_trig = ToTrigState<double>(x_orig);
+  const auto x_trig = ToQuadrotorTrigState<double>(x_orig);
   const Eigen::Vector4d u(0.5, 0.9, 1.2, 0.3);
   auto context = dut.CreateDefaultContext();
   context->SetContinuousState(x_trig);

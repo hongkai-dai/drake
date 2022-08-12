@@ -20,6 +20,7 @@
 #include "drake/systems/analysis/simulator_config_functions.h"
 #include "drake/systems/analysis/simulator_print_stats.h"
 #include "drake/systems/analysis/simulator_python_internal.h"
+#include "drake/systems/analysis/test/quadrotor.h"
 #include "drake/systems/analysis/test/quadrotor2d.h"
 
 using std::unique_ptr;
@@ -238,6 +239,26 @@ PYBIND11_MODULE(analysis, m) {
         LeafSystem<T>>(m, "Quadrotor2dTrigStateConverter", GetPyParam<T>(),
         doc.analysis.Quadrotor2dTrigStateConverter.doc)
         .def(py::init<>(), doc.analysis.Quadrotor2dTrigStateConverter.ctor.doc);
+
+    DefineTemplateClassWithDefault<analysis::QuadrotorTrigPlant<T>,
+        LeafSystem<T>>(m, "QuadrotorTrigPlant", GetPyParam<T>(),
+        doc.analysis.QuadrotorTrigPlant.doc)
+        .def(py::init<>(), doc.analysis.QuadrotorTrigPlant.ctor.doc)
+        .def("length", &analysis::QuadrotorTrigPlant<T>::length,
+            doc.analysis.QuadrotorTrigPlant.length.doc)
+        .def("get_state_output_port",
+            &analysis::QuadrotorTrigPlant<T>::get_state_output_port,
+            py_rvp::reference_internal,
+            doc.analysis.QuadrotorTrigPlant.get_state_output_port.doc)
+        .def("get_actuation_input_port",
+            &analysis::QuadrotorTrigPlant<T>::get_actuation_input_port,
+            py_rvp::reference_internal,
+            doc.analysis.QuadrotorTrigPlant.get_actuation_input_port.doc);
+
+    DefineTemplateClassWithDefault<analysis::QuadrotorTrigStateConverter<T>,
+        LeafSystem<T>>(m, "QuadrotorTrigStateConverter", GetPyParam<T>(),
+        doc.analysis.QuadrotorTrigStateConverter.doc)
+        .def(py::init<>(), doc.analysis.QuadrotorTrigStateConverter.ctor.doc);
   };
   type_visit(bind_scalar_types, CommonScalarPack{});
 
@@ -896,6 +917,37 @@ Parameter ``interruptible``:
         &analysis::TwinQuadrotor2dStateEqConstraint, py::arg("x"),
         pydrake_doc.drake.systems.analysis.TwinQuadrotor2dStateEqConstraint
             .doc);
+  }
+
+  {
+    // Quadrotor
+    m.def(
+        "EquilibriumThrust",
+        [](const analysis::QuadrotorTrigPlant<double>& quadrotor) {
+          return analysis::EquilibriumThrust(quadrotor);
+        },
+        py::arg("quadrotor"),
+        pydrake_doc.drake.systems.analysis.EquilibriumThrust.doc);
+
+    m.def("QuadrotorStateEqConstraint", &analysis::QuadrotorStateEqConstraint,
+        py::arg("x"),
+        pydrake_doc.drake.systems.analysis.QuadrotorStateEqConstraint.doc);
+
+    AddTemplateFunction(m, "ToQuadrotorTrigState",
+        &analysis::ToQuadrotorTrigState<double>, GetPyParam<double>(),
+        py::arg("x_original"));
+
+    m.def(
+        "TrigPolyDynamics",
+        [](const analysis::QuadrotorTrigPlant<double>& plant,
+            const Eigen::Ref<const Eigen::Matrix<symbolic::Variable, 13, 1>>&
+                x) {
+          Eigen::Matrix<symbolic::Polynomial, 13, 1> f;
+          Eigen::Matrix<symbolic::Polynomial, 13, 4> G;
+          analysis::TrigPolyDynamics(plant, x, &f, &G);
+          return std::make_pair(f, G);
+        },
+        py::arg("plant"), py::arg("x"));
   }
 }
 

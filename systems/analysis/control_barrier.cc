@@ -650,6 +650,10 @@ ControlBarrier::SearchWithSlackAResult ControlBarrier::SearchWithSlackA(
           search_options.barrier_step_backoff_scale);
       if (result.is_success()) {
         search_result.h = result.GetSolution(barrier_ret.h);
+        if (search_options.hsol_tiny_coeff_tol > 0) {
+          search_result.h = search_result.h.RemoveTermsWithSmallCoefficients(
+              search_options.hsol_tiny_coeff_tol);
+        }
         GetPolynomialSolutions(
             result, barrier_ret.hdot_state_constraints_lagrangian,
             search_options.lsol_tiny_coeff_tol,

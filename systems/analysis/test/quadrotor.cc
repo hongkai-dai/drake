@@ -1,5 +1,7 @@
 #include "drake/systems/analysis/test/quadrotor.h"
 
+#include "drake/math/rotation_matrix.h"
+
 namespace drake {
 namespace systems {
 namespace analysis {
@@ -85,7 +87,7 @@ void QuadrotorTrigPlant<T>::DoCalcTimeDerivatives(
   derivatives->SetFromVector(xDt);
 }
 
-symbolic::Polynomial StateEqConstraint(
+symbolic::Polynomial QuadrotorStateEqConstraint(
     const Eigen::Ref<const Eigen::Matrix<symbolic::Variable, 13, 1>>& x) {
   return symbolic::Polynomial(x(0) * x(0) + 2 * x(0) + x(1) * x(1) +
                               x(2) * x(2) + x(3) * x(3));
@@ -163,6 +165,24 @@ void TrigPolyDynamics(
   (*G)(12, 2) = (*G)(12, 0);
   (*G)(12, 3) = -(*G)(12, 0);
 }
+
+template <typename T>
+QuadrotorTrigStateConverter<T>::QuadrotorTrigStateConverter()
+    : LeafSystem<T>(SystemTypeTag<QuadrotorTrigStateConverter>{}) {
+  this->DeclareVectorInputPort("state", 12);
+  this->DeclareVectorOutputPort("x_trig", 13,
+                                &QuadrotorTrigStateConverter<T>::CalcTrigState);
+}
+
+template <typename T>
+void QuadrotorTrigStateConverter<T>::CalcTrigState(
+    const Context<T>& context, BasicVector<T>* x_trig) const {
+  const auto x_orig = this->get_input_port().Eval(context);
+  x_trig->get_mutable_value() = ToQuadrotorTrigState<T>(x_orig);
+}
 }  // namespace analysis
 }  // namespace systems
 }  // namespace drake
+
+DRAKE_DEFINE_CLASS_TEMPLATE_INSTANTIATIONS_ON_DEFAULT_SCALARS(
+    class ::drake::systems::analysis::QuadrotorTrigStateConverter)

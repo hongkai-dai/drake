@@ -21,6 +21,7 @@ class QuadrotorTrigPlant : public LeafSystem<T> {
  public:
   DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(QuadrotorTrigPlant);
 
+  /// Default constructor
   QuadrotorTrigPlant();
 
   /**
@@ -47,6 +48,10 @@ class QuadrotorTrigPlant : public LeafSystem<T> {
     return this->get_output_port(state_output_port_index_);
   }
 
+  const InputPort<T>& get_actuation_input_port() const {
+    return this->get_input_port();
+  }
+
  private:
   void DoCalcTimeDerivatives(
       const systems::Context<T>& context,
@@ -66,7 +71,7 @@ double EquilibriumThrust(const QuadrotorTrigPlant<T>& quadrotor) {
   return quadrotor.mass() * quadrotor.gravity() / (4 * quadrotor.kF());
 }
 
-symbolic::Polynomial StateEqConstraint(
+symbolic::Polynomial QuadrotorStateEqConstraint(
     const Eigen::Ref<const Eigen::Matrix<symbolic::Variable, 13, 1>>& x);
 
 /**
@@ -74,7 +79,7 @@ symbolic::Polynomial StateEqConstraint(
  * omega_WB_B]
  */
 template <typename T>
-Eigen::Matrix<T, 13, 1> ToTrigState(
+Eigen::Matrix<T, 13, 1> ToQuadrotorTrigState(
     const Eigen::Ref<const Eigen::Matrix<T, 12, 1>>& x_original) {
   Eigen::Matrix<T, 13, 1> x_trig;
   const math::RollPitchYaw<T> rpy(x_original.template segment<3>(3));
@@ -95,6 +100,25 @@ void TrigPolyDynamics(
     const Eigen::Ref<const Eigen::Matrix<symbolic::Variable, 13, 1>>& x,
     Eigen::Matrix<symbolic::Polynomial, 13, 1>* f,
     Eigen::Matrix<symbolic::Polynomial, 13, 4>* G);
+
+/**
+ * Convert from [p_WB, rpy, v_WB, rpyDt] to [qw-1, qx, qy, qz, p_WB, v_WB,
+ * omega_WB_B]
+ */
+template <typename T>
+class QuadrotorTrigStateConverter : public LeafSystem<T> {
+ public:
+  QuadrotorTrigStateConverter();
+
+  template <typename U>
+  explicit QuadrotorTrigStateConverter(const QuadrotorTrigStateConverter<U>&)
+      : QuadrotorTrigStateConverter<T>() {}
+
+  ~QuadrotorTrigStateConverter(){};
+
+ private:
+  void CalcTrigState(const Context<T>& context, BasicVector<T>* x_trig) const;
+};
 }  // namespace analysis
 }  // namespace systems
 }  // namespace drake

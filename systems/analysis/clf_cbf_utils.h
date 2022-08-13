@@ -263,6 +263,36 @@ struct SearchResultDetails {
       BilinearIterationStatus::kUnknown};
 };
 
+/**
+ * When minimizing the positive polynomial a(x) (and wishing to minimize it to
+ * 0-polynomial), we can set the type of a(x).
+ */
+enum class SlackPolynomialType {
+  kSos,       ///< a(x) is a sos polynomial.
+  kSquare,    ///< a(x) = ε*m(x)ᵀm(x) where ε is a constant and m(x) is the
+              ///< monomial basis
+  kDiagonal,  ///< a(x) = m(x)ᵀ*diag(s)*m(x) where s is a vector with
+              ///< non-negative entries and m(x) is the monomial basis.
+};
+
+struct SlackPolynomialInfo {
+  SlackPolynomialInfo(int m_degree,
+                      SlackPolynomialType m_type = SlackPolynomialType::kSos)
+      : degree{m_degree}, type{m_type} {}
+
+  int degree;
+  SlackPolynomialType type;
+
+  void AddToProgram(solvers::MathematicalProgram* prog,
+                    const symbolic::Variables& x, const std::string& gram_name,
+                    symbolic::Polynomial* a,
+                    MatrixX<symbolic::Expression>* a_gram) const;
+};
+
+Eigen::MatrixXd GetGramSolution(
+    const solvers::MathematicalProgramResult& result,
+    const Eigen::Ref<const MatrixX<symbolic::Expression>>& gram);
+
 namespace internal {
 /** The ellipsoid polynomial (x−x*)ᵀS(x−x*)−ρ
  */

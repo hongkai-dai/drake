@@ -5,6 +5,7 @@
 #include "drake/solvers/mathematical_program.h"
 #include "drake/solvers/mathematical_program_result.h"
 #include "drake/solvers/mosek_solver.h"
+#include "drake/systems/analysis/clf_cbf_utils.h"
 #include "drake/systems/framework/leaf_system.h"
 
 namespace drake {
@@ -90,7 +91,7 @@ class ControlBarrier {
     std::vector<MatrixX<symbolic::Variable>> l_grams;
     VectorX<symbolic::Polynomial> state_constraints_lagrangian;
     std::optional<symbolic::Polynomial> a;
-    std::optional<MatrixX<symbolic::Variable>> a_gram;
+    std::optional<MatrixX<symbolic::Expression>> a_gram;
     symbolic::Polynomial hdot_sos;
     VectorX<symbolic::Monomial> hdot_monomials;
     MatrixX<symbolic::Variable> hdot_gram;
@@ -113,7 +114,7 @@ class ControlBarrier {
       const symbolic::Polynomial& h, double deriv_eps, int lambda0_degree,
       std::optional<int> lambda1_degree, const std::vector<int>& l_degrees,
       const std::vector<int>& state_constraints_lagrangian_degrees,
-      std::optional<int> a_degree) const;
+      std::optional<SlackPolynomialInfo> a_info) const;
 
   struct UnsafeReturn {
     UnsafeReturn() : prog{std::make_unique<solvers::MathematicalProgram>()} {}
@@ -130,7 +131,7 @@ class ControlBarrier {
     std::vector<MatrixX<symbolic::Variable>> s_grams;
     VectorX<symbolic::Polynomial> state_constraints_lagrangian;
     std::optional<symbolic::Polynomial> a;
-    std::optional<MatrixX<symbolic::Variable>> a_gram;
+    std::optional<MatrixX<symbolic::Expression>> a_gram;
     symbolic::Polynomial sos_poly;
     MatrixX<symbolic::Variable> sos_poly_gram;
   };
@@ -148,7 +149,7 @@ class ControlBarrier {
       const symbolic::Polynomial& h, int region_index, int t_degree,
       const std::vector<int>& s_degrees,
       const std::vector<int>& state_constraints_lagrangian_degrees,
-      std::optional<int> a_degree) const;
+      std::optional<SlackPolynomialInfo> a_info) const;
 
   struct BarrierReturn {
     BarrierReturn() : prog{std::make_unique<solvers::MathematicalProgram>()} {}
@@ -164,7 +165,7 @@ class ControlBarrier {
     MatrixX<symbolic::Variable> hdot_sos_gram;
     VectorX<symbolic::Polynomial> hdot_state_constraints_lagrangian;
     std::optional<symbolic::Polynomial> hdot_a;
-    std::optional<MatrixX<symbolic::Variable>> hdot_a_gram;
+    std::optional<MatrixX<symbolic::Expression>> hdot_a_gram;
     std::vector<VectorX<symbolic::Polynomial>> s;
     std::vector<std::vector<MatrixX<symbolic::Variable>>> s_grams;
     std::vector<symbolic::Polynomial> unsafe_sos_polys;
@@ -172,7 +173,7 @@ class ControlBarrier {
     std::vector<VectorX<symbolic::Polynomial>>
         unsafe_state_constraints_lagrangian;
     std::vector<std::optional<symbolic::Polynomial>> unsafe_a;
-    std::vector<std::optional<MatrixX<symbolic::Variable>>> unsafe_a_gram;
+    std::vector<std::optional<MatrixX<symbolic::Expression>>> unsafe_a_gram;
   };
 
   /**
@@ -195,13 +196,14 @@ class ControlBarrier {
       const std::optional<symbolic::Polynomial>& lambda1,
       const VectorX<symbolic::Polynomial>& l,
       const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
-      std::optional<int> hdot_a_degree,
+      std::optional<SlackPolynomialInfo> hdot_a_info,
       const std::vector<symbolic::Polynomial>& t,
       const std::vector<std::vector<int>>&
           unsafe_state_constraints_lagrangian_degrees,
       int h_degree, double deriv_eps,
       const std::vector<std::vector<int>>& s_degrees,
-      const std::vector<std::optional<int>>& unsafe_a_degrees) const;
+      const std::vector<std::optional<SlackPolynomialInfo>>& unsafe_a_info)
+      const;
 
   /**
    * Add the cost
@@ -414,11 +416,12 @@ class ControlBarrier {
       int lambda0_degree, std::optional<int> lambda1_degree,
       const std::vector<int>& l_degrees,
       const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
-      std::optional<int> hdot_a_degree, const std::vector<int>& t_degrees,
+      std::optional<SlackPolynomialInfo> hdot_a_info,
+      const std::vector<int>& t_degrees,
       const std::vector<std::vector<int>>& s_degrees,
       const std::vector<std::vector<int>>&
           unsafe_state_constraints_lagrangian_degrees,
-      const std::vector<std::optional<int>> unsafe_a_degrees,
+      const std::vector<std::optional<SlackPolynomialInfo>> unsafe_a_info,
       const Eigen::Ref<const Eigen::MatrixXd>& x_safe,
       const Eigen::Ref<const Eigen::VectorXd>& h_x_safe_min,
       const SearchWithSlackAOptions& search_options) const;
@@ -448,11 +451,12 @@ class ControlBarrier {
       const symbolic::Polynomial& h, double deriv_eps, int lambda0_degree,
       std::optional<int> lambda1_degree, const std::vector<int>& l_degrees,
       const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
-      std::optional<int> hdot_a_degree, const std::vector<int>& t_degrees,
+      std::optional<SlackPolynomialInfo> hdot_a_info,
+      const std::vector<int>& t_degrees,
       const std::vector<std::vector<int>>& s_degrees,
       const std::vector<std::vector<int>>&
           unsafe_state_constraints_lagrangian_degrees,
-      const std::vector<std::optional<int>>& unsafe_a_degrees,
+      const std::vector<std::optional<SlackPolynomialInfo>>& unsafe_a_info,
       const SearchOptions& search_options,
       std::optional<double> backoff_scale) const;
 

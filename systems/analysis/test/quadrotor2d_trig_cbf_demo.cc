@@ -266,24 +266,25 @@ symbolic::Polynomial FindCbfInit(
   const std::vector<int> l_degrees = {2, 2, 2, 2};
   const std::vector<int> hdot_eq_lagrangian_degrees = {h_degree +
                                                        lambda0_degree - 2};
-  const int hdot_a_degree = h_degree + lambda0_degree;
+  const SlackPolynomialInfo hdot_a_info(h_degree + lambda0_degree);
 
   const std::vector<int> t_degrees = {0, 0};
   std::vector<std::vector<int>> s_degrees;
   std::vector<std::vector<int>> unsafe_eq_lagrangian_degrees;
-  std::vector<std::optional<int>> unsafe_a_degrees;
+  std::vector<std::optional<SlackPolynomialInfo>> unsafe_a_info;
   Eigen::VectorXd h_x_safe_min = Eigen::VectorXd::Constant(x_safe.cols(), 0.01);
   switch (scenario) {
     case Scenario::kCeilingGround: {
       s_degrees = {{h_degree - 2}, {h_degree - 2}};
       unsafe_eq_lagrangian_degrees = {{h_degree - 2}, {h_degree - 2}};
-      unsafe_a_degrees = {h_degree, h_degree};
+      unsafe_a_info = {SlackPolynomialInfo(h_degree),
+                       SlackPolynomialInfo(h_degree)};
       break;
     }
     case Scenario::kBox: {
       s_degrees = {{h_degree - 2, h_degree - 2, h_degree - 2, h_degree - 2}};
       unsafe_eq_lagrangian_degrees = {{h_degree - 2}};
-      unsafe_a_degrees = {h_degree};
+      unsafe_a_info = {SlackPolynomialInfo(h_degree)};
       break;
     }
   };
@@ -295,8 +296,8 @@ symbolic::Polynomial FindCbfInit(
   search_options.bilinear_iterations = 100;
   const auto search_result = dut.SearchWithSlackA(
       h_init, h_degree, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
-      hdot_eq_lagrangian_degrees, hdot_a_degree, t_degrees, s_degrees,
-      unsafe_eq_lagrangian_degrees, unsafe_a_degrees, x_safe, h_x_safe_min,
+      hdot_eq_lagrangian_degrees, hdot_a_info, t_degrees, s_degrees,
+      unsafe_eq_lagrangian_degrees, unsafe_a_info, x_safe, h_x_safe_min,
       search_options);
   std::cout << search_result.h << "\n";
 
@@ -307,8 +308,8 @@ symbolic::Polynomial FindCbfInit(
       search_result.h, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
       hdot_eq_lagrangian_degrees, std::nullopt /* hdot_a_degree */, t_degrees,
       s_degrees, unsafe_eq_lagrangian_degrees,
-      std::vector<std::optional<int>>(unsafe_regions.size(),
-                                      std::nullopt) /* unsafe_a_degrees */,
+      std::vector<std::optional<SlackPolynomialInfo>>(
+          unsafe_regions.size(), std::nullopt) /* unsafe_a_degrees */,
       search_options, std::nullopt /* backoff_scale */);
   drake::log()->info("h_sol is valid? {}", search_lagrangian_ret.success);
   return search_result.h;

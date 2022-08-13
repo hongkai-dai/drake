@@ -38,12 +38,12 @@ def SearchWithSlackA(
     lambda1_degree = None
     l_degrees = [2, 2, 2, 2]
     hdot_eq_lagrangian_degrees = [h_degree + lambda0_degree - 2]
-    hdot_a_degree = h_degree + lambda0_degree
+    hdot_a_info = analysis.SlackPolynomialInfo(degree=h_degree + lambda0_degree)
 
     t_degrees = [0, 0]
     s_degrees = [[h_degree - 2], [h_degree - 2]]
     unsafe_eq_lagrangian_degrees = [[h_degree - 2], [h_degree - 2]]
-    unsafe_a_degrees = [h_degree, h_degree]
+    unsafe_info = [analysis.SlackPolynomialInfo(degree=h_degree), analysis.SlackPolynomialInfo(degree=h_degree)]
     h_x_safe_min = np.array([0.01])
     hdot_a_zero_tol = 3E-9
     unsafe_a_zero_tol = 1E-9
@@ -54,8 +54,8 @@ def SearchWithSlackA(
     search_options.bilinear_iterations = 100
     search_result = dut.SearchWithSlackA(
         h_init, h_degree, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
-        hdot_eq_lagrangian_degrees, hdot_a_degree, t_degrees, s_degrees,
-        unsafe_eq_lagrangian_degrees, unsafe_a_degrees, x_safe,
+        hdot_eq_lagrangian_degrees, hdot_a_info, t_degrees, s_degrees,
+        unsafe_eq_lagrangian_degrees, unsafe_a_info, x_safe,
         h_x_safe_min, search_options)
     search_options.lagrangian_step_solver_options = mp.SolverOptions()
     search_options.lagrangian_step_solver_options.SetOption(

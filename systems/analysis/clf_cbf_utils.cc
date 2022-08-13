@@ -6,6 +6,7 @@
 
 #include <fmt/format.h>
 
+#include "drake/common/symbolic/monomial_util.h"
 #include "drake/common/text_logging.h"
 #include "drake/math/autodiff_gradient.h"
 #include "drake/solvers/choose_best_solver.h"
@@ -877,6 +878,68 @@ solvers::Binding<solvers::LinearCost> OptimizePolynomialAtSamples(
     }
   }
   DRAKE_UNREACHABLE();
+}
+
+void SlackPolynomialInfo::AddToProgram(
+    solvers::MathematicalProgram* prog, const symbolic::Variables& x,
+    const std::string& gram_name, symbolic::Polynomial* a,
+    MatrixX<symbolic::Expression>* a_gram) const {
+  switch (this->type) {
+    case SlackPolynomialType::kSos: {
+      MatrixX<symbolic::Variable> a_gram_var;
+      std::tie(*a, a_gram_var) = prog->NewSosPolynomial(
+          x, this->degree,
+          solvers::MathematicalProgram::NonnegativePolynomial::kSos, gram_name);
+      *a_gram = a_gram_var.cast<symbolic::Expression>();
+      break;
+    }
+    case SlackPolynomialType::kSquare: {
+      DRAKE_DEMAND(this->degree % 2 == 0);
+      const VectorX<symbolic::Monomial> monomial_basis =
+          symbolic::internal::ComputeMonomialBasis<Eigen::Dynamic>(x,
+                                                                   degree / 2);
+      const symbolic::Variable eps =
+          prog->NewContinuousVariables<1>(gram_name)(0);
+      prog->AddBoundingBoxConstraint(0, kInf, eps);
+      a_gram->resize(monomial_basis.rows(), monomial_basis.rows());
+      for (int i = 0; i < monomial_basis.rows(); ++i) {
+        (*a_gram)(i, i) = eps;
+      }
+      *a = eps * monomial_basis.dot(monomial_basis);
+      break;
+    }
+    case SlackPolynomialType::kDiagonal: {
+      DRAKE_DEMAND(this->degree % 2 == 0);
+      const VectorX<symbolic::Monomial> monomial_basis =
+          symbolic::internal::ComputeMonomialBasis<Eigen::Dynamic>(x,
+                                                                   degree / 2);
+      const VectorX<symbolic::Variable> s =
+          prog->NewContinuousVariables(monomial_basis.rows(), gram_name);
+      prog->AddBoundingBoxConstraint(0, kInf, s);
+      a_gram->resize(monomial_basis.rows(), monomial_basis.rows());
+      *a = symbolic::Polynomial();
+      for (int i = 0; i < monomial_basis.rows(); ++i) {
+        (*a_gram)(i, i) = s(i);
+        *a += s(i) * pow(monomial_basis(i), 2);
+      }
+      break;
+    }
+  }
+}
+
+Eigen::MatrixXd GetGramSolution(
+    const solvers::MathematicalProgramResult& result,
+    const Eigen::Ref<const MatrixX<symbolic::Expression>>& gram) {
+  DRAKE_DEMAND(gram.rows() == gram.cols());
+  Eigen::MatrixXd ret(gram.rows(), gram.cols());
+  for (int i = 0; i < gram.rows(); ++i) {
+    ret(i, i) = symbolic::get_constant_value(result.GetSolution(gram(i, i)));
+    for (int j = i + 1; j < gram.cols(); ++j) {
+      ret(i, j) = symbolic::get_constant_value(result.GetSolution(gram(i, j)));
+      ret(j, i) = ret(i, j);
+    }
+  }
+  return ret;
 }
 
 namespace internal {

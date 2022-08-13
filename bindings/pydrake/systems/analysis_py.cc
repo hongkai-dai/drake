@@ -594,7 +594,7 @@ Parameter ``interruptible``:
         &Class::ConstructLagrangianProgram, py::arg("h"), py::arg("deriv_eps"),
         py::arg("lambda0_degree"), py::arg("lambda1_degree"),
         py::arg("l_degrees"), py::arg("state_constraints_lagrangian_degrees"),
-        py::arg("a_degree"), cls_doc.ConstructLagrangianProgram.doc);
+        py::arg("a_info"), cls_doc.ConstructLagrangianProgram.doc);
 
     py::class_<Class::UnsafeReturn>(control_barrier, "UnsafeReturn")
         .def(
@@ -615,7 +615,7 @@ Parameter ``interruptible``:
     control_barrier.def("ConstructUnsafeRegionProgram",
         &Class::ConstructUnsafeRegionProgram, py::arg("h"),
         py::arg("region_index"), py::arg("t_degree"), py::arg("s_degrees"),
-        py::arg("state_constraints_lagrangian_degrees"), py::arg("a_degree"),
+        py::arg("state_constraints_lagrangian_degrees"), py::arg("a_info"),
         cls_doc.ConstructUnsafeRegionProgram.doc);
 
     py::class_<Class::BarrierReturn>(control_barrier, "BarrierReturn")
@@ -644,10 +644,10 @@ Parameter ``interruptible``:
     control_barrier.def("ConstructBarrierProgram",
         &Class::ConstructBarrierProgram, py::arg("lambda0"), py::arg("lambda1"),
         py::arg("l"), py::arg("hdot_state_constraints_lagrangian_degrees"),
-        py::arg("hdot_a_degree"), py::arg("t"),
+        py::arg("hdot_a_info"), py::arg("t"),
         py::arg("unsafe_state_constraints_lagrangian_degrees"),
         py::arg("h_degree"), py::arg("deriv_eps"), py::arg("s_degrees"),
-        py::arg("unsafe_a_degrees"), cls_doc.ConstructBarrierProgram.doc);
+        py::arg("unsafe_a_info"), cls_doc.ConstructBarrierProgram.doc);
 
     control_barrier.def(
         "AddBarrierProgramCost",
@@ -785,9 +785,9 @@ Parameter ``interruptible``:
         py::arg("h_degree"), py::arg("deriv_eps"), py::arg("lambda0_degree"),
         py::arg("lambda1_degree"), py::arg("l_degrees"),
         py::arg("hdot_state_constraints_lagrangian_degrees"),
-        py::arg("hdot_a_degree"), py::arg("t_degrees"), py::arg("s_degrees"),
+        py::arg("hdot_a_info"), py::arg("t_degrees"), py::arg("s_degrees"),
         py::arg("unsafe_state_constraints_lagrangian_degrees"),
-        py::arg("unsafe_a_degrees"), py::arg("x_safe"), py::arg("h_x_safe_min"),
+        py::arg("unsafe_a_info"), py::arg("x_safe"), py::arg("h_x_safe_min"),
         py::arg("search_options"), cls_doc.SearchWithSlackA.doc);
 
     py::class_<Class::SearchLagrangianResult>(
@@ -813,9 +813,9 @@ Parameter ``interruptible``:
         py::arg("h"), py::arg("deriv_eps"), py::arg("lambda0_degree"),
         py::arg("lambda1_degree"), py::arg("l_degrees"),
         py::arg("hdot_state_constraints_lagrangian_degrees"),
-        py::arg("hdot_a_degree"), py::arg("t_degrees"), py::arg("s_degrees"),
+        py::arg("hdot_a_info"), py::arg("t_degrees"), py::arg("s_degrees"),
         py::arg("unsafe_state_constraints_lagrangian_degrees"),
-        py::arg("unsafe_a_degrees"), py::arg("search_options"),
+        py::arg("unsafe_a_info"), py::arg("search_options"),
         py::arg("backoff_scale"), cls_doc.SearchLagrangian.doc);
   }
 
@@ -859,6 +859,17 @@ Parameter ``interruptible``:
             py::arg("solver_options"), py::arg("backoff_scale"),
             pydrake_doc.drake.systems.analysis.MaximizeInnerEllipsoidSize
                 .doc_14args);
+
+    py::enum_<analysis::SlackPolynomialType>(m, "SlackPolynomialType")
+        .value("kSos", analysis::SlackPolynomialType::kSos)
+        .value("kSquare", analysis::SlackPolynomialType::kSquare)
+        .value("kDiagonal", analysis::SlackPolynomialType::kDiagonal);
+
+    py::class_<analysis::SlackPolynomialInfo>(m, "SlackPolynomialInfo")
+        .def(py::init<int, analysis::SlackPolynomialType>(), py::arg("degree"),
+            py::arg("poly_type") = analysis::SlackPolynomialType::kSos)
+        .def_readwrite("degree", &analysis::SlackPolynomialInfo::degree)
+        .def_readwrite("type", &analysis::SlackPolynomialInfo::type);
   }
 
   {

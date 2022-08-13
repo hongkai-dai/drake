@@ -131,7 +131,7 @@ ControlBarrier::LagrangianReturn ControlBarrier::ConstructLagrangianProgram(
     const int lambda0_degree, const std::optional<int> lambda1_degree,
     const std::vector<int>& l_degrees,
     const std::vector<int>& state_constraints_lagrangian_degrees,
-    const std::optional<int> a_degree) const {
+    const std::optional<SlackPolynomialInfo> a_info) const {
   DRAKE_DEMAND(static_cast<int>(l_degrees.size()) == u_vertices_.cols());
   LagrangianReturn ret{};
   ret.prog->AddIndeterminates(x_);
@@ -159,13 +159,13 @@ ControlBarrier::LagrangianReturn ControlBarrier::ConstructLagrangianProgram(
         x_set_, state_constraints_lagrangian_degrees[i],
         "le" + std::to_string(i));
   }
-  if (a_degree.has_value()) {
+  if (a_info.has_value()) {
     ret.a.emplace(symbolic::Polynomial());
-    ret.a_gram.emplace(MatrixX<symbolic::Variable>());
-    std::tie(*(ret.a), *(ret.a_gram)) =
-        ret.prog->NewSosPolynomial(x_set_, a_degree.value());
+    ret.a_gram.emplace(MatrixX<symbolic::Expression>());
+    a_info->AddToProgram(ret.prog.get(), x_set_, "a", &(ret.a.value()),
+                         &(ret.a_gram.value()));
     // Minimize trace(a_gram);
-    ret.prog->AddLinearCost(ret.a_gram->cast<symbolic::Expression>().trace());
+    ret.prog->AddLinearCost(ret.a_gram->trace());
   }
   this->AddControlBarrierConstraint(ret.prog.get(), ret.lambda0, ret.lambda1,
                                     ret.l, ret.state_constraints_lagrangian, h,
@@ -178,7 +178,7 @@ ControlBarrier::UnsafeReturn ControlBarrier::ConstructUnsafeRegionProgram(
     const symbolic::Polynomial& h, const int region_index, const int t_degree,
     const std::vector<int>& s_degrees,
     const std::vector<int>& unsafe_state_constraints_lagrangian_degrees,
-    const std::optional<int> a_degree) const {
+    const std::optional<SlackPolynomialInfo> a_info) const {
   ControlBarrier::UnsafeReturn ret{};
   ret.prog->AddIndeterminates(x_);
   std::tie(ret.t, ret.t_gram) = ret.prog->NewSosPolynomial(
@@ -199,16 +199,16 @@ ControlBarrier::UnsafeReturn ControlBarrier::ConstructUnsafeRegionProgram(
     ret.state_constraints_lagrangian(i) = ret.prog->NewFreePolynomial(
         x_set_, unsafe_state_constraints_lagrangian_degrees[i]);
   }
-  if (a_degree.has_value()) {
+  if (a_info.has_value()) {
     ret.a.emplace(symbolic::Polynomial());
-    ret.a_gram.emplace(MatrixX<symbolic::Variable>());
-    std::tie(*(ret.a), *(ret.a_gram)) =
-        ret.prog->NewSosPolynomial(x_set_, a_degree.value());
-    ret.prog->AddLinearCost(ret.a_gram->cast<symbolic::Expression>().trace());
+    ret.a_gram.emplace(MatrixX<symbolic::Expression>());
+    a_info->AddToProgram(ret.prog.get(), x_set_, "a", &(ret.a.value()),
+                         &(ret.a_gram.value()));
+    ret.prog->AddLinearCost(ret.a_gram->trace());
   }
   ret.sos_poly = (1 + ret.t) * (-h) + ret.s.dot(unsafe_regions_[region_index]) -
                  ret.state_constraints_lagrangian.dot(state_eq_constraints_);
-  if (a_degree.has_value()) {
+  if (a_info.has_value()) {
     ret.sos_poly += *(ret.a);
   }
   std::tie(ret.sos_poly_gram, std::ignore) =
@@ -221,13 +221,14 @@ ControlBarrier::BarrierReturn ControlBarrier::ConstructBarrierProgram(
     const std::optional<symbolic::Polynomial>& lambda1,
     const VectorX<symbolic::Polynomial>& l,
     const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
-    const std::optional<int> hdot_a_degree,
+    const std::optional<SlackPolynomialInfo> hdot_a_info,
     const std::vector<symbolic::Polynomial>& t,
     const std::vector<std::vector<int>>&
         unsafe_state_constraints_lagrangian_degrees,
     const int h_degree, const double deriv_eps,
     const std::vector<std::vector<int>>& s_degrees,
-    const std::vector<std::optional<int>>& unsafe_a_degrees) const {
+    const std::vector<std::optional<SlackPolynomialInfo>>& unsafe_a_info)
+    const {
   BarrierReturn ret{};
   ret.prog->AddIndeterminates(x_);
   ret.h = ret.prog->NewFreePolynomial(x_set_, h_degree, "H");
@@ -237,11 +238,12 @@ ControlBarrier::BarrierReturn ControlBarrier::ConstructBarrierProgram(
     ret.hdot_state_constraints_lagrangian(i) = ret.prog->NewFreePolynomial(
         x_set_, hdot_state_constraints_lagrangian_degrees[i]);
   }
-  if (hdot_a_degree.has_value()) {
+  if (hdot_a_info.has_value()) {
     ret.hdot_a.emplace(symbolic::Polynomial());
-    ret.hdot_a_gram.emplace(MatrixX<symbolic::Variable>());
-    std::tie(*(ret.hdot_a), *(ret.hdot_a_gram)) =
-        ret.prog->NewSosPolynomial(x_set_, hdot_a_degree.value());
+    ret.hdot_a_gram.emplace(MatrixX<symbolic::Expression>());
+    hdot_a_info->AddToProgram(ret.prog.get(), x_set_, "a",
+                              &(ret.hdot_a.value()),
+                              &(ret.hdot_a_gram.value()));
   }
   // Add the constraint on hdot.
   this->AddControlBarrierConstraint(
@@ -280,11 +282,12 @@ ControlBarrier::BarrierReturn ControlBarrier::ConstructBarrierProgram(
     ret.unsafe_sos_polys[i] =
         (1 + t[i]) * (-ret.h) + ret.s[i].dot(unsafe_regions_[i]) -
         ret.unsafe_state_constraints_lagrangian[i].dot(state_eq_constraints_);
-    if (unsafe_a_degrees[i].has_value()) {
+    if (unsafe_a_info[i].has_value()) {
       ret.unsafe_a[i].emplace(symbolic::Polynomial());
-      ret.unsafe_a_gram[i].emplace(MatrixX<symbolic::Variable>());
-      std::tie(*(ret.unsafe_a[i]), *(ret.unsafe_a_gram[i])) =
-          ret.prog->NewSosPolynomial(x_set_, unsafe_a_degrees[i].value());
+      ret.unsafe_a_gram[i].emplace(MatrixX<symbolic::Expression>());
+      unsafe_a_info[i]->AddToProgram(ret.prog.get(), x_set_, "a",
+                                     &(ret.unsafe_a[i].value()),
+                                     &(ret.unsafe_a_gram[i].value()));
       ret.unsafe_sos_polys[i] += ret.unsafe_a[i].value();
     }
     std::tie(ret.unsafe_sos_poly_grams[i], std::ignore) =
@@ -386,16 +389,16 @@ ControlBarrier::SearchResult ControlBarrier::Search(
   // is covered in the safe region h(x) >= 0.
   std::vector<bool> inner_ellipsoid_flag(ellipsoids->size(), false);
   DRAKE_DEMAND(ellipsoids->size() == ellipsoid_options->size());
-  const std::optional<int> hdot_a_degree = std::nullopt;
-  const std::vector<std::optional<int>> unsafe_a_degrees(unsafe_regions_.size(),
-                                                         std::nullopt);
+  const std::optional<SlackPolynomialInfo> hdot_a_info = std::nullopt;
+  const std::vector<std::optional<SlackPolynomialInfo>> unsafe_a_info(
+      unsafe_regions_.size(), std::nullopt);
   while (iter_count < search_options.bilinear_iterations) {
     drake::log()->info("iter {}", iter_count);
     const auto search_lagrangian_ret = SearchLagrangian(
         ret.h, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
-        hdot_state_constraints_lagrangian_degrees, hdot_a_degree, t_degrees,
-        s_degrees, unsafe_state_constraints_lagrangian_degrees,
-        unsafe_a_degrees, search_options, std::nullopt /* backoff_scale */);
+        hdot_state_constraints_lagrangian_degrees, hdot_a_info, t_degrees,
+        s_degrees, unsafe_state_constraints_lagrangian_degrees, unsafe_a_info,
+        search_options, std::nullopt /* backoff_scale */);
     SetLagrangianResult(search_lagrangian_ret, &ret);
     DRAKE_DEMAND(!search_lagrangian_ret.hdot_a.has_value());
     for (int i = 0; i < static_cast<int>(unsafe_regions_.size()); ++i) {
@@ -457,9 +460,9 @@ ControlBarrier::SearchResult ControlBarrier::Search(
       // Now search for the barrier function.
       auto barrier_ret = this->ConstructBarrierProgram(
           ret.lambda0, ret.lambda1, ret.l,
-          hdot_state_constraints_lagrangian_degrees, hdot_a_degree, ret.t,
+          hdot_state_constraints_lagrangian_degrees, hdot_a_info, ret.t,
           unsafe_state_constraints_lagrangian_degrees, h_degree, deriv_eps,
-          s_degrees, unsafe_a_degrees);
+          s_degrees, unsafe_a_info);
       std::vector<symbolic::Polynomial> r;
       VectorX<symbolic::Variable> rho;
       std::vector<VectorX<symbolic::Polynomial>>
@@ -537,11 +540,12 @@ ControlBarrier::SearchWithSlackAResult ControlBarrier::SearchWithSlackA(
     const double deriv_eps, const int lambda0_degree,
     const std::optional<int> lambda1_degree, const std::vector<int>& l_degrees,
     const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
-    const std::optional<int> hdot_a_degree, const std::vector<int>& t_degrees,
+    const std::optional<SlackPolynomialInfo> hdot_a_info,
+    const std::vector<int>& t_degrees,
     const std::vector<std::vector<int>>& s_degrees,
     const std::vector<std::vector<int>>&
         unsafe_state_constraints_lagrangian_degrees,
-    const std::vector<std::optional<int>> unsafe_a_degrees,
+    const std::vector<std::optional<SlackPolynomialInfo>> unsafe_a_info,
     const Eigen::Ref<const Eigen::MatrixXd>& x_safe,
     const Eigen::Ref<const Eigen::VectorXd>& h_x_safe_min,
     const SearchWithSlackAOptions& search_options) const {
@@ -551,21 +555,22 @@ ControlBarrier::SearchWithSlackAResult ControlBarrier::SearchWithSlackA(
   search_result.unsafe_a.resize(unsafe_regions_.size());
   search_result.unsafe_a_grams.resize(unsafe_regions_.size());
   int iter_count = 0;
-  std::optional<int> hdot_a_degree_search = hdot_a_degree;
-  std::vector<std::optional<int>> unsafe_a_degrees_search = unsafe_a_degrees;
+  std::optional<SlackPolynomialInfo> hdot_a_info_search = hdot_a_info;
+  std::vector<std::optional<SlackPolynomialInfo>> unsafe_a_info_search =
+      unsafe_a_info;
   while (iter_count < search_options.bilinear_iterations) {
     drake::log()->info("Iteration {}", iter_count);
     {
       // Search for hdot Lagrangian and a(x).
       const auto search_lagrangian_result = this->SearchLagrangian(
           search_result.h, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
-          hdot_state_constraints_lagrangian_degrees, hdot_a_degree_search,
+          hdot_state_constraints_lagrangian_degrees, hdot_a_info_search,
           t_degrees, s_degrees, unsafe_state_constraints_lagrangian_degrees,
-          unsafe_a_degrees_search, search_options,
+          unsafe_a_info_search, search_options,
           search_options.lagrangian_step_backoff_scale);
       if (search_lagrangian_result.success) {
         SetLagrangianResult(search_lagrangian_result, &search_result);
-        if (hdot_a_degree_search.has_value()) {
+        if (hdot_a_info_search.has_value()) {
           search_result.hdot_a = search_lagrangian_result.hdot_a.value();
           search_result.hdot_a_gram =
               search_lagrangian_result.hdot_a_gram.value();
@@ -575,11 +580,11 @@ ControlBarrier::SearchWithSlackAResult ControlBarrier::SearchWithSlackA(
                   search_options.hdot_a_zero_tol &&
               search_options.use_zero_a) {
             // hdot_a is already 0, don't search it afterwards.
-            hdot_a_degree_search = std::nullopt;
+            hdot_a_info_search = std::nullopt;
           }
         }
         for (int i = 0; i < static_cast<int>(unsafe_regions_.size()); ++i) {
-          if (unsafe_a_degrees_search[i].has_value()) {
+          if (unsafe_a_info_search[i].has_value()) {
             search_result.unsafe_a[i] =
                 search_lagrangian_result.unsafe_a[i].value();
             search_result.unsafe_a_grams[i] =
@@ -590,15 +595,15 @@ ControlBarrier::SearchWithSlackAResult ControlBarrier::SearchWithSlackA(
                     search_options.unsafe_a_zero_tol &&
                 search_options.use_zero_a) {
               // unsafe_a[i] is already 0. Set it to 0 afterwards.
-              unsafe_a_degrees_search[i] = std::nullopt;
+              unsafe_a_info_search[i] = std::nullopt;
             }
           }
         }
-        if (!hdot_a_degree_search.has_value() &&
-            std::all_of(unsafe_a_degrees_search.begin(),
-                        unsafe_a_degrees_search.end(),
-                        [](std::optional<int> degree) {
-                          return !degree.has_value();
+        if (!hdot_a_info_search.has_value() &&
+            std::all_of(unsafe_a_info_search.begin(),
+                        unsafe_a_info_search.end(),
+                        [](std::optional<SlackPolynomialInfo> info) {
+                          return !info.has_value();
                         })) {
           search_result.success = true;
           return search_result;
@@ -614,9 +619,9 @@ ControlBarrier::SearchWithSlackAResult ControlBarrier::SearchWithSlackA(
     {
       BarrierReturn barrier_ret = this->ConstructBarrierProgram(
           search_result.lambda0, search_result.lambda1, search_result.l,
-          hdot_state_constraints_lagrangian_degrees, hdot_a_degree_search,
+          hdot_state_constraints_lagrangian_degrees, hdot_a_info_search,
           search_result.t, unsafe_state_constraints_lagrangian_degrees,
-          h_degree, deriv_eps, s_degrees, unsafe_a_degrees_search);
+          h_degree, deriv_eps, s_degrees, unsafe_a_info_search);
       // Add the constraint that h(x_safe) >= 0;
       {
         Eigen::MatrixXd A_x_safe;
@@ -630,17 +635,14 @@ ControlBarrier::SearchWithSlackAResult ControlBarrier::SearchWithSlackA(
       }
       // Now add the cost
       symbolic::Expression cost_expr = 0;
-      if (hdot_a_degree_search.has_value()) {
-        cost_expr +=
-            search_options.hdot_a_cost_weight *
-            barrier_ret.hdot_a_gram->cast<symbolic::Expression>().trace();
+      if (hdot_a_info_search.has_value()) {
+        cost_expr += search_options.hdot_a_cost_weight *
+                     barrier_ret.hdot_a_gram->trace();
       }
       for (int i = 0; i < static_cast<int>(unsafe_regions_.size()); ++i) {
-        if (unsafe_a_degrees_search[i].has_value()) {
+        if (unsafe_a_info_search[i].has_value()) {
           cost_expr += search_options.unsafe_a_cost_weight[i] *
-                       barrier_ret.unsafe_a_gram[i]
-                           ->cast<symbolic::Expression>()
-                           .trace();
+                       barrier_ret.unsafe_a_gram[i]->trace();
         }
       }
       barrier_ret.prog->AddLinearCost(cost_expr);
@@ -658,16 +660,16 @@ ControlBarrier::SearchWithSlackAResult ControlBarrier::SearchWithSlackA(
             result, barrier_ret.hdot_state_constraints_lagrangian,
             search_options.lsol_tiny_coeff_tol,
             &(search_result.hdot_state_constraints_lagrangian));
-        if (hdot_a_degree_search.has_value()) {
+        if (hdot_a_info_search.has_value()) {
           search_result.hdot_a = result.GetSolution(barrier_ret.hdot_a.value());
           search_result.hdot_a_gram =
-              result.GetSolution(barrier_ret.hdot_a_gram.value());
+              GetGramSolution(result, barrier_ret.hdot_a_gram.value());
           drake::log()->info("hdot_a_gram.trace()={}",
                              search_result.hdot_a_gram.trace());
           if (search_result.hdot_a_gram.trace() <=
                   search_options.hdot_a_zero_tol &&
               search_options.use_zero_a) {
-            hdot_a_degree_search = std::nullopt;
+            hdot_a_info_search = std::nullopt;
           }
         }
         for (int i = 0; i < static_cast<int>(unsafe_regions_.size()); ++i) {
@@ -678,25 +680,25 @@ ControlBarrier::SearchWithSlackAResult ControlBarrier::SearchWithSlackA(
               result, barrier_ret.unsafe_state_constraints_lagrangian[i],
               search_options.lsol_tiny_coeff_tol,
               &(search_result.unsafe_state_constraints_lagrangian[i]));
-          if (unsafe_a_degrees_search[i].has_value()) {
+          if (unsafe_a_info_search[i].has_value()) {
             search_result.unsafe_a[i] =
                 result.GetSolution(barrier_ret.unsafe_a[i].value());
             search_result.unsafe_a_grams[i] =
-                result.GetSolution(barrier_ret.unsafe_a_gram[i].value());
+                GetGramSolution(result, barrier_ret.unsafe_a_gram[i].value());
             drake::log()->info("unsafe_a_grams[{}].trace()={}", i,
                                search_result.unsafe_a_grams[i].trace());
             if (search_result.unsafe_a_grams[i].trace() <=
                     search_options.unsafe_a_zero_tol &&
                 search_options.use_zero_a) {
-              unsafe_a_degrees_search[i] = std::nullopt;
+              unsafe_a_info_search[i] = std::nullopt;
             }
           }
         }
-        if (!hdot_a_degree_search.has_value() &&
-            std::all_of(unsafe_a_degrees_search.begin(),
-                        unsafe_a_degrees_search.end(),
-                        [](std::optional<int> degree) {
-                          return !degree.has_value();
+        if (!hdot_a_info_search.has_value() &&
+            std::all_of(unsafe_a_info_search.begin(),
+                        unsafe_a_info_search.end(),
+                        [](std::optional<SlackPolynomialInfo> info) {
+                          return !info.has_value();
                         })) {
           search_result.success = true;
           return search_result;
@@ -718,11 +720,12 @@ ControlBarrier::SearchLagrangianResult ControlBarrier::SearchLagrangian(
     const int lambda0_degree, const std::optional<int> lambda1_degree,
     const std::vector<int>& l_degrees,
     const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
-    const std::optional<int> hdot_a_degree, const std::vector<int>& t_degrees,
+    const std::optional<SlackPolynomialInfo> hdot_a_info,
+    const std::vector<int>& t_degrees,
     const std::vector<std::vector<int>>& s_degrees,
     const std::vector<std::vector<int>>&
         unsafe_state_constraints_lagrangian_degrees,
-    const std::vector<std::optional<int>>& unsafe_a_degrees,
+    const std::vector<std::optional<SlackPolynomialInfo>>& unsafe_a_info,
     const ControlBarrier::SearchOptions& search_options,
     std::optional<double> backoff_scale) const {
   ControlBarrier::SearchLagrangianResult search_lagrangian_ret;
@@ -730,7 +733,7 @@ ControlBarrier::SearchLagrangianResult ControlBarrier::SearchLagrangian(
   {
     auto lagrangian_ret = this->ConstructLagrangianProgram(
         h, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
-        hdot_state_constraints_lagrangian_degrees, hdot_a_degree);
+        hdot_state_constraints_lagrangian_degrees, hdot_a_info);
     if (search_options.lagrangian_tiny_coeff_tol > 0) {
       RemoveTinyCoeff(lagrangian_ret.prog.get(),
                       search_options.lagrangian_tiny_coeff_tol);
@@ -767,11 +770,11 @@ ControlBarrier::SearchLagrangianResult ControlBarrier::SearchLagrangian(
                   search_options.lsol_tiny_coeff_tol);
         }
       }
-      if (hdot_a_degree.has_value()) {
+      if (hdot_a_info.has_value()) {
         search_lagrangian_ret.hdot_a.emplace(
             result_lagrangian.GetSolution(*(lagrangian_ret.a)));
         search_lagrangian_ret.hdot_a_gram.emplace(
-            result_lagrangian.GetSolution(lagrangian_ret.a_gram.value()));
+            GetGramSolution(result_lagrangian, lagrangian_ret.a_gram.value()));
       }
     } else {
       drake::log()->error("Failed to find Lagrangian");
@@ -791,7 +794,7 @@ ControlBarrier::SearchLagrangianResult ControlBarrier::SearchLagrangian(
     for (int i = 0; i < static_cast<int>(unsafe_regions_.size()); ++i) {
       auto unsafe_ret = this->ConstructUnsafeRegionProgram(
           h, i, t_degrees[i], s_degrees[i],
-          unsafe_state_constraints_lagrangian_degrees[i], unsafe_a_degrees[i]);
+          unsafe_state_constraints_lagrangian_degrees[i], unsafe_a_info[i]);
       if (search_options.lagrangian_tiny_coeff_tol > 0) {
         RemoveTinyCoeff(unsafe_ret.prog.get(),
                         search_options.lagrangian_tiny_coeff_tol);
@@ -818,11 +821,11 @@ ControlBarrier::SearchLagrangianResult ControlBarrier::SearchLagrangian(
             result_unsafe, unsafe_ret.state_constraints_lagrangian,
             search_options.lsol_tiny_coeff_tol,
             &(search_lagrangian_ret.unsafe_state_constraints_lagrangian[i]));
-        if (unsafe_a_degrees[i].has_value()) {
+        if (unsafe_a_info[i].has_value()) {
           search_lagrangian_ret.unsafe_a[i].emplace(
               result_unsafe.GetSolution(unsafe_ret.a.value()));
           search_lagrangian_ret.unsafe_a_grams[i].emplace(
-              result_unsafe.GetSolution(unsafe_ret.a_gram.value()));
+              GetGramSolution(result_unsafe, unsafe_ret.a_gram.value()));
         }
       } else {
         drake::log()->error(

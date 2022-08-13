@@ -44,7 +44,7 @@ def Search(
     h_degree = 2
     x_set = sym.Variables(x)
 
-    h_init = sym.Polynomial((x[4] - 0.5) ** 2 + x[5] ** 2 + x[6] ** 2- 0.05)
+    # h_init = sym.Polynomial((x[4] - 0.5) ** 2 + x[5] ** 2 + x[6] ** 2- 0.05)
     with open("quadrotor3d_trig_cbf1.pickle", "rb") as input_file:
         h_init = clf_cbf_utils.deserialize_polynomial(
             x_set, pickle.load(input_file)["h"])
@@ -55,21 +55,23 @@ def Search(
         h_init -= h_init_x_safe.min()
         h_init += 0.1
 
-    with_slack_a = False
+    with_slack_a = True 
 
-    lambda0_degree = 4
-    lambda1_degree = 4
+    lambda0_degree = 2
+    lambda1_degree = 2
     l_degrees = [2] * 16
     hdot_eq_lagrangian_degrees = [h_degree + lambda0_degree - 2]
 
     if with_slack_a:
-        hdot_a_degree = 4
+        hdot_a_info = analysis.SlackPolynomialInfo(
+            degree=6, poly_type=analysis.SlackPolynomialType.kSquare)
 
     t_degrees = [0]
     s_degrees = [[h_degree - 2]]
     unsafe_eq_lagrangian_degrees = [[h_degree - 2]]
     if with_slack_a:
-        unsafe_a_degrees = [h_degree]
+        unsafe_a_info= [analysis.SlackPolynomialInfo(
+            degree=h_degree, poly_type=analysis.SlackPolynomialType.kSos)]
     h_x_safe_min = np.array([0.01] * x_safe.shape[1])
 
     if with_slack_a:
@@ -78,7 +80,7 @@ def Search(
         search_options = analysis.ControlBarrier.SearchWithSlackAOptions(
             hdot_a_zero_tol, unsafe_a_zero_tol, use_zero_a=True,
             hdot_a_cost_weight=1., unsafe_a_cost_weight=[1.])
-        search_options.bilinear_iterations = 100
+        search_options.bilinear_iterations = 10
         search_options.lagrangian_step_solver_options = mp.SolverOptions()
         search_options.lagrangian_step_solver_options.SetOption(
             mp.CommonSolverOption.kPrintToConsole, 1)
@@ -90,8 +92,8 @@ def Search(
         search_options.hsol_tiny_coeff_tol = 1E-6
         search_result = dut.SearchWithSlackA(
             h_init, h_degree, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
-            hdot_eq_lagrangian_degrees, hdot_a_degree, t_degrees, s_degrees,
-            unsafe_eq_lagrangian_degrees, unsafe_a_degrees, x_safe,
+            hdot_eq_lagrangian_degrees, hdot_a_info, t_degrees, s_degrees,
+            unsafe_eq_lagrangian_degrees, unsafe_a_info, x_safe,
             h_x_safe_min, search_options)
         search_lagrangian_ret = dut.SearchLagrangian(
             search_result.h, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,

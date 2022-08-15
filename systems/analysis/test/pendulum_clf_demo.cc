@@ -204,11 +204,11 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
       const double positivity_eps = 0;
       const int d = 0;
       const VectorX<symbolic::Polynomial> state_constraints_init(0);
-      const std::vector<int> c_lagrangian_degrees{};
-      VectorX<symbolic::Polynomial> c_lagrangian;
+      const std::vector<int> eq_lagrangian_degrees{};
+      VectorX<symbolic::Polynomial> eq_lagrangian;
       auto prog_V_init = FindCandidateLyapunov(
           x, V_init_degree, positivity_eps, d, state_constraints_init,
-          c_lagrangian_degrees, x_val, xdot_val, &V_init, &c_lagrangian);
+          eq_lagrangian_degrees, x_val, xdot_val, &V_init, &eq_lagrangian);
       const auto result_init = solvers::Solve(*prog_V_init);
       DRAKE_DEMAND(result_init.is_success());
       V_init = result_init.GetSolution(V_init);
@@ -245,7 +245,7 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
   if (max_ellipsoid) {
     const Eigen::Vector3d x_star(0, -0.0, 0);
     const Eigen::Matrix3d S = Eigen::Matrix3d::Identity();
-    const std::vector<int> ellipsoid_c_lagrangian_degrees{0};
+    const std::vector<int> ellipsoid_eq_lagrangian_degrees{0};
     ControlLyapunov::SearchOptions search_options;
     search_options.bilinear_iterations = 50;
     // search_options.lyap_step_solver = solvers::CsdpSolver::id();
@@ -264,7 +264,7 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
     const auto search_result =
         dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
                    positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
-                   ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S,
+                   ellipsoid_eq_lagrangian_degrees, deriv_eps, x_star, S,
                    V_degree - 2, search_options, ellipsoid_bisection_option);
     V_sol = search_result.V;
   } else {
@@ -345,7 +345,7 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
     const int positivity_d = 1;
     const std::vector<int> positivity_eq_lagrangian_degrees{};
     const std::vector<int> p_degrees{};
-    const std::vector<int> ellipsoid_c_lagrangian_degrees{};
+    const std::vector<int> ellipsoid_eq_lagrangian_degrees{};
     const int V_degree = 2;
     const Eigen::Vector2d x_star(0, 0);
     const Eigen::Matrix2d S = Eigen::Matrix2d::Identity();
@@ -362,7 +362,7 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
     const auto search_result =
         dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
                    positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
-                   ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S,
+                   ellipsoid_eq_lagrangian_degrees, deriv_eps, x_star, S,
                    V_degree - 2, search_options, ellipsoid_bisection_option);
     Simulate(x, theta_des, search_result.V, u_bound, deriv_eps,
              Eigen::Vector2d(M_PI + 0.6 * M_PI, 0), 10);

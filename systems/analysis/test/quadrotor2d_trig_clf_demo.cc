@@ -139,27 +139,18 @@ const double kInf = std::numeric_limits<double>::infinity();
   const std::vector<int> positivity_cin_lagrangian_degrees{V_degree - 2};
   const std::vector<int> derivative_cin_lagrangian_degrees =
       derivative_ceq_lagrangian_degrees;
-  symbolic::Polynomial V;
-  VectorX<symbolic::Polynomial> positivity_cin_lagrangian;
-  VectorX<symbolic::Polynomial> positivity_ceq_lagrangian;
-  VectorX<symbolic::Polynomial> derivative_cin_lagrangian;
-  VectorX<symbolic::Polynomial> derivative_ceq_lagrangian;
-  symbolic::Polynomial positivity_sos_condition;
-  symbolic::Polynomial derivative_sos_condition;
-  auto prog = FindCandidateRegionalLyapunov(
+
+  auto ret = FindCandidateRegionalLyapunov(
       x, dynamics, std::nullopt /* dynamics_denominator*/, V_degree,
       positivity_eps, d, deriv_eps, state_eq_constraints,
       positivity_ceq_lagrangian_degrees, derivative_ceq_lagrangian_degrees,
       state_ineq_constraints, positivity_cin_lagrangian_degrees,
-      derivative_cin_lagrangian_degrees, &V, &positivity_cin_lagrangian,
-      &positivity_ceq_lagrangian, &derivative_cin_lagrangian,
-      &derivative_ceq_lagrangian, &positivity_sos_condition,
-      &derivative_sos_condition);
+      derivative_cin_lagrangian_degrees);
   solvers::SolverOptions solver_options;
   // solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
-  const auto result = solvers::Solve(*prog, std::nullopt, solver_options);
+  const auto result = solvers::Solve(*(ret.prog), std::nullopt, solver_options);
   DRAKE_DEMAND(result.is_success());
-  const symbolic::Polynomial V_sol = result.GetSolution(V);
+  const symbolic::Polynomial V_sol = result.GetSolution(ret.V);
   return V_sol;
 }
 
@@ -215,12 +206,12 @@ const double kInf = std::numeric_limits<double>::infinity();
   const int d = 1;
   const Vector1<symbolic::Polynomial> state_constraints(
       symbolic::Polynomial(x(2) * x(2) + x(3) * x(3) + 2 * x(3)));
-  const std::vector<int> c_lagrangian_degrees{V_degree - 2};
-  VectorX<symbolic::Polynomial> c_lagrangian;
+  const std::vector<int> eq_lagrangian_degrees{V_degree - 2};
+  VectorX<symbolic::Polynomial> eq_lagrangian;
 
   auto prog_V_init = FindCandidateLyapunov(
-      x, V_degree, positivity_eps, d, state_constraints, c_lagrangian_degrees,
-      x_val, xdot_val, &V_init, &c_lagrangian);
+      x, V_degree, positivity_eps, d, state_constraints, eq_lagrangian_degrees,
+      x_val, xdot_val, &V_init, &eq_lagrangian);
   for (const auto& [monomial, coeff] : V_init.monomial_to_coefficient_map()) {
     // The polynomial cannot have large coefficients.
     prog_V_init->AddLinearConstraint(coeff, -50, 50);

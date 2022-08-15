@@ -231,11 +231,11 @@ GTEST_TEST(PendulumROA, TestTrigLQR) {
     const double positivity_eps = 0;
     const int d = 0;
     const VectorX<symbolic::Polynomial> state_constraints_init(0);
-    const std::vector<int> c_lagrangian_degrees{};
-    VectorX<symbolic::Polynomial> c_lagrangian;
+    const std::vector<int> eq_lagrangian_degrees{};
+    VectorX<symbolic::Polynomial> eq_lagrangian;
     auto prog_V_init = FindCandidateLyapunov(
         x, V_init_degree, positivity_eps, d, state_constraints_init,
-        c_lagrangian_degrees, x_val, xdot_val, &V_init, &c_lagrangian);
+        eq_lagrangian_degrees, x_val, xdot_val, &V_init, &eq_lagrangian);
     const auto result_init = solvers::Solve(*prog_V_init);
     ASSERT_TRUE(result_init.is_success());
     V_init = result_init.GetSolution(V_init);

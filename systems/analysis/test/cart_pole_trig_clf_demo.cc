@@ -89,19 +89,16 @@ const double kInf = std::numeric_limits<double>::infinity();
   VectorX<symbolic::Polynomial> derivative_ceq_lagrangian;
   symbolic::Polynomial positivity_sos_condition;
   symbolic::Polynomial derivative_sos_condition;
-  auto prog = FindCandidateRegionalLyapunov(
+  auto ret = FindCandidateRegionalLyapunov(
       x, dynamics_numerator, dynamics_denominator, V_degree, positivity_eps, d,
       deriv_eps, state_eq_constraints, positivity_ceq_lagrangian_degrees,
       derivative_ceq_lagrangian_degrees, state_ineq_constraints,
-      positivity_cin_lagrangian_degrees, derivative_cin_lagrangian_degrees, &V,
-      &positivity_cin_lagrangian, &positivity_ceq_lagrangian,
-      &derivative_cin_lagrangian, &derivative_ceq_lagrangian,
-      &positivity_sos_condition, &derivative_sos_condition);
+      positivity_cin_lagrangian_degrees, derivative_cin_lagrangian_degrees);
   solvers::SolverOptions solver_options;
   solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
-  const auto result = solvers::Solve(*prog, std::nullopt, solver_options);
+  const auto result = solvers::Solve(*(ret.prog), std::nullopt, solver_options);
   DRAKE_DEMAND(result.is_success());
-  const symbolic::Polynomial V_sol = result.GetSolution(V);
+  const symbolic::Polynomial V_sol = result.GetSolution(ret.V);
   // VerifyLyapunovInit(x, V_sol, dynamics_numerator, dynamics_denominator);
   // VerifyLyapunovInitPablo(x, V_sol, dynamics_numerator,
   // dynamics_denominator);
@@ -709,7 +706,7 @@ symbolic::Polynomial SearchWTrigDynamics(
       const double size_min = 0.;
       const double size_max = 0.5;
       const double size_tol = 0.001;
-      const std::vector<int> ellipsoid_c_lagrangian_degrees{{V_degree - 2}};
+      const std::vector<int> ellipsoid_eq_lagrangian_degrees{{V_degree - 2}};
       const Eigen::Matrix<double, 5, 1> x_star = ToTrigState<double>(
           0.55 * state_swingup.col(12) +
           0.45 * state_swingup.col(13));  // x_swingup.col(16);
@@ -729,7 +726,7 @@ symbolic::Polynomial SearchWTrigDynamics(
       const auto search_result = dut.Search(
           V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
           positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
-          ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S, r_degree,
+          ellipsoid_eq_lagrangian_degrees, deriv_eps, x_star, S, r_degree,
           search_options, ellipsoid_maximize_option);
       V_sol = search_result.V;
       std::cout << "V(x_swingup): "

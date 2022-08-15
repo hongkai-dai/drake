@@ -139,7 +139,7 @@ const double kInf = std::numeric_limits<double>::infinity();
       const int lambda0_degree = 2;
       const std::vector<int> l_degrees = {2, 2, 2, 2};
       const std::vector<int> p_degrees = {};
-      const std::vector<int> ellipsoid_c_lagrangian_degrees = {};
+      const std::vector<int> ellipsoid_eq_lagrangian_degrees = {};
       const int V_degree = 2;
       const double positivity_eps = 0.0001;
       const int positivity_d = V_degree / 2;
@@ -161,7 +161,7 @@ const double kInf = std::numeric_limits<double>::infinity();
 
       dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
                  positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
-                 ellipsoid_c_lagrangian_degrees, deriv_eps, x_star, S,
+                 ellipsoid_eq_lagrangian_degrees, deriv_eps, x_star, S,
                  V_degree - 2, search_options, ellipsoid_bisection_option);
     }
   }

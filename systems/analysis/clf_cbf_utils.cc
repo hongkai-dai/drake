@@ -188,32 +188,32 @@ bool MaximizeInnerEllipsoidSize(
     const Eigen::Ref<const Eigen::VectorXd>& x_star,
     const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& f,
     const std::optional<VectorX<symbolic::Polynomial>>& c, int r_degree,
-    const std::optional<std::vector<int>>& c_lagrangian_degrees,
+    const std::optional<std::vector<int>>& eq_lagrangian_degrees,
     double size_max, double size_min, const solvers::SolverId& solver_id,
     const std::optional<solvers::SolverOptions>& solver_options,
     double size_tol, double* d_sol, symbolic::Polynomial* r_sol,
-    VectorX<symbolic::Polynomial>* c_lagrangian_sol) {
+    VectorX<symbolic::Polynomial>* eq_lagrangian_sol) {
   DRAKE_DEMAND(size_max >= size_min);
   DRAKE_DEMAND(size_tol > 0);
   const symbolic::Polynomial ellipsoid_quadratic =
       internal::EllipsoidPolynomial(x, x_star, S, 0.);
   const symbolic::Variables x_set{x};
-  auto is_feasible = [&x, &x_set, &f, &c, &r_degree, &c_lagrangian_degrees,
+  auto is_feasible = [&x, &x_set, &f, &c, &r_degree, &eq_lagrangian_degrees,
                       &solver_id, &solver_options, &ellipsoid_quadratic, r_sol,
-                      c_lagrangian_sol](double d) {
+                      eq_lagrangian_sol](double d) {
     solvers::MathematicalProgram prog;
     prog.AddIndeterminates(x);
     symbolic::Polynomial r;
     std::tie(r, std::ignore) = prog.NewSosPolynomial(x_set, r_degree);
     symbolic::Polynomial sos_condition = -f - r * (d - ellipsoid_quadratic);
-    VectorX<symbolic::Polynomial> c_lagrangian(0);
+    VectorX<symbolic::Polynomial> eq_lagrangian(0);
     if (c.has_value() && c->rows() > 0) {
-      c_lagrangian.resize(c->rows());
+      eq_lagrangian.resize(c->rows());
       for (int i = 0; i < c->rows(); ++i) {
-        c_lagrangian(i) =
-            prog.NewFreePolynomial(x_set, c_lagrangian_degrees.value()[i]);
+        eq_lagrangian(i) =
+            prog.NewFreePolynomial(x_set, eq_lagrangian_degrees.value()[i]);
       }
-      sos_condition -= c_lagrangian.dot(*c);
+      sos_condition -= eq_lagrangian.dot(*c);
     }
     prog.AddSosConstraint(sos_condition);
     auto solver = solvers::MakeSolver(solver_id);
@@ -222,10 +222,10 @@ bool MaximizeInnerEllipsoidSize(
     if (result.is_success()) {
       *r_sol = result.GetSolution(r);
       if (c.has_value() && c->rows() > 0) {
-        GetPolynomialSolutions(result, c_lagrangian, 0, c_lagrangian_sol);
+        GetPolynomialSolutions(result, eq_lagrangian, 0, eq_lagrangian_sol);
       } else {
-        if (c_lagrangian_sol != nullptr) {
-          c_lagrangian_sol->resize(0);
+        if (eq_lagrangian_sol != nullptr) {
+          eq_lagrangian_sol->resize(0);
         }
       }
       return true;
@@ -392,10 +392,10 @@ std::unique_ptr<solvers::MathematicalProgram> FindCandidateLyapunov(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x, int V_degree,
     double positivity_eps, int d,
     const VectorX<symbolic::Polynomial>& state_constraints,
-    const std::vector<int>& c_lagrangian_degrees,
+    const std::vector<int>& eq_lagrangian_degrees,
     const Eigen::Ref<const Eigen::MatrixXd>& x_val,
     const Eigen::Ref<const Eigen::MatrixXd>& xdot_val, symbolic::Polynomial* V,
-    VectorX<symbolic::Polynomial>* c_lagrangian) {
+    VectorX<symbolic::Polynomial>* eq_lagrangian) {
   CheckPolynomialsPassOrigin(state_constraints);
   auto prog = std::make_unique<solvers::MathematicalProgram>();
   prog->AddIndeterminates(x);
@@ -417,12 +417,12 @@ std::unique_ptr<solvers::MathematicalProgram> FindCandidateLyapunov(
         positivity_eps *
         symbolic::Polynomial(pow(x.cast<symbolic::Expression>().dot(x), d));
   }
-  c_lagrangian->resize(state_constraints.rows());
+  eq_lagrangian->resize(state_constraints.rows());
   for (int i = 0; i < state_constraints.rows(); ++i) {
-    (*c_lagrangian)(i) =
-        prog->NewFreePolynomial(x_set, c_lagrangian_degrees[i]);
+    (*eq_lagrangian)(i) =
+        prog->NewFreePolynomial(x_set, eq_lagrangian_degrees[i]);
   }
-  sos_condition -= c_lagrangian->dot(state_constraints);
+  sos_condition -= eq_lagrangian->dot(state_constraints);
   prog->AddSosConstraint(sos_condition);
 
   Eigen::MatrixXd A_V_samples;
@@ -465,7 +465,7 @@ std::unique_ptr<solvers::MathematicalProgram> FindCandidateLyapunov(
   return prog;
 }
 
-std::unique_ptr<solvers::MathematicalProgram> FindCandidateRegionalLyapunov(
+FindCandidateRegionalLyapunovReturn FindCandidateRegionalLyapunov(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
     const VectorX<symbolic::Polynomial>& dynamics,
     const std::optional<symbolic::Polynomial>& dynamics_denominator,
@@ -475,43 +475,36 @@ std::unique_ptr<solvers::MathematicalProgram> FindCandidateRegionalLyapunov(
     const std::vector<int>& derivative_ceq_lagrangian_degrees,
     const VectorX<symbolic::Polynomial>& state_ineq_constraints,
     const std::vector<int>& positivity_cin_lagrangian_degrees,
-    const std::vector<int>& derivative_cin_lagrangian_degrees,
-    symbolic::Polynomial* V,
-    VectorX<symbolic::Polynomial>* positivity_cin_lagrangian,
-    VectorX<symbolic::Polynomial>* positivity_ceq_lagrangian,
-    VectorX<symbolic::Polynomial>* derivative_cin_lagrangian,
-    VectorX<symbolic::Polynomial>* derivative_ceq_lagrangian,
-    symbolic::Polynomial* positivity_sos_condition,
-    symbolic::Polynomial* derivative_sos_condition) {
+    const std::vector<int>& derivative_cin_lagrangian_degrees) {
+  FindCandidateRegionalLyapunovReturn ret;
   CheckPolynomialsPassOrigin(dynamics);
-  auto prog = std::make_unique<solvers::MathematicalProgram>();
-  prog->AddIndeterminates(x);
+  ret.prog->AddIndeterminates(x);
   const symbolic::Variables x_set{x};
   const symbolic::Variables no_linear_term_variables =
       FindNoLinearTermVariables(x_set, state_eq_constraints);
-  *V = NewFreePolynomialPassOrigin(prog.get(), x_set, V_degree, "V",
+  ret.V = NewFreePolynomialPassOrigin(ret.prog.get(), x_set, V_degree, "V",
                                    symbolic::internal::DegreeType::kAny,
                                    no_linear_term_variables);
   const symbolic::Polynomial x_squared_d(
       pow(x.cast<symbolic::Expression>().dot(x), d));
-  *positivity_sos_condition = *V - positivity_eps * x_squared_d;
-  positivity_cin_lagrangian->resize(state_ineq_constraints.rows());
+  ret.positivity_sos_condition = ret.V - positivity_eps * x_squared_d;
+  ret.positivity_cin_lagrangian.resize(state_ineq_constraints.rows());
   for (int i = 0; i < state_ineq_constraints.rows(); ++i) {
-    std::tie((*positivity_cin_lagrangian)(i), std::ignore) =
-        prog->NewSosPolynomial(
+    std::tie(ret.positivity_cin_lagrangian(i), std::ignore) =
+        ret.prog->NewSosPolynomial(
             x_set, positivity_cin_lagrangian_degrees[i],
             solvers::MathematicalProgram::NonnegativePolynomial::kSos, "p1");
   }
-  *positivity_sos_condition +=
-      positivity_cin_lagrangian->dot(state_ineq_constraints);
-  positivity_ceq_lagrangian->resize(state_eq_constraints.rows());
+  ret.positivity_sos_condition +=
+      ret.positivity_cin_lagrangian.dot(state_ineq_constraints);
+  ret.positivity_ceq_lagrangian.resize(state_eq_constraints.rows());
   for (int i = 0; i < state_eq_constraints.rows(); ++i) {
-    (*positivity_ceq_lagrangian)(i) = prog->NewFreePolynomial(
+    ret.positivity_ceq_lagrangian(i) = ret.prog->NewFreePolynomial(
         x_set, positivity_ceq_lagrangian_degrees[i], "p2");
   }
-  *positivity_sos_condition -=
-      positivity_ceq_lagrangian->dot(state_eq_constraints);
-  prog->AddSosConstraint(*positivity_sos_condition);
+  ret.positivity_sos_condition -=
+      ret.positivity_ceq_lagrangian.dot(state_eq_constraints);
+  ret.prog->AddSosConstraint(ret.positivity_sos_condition);
 
   // The condition is
   // cin(x)<= 0 and ceq(x) = 0 implies -Vdot - ε2 * V >= 0
@@ -520,28 +513,28 @@ std::unique_ptr<solvers::MathematicalProgram> FindCandidateRegionalLyapunov(
   // We write this condition as
   // -dVdx * dynamics - ε2 * V * d(x) + q1(x) * cin(x) - q2(x) * ceq(x)
   // is sos where d(x) = dynamics_denominator.
-  const symbolic::Polynomial Vdot = V->Jacobian(x).dot(dynamics);
+  const symbolic::Polynomial Vdot = ret.V.Jacobian(x).dot(dynamics);
   const symbolic::Polynomial dynamics_denominator_val =
       dynamics_denominator.value_or(symbolic::Polynomial(1));
-  *derivative_sos_condition =
-      -Vdot - deriv_eps * (*V) * dynamics_denominator_val;
-  derivative_cin_lagrangian->resize(state_ineq_constraints.rows());
+  ret.derivative_sos_condition =
+      -Vdot - deriv_eps * ret.V * dynamics_denominator_val;
+  ret.derivative_cin_lagrangian.resize(state_ineq_constraints.rows());
   for (int i = 0; i < state_ineq_constraints.rows(); ++i) {
-    std::tie((*derivative_cin_lagrangian)(i), std::ignore) =
-        prog->NewSosPolynomial(x_set, derivative_cin_lagrangian_degrees[i]);
+    std::tie(ret.derivative_cin_lagrangian(i), std::ignore) =
+        ret.prog->NewSosPolynomial(x_set, derivative_cin_lagrangian_degrees[i]);
   }
-  *derivative_sos_condition +=
-      derivative_cin_lagrangian->dot(state_ineq_constraints);
-  derivative_ceq_lagrangian->resize(state_eq_constraints.rows());
+  ret.derivative_sos_condition +=
+      ret.derivative_cin_lagrangian.dot(state_ineq_constraints);
+  ret.derivative_ceq_lagrangian.resize(state_eq_constraints.rows());
   for (int i = 0; i < state_eq_constraints.rows(); ++i) {
-    (*derivative_ceq_lagrangian)(i) =
-        prog->NewFreePolynomial(x_set, derivative_ceq_lagrangian_degrees[i]);
+    ret.derivative_ceq_lagrangian(i) =
+        ret.prog->NewFreePolynomial(x_set, derivative_ceq_lagrangian_degrees[i]);
   }
-  *derivative_sos_condition -=
-      derivative_ceq_lagrangian->dot(state_eq_constraints);
-  prog->AddSosConstraint(*derivative_sos_condition);
+  ret.derivative_sos_condition -=
+      ret.derivative_ceq_lagrangian.dot(state_eq_constraints);
+  ret.prog->AddSosConstraint(ret.derivative_sos_condition);
 
-  return prog;
+  return ret;
 }
 
 namespace {

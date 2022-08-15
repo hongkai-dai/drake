@@ -50,8 +50,8 @@ void AddEllipsoidInRoaConstraint(
     const Eigen::Ref<const Eigen::VectorXd>& x_star,
     const Eigen::Ref<const Eigen::MatrixXd>& S, double d, int r_degree,
     const std::optional<VectorX<symbolic::Polynomial>>& c,
-    const std::optional<std::vector<int>>& c_lagrangian_degrees,
-    symbolic::Polynomial* r, VectorX<symbolic::Polynomial>* c_lagrangian) {
+    const std::optional<std::vector<int>>& eq_lagrangian_degrees,
+    symbolic::Polynomial* r, VectorX<symbolic::Polynomial>* eq_lagrangian) {
   const symbolic::Variables x_set(x);
   std::tie(*r, std::ignore) = prog->NewSosPolynomial(x_set, r_degree);
   const symbolic::Polynomial ellipsoid_poly =
@@ -60,14 +60,14 @@ void AddEllipsoidInRoaConstraint(
       symbolic::Polynomial({{symbolic::Monomial(), rho}}) - V +
       (*r) * ellipsoid_poly;
   if (c.has_value() && c->rows() > 0) {
-    DRAKE_DEMAND(c_lagrangian_degrees.has_value() &&
-                 static_cast<int>(c_lagrangian_degrees->size()) == c->rows());
-    c_lagrangian->resize(c->rows());
+    DRAKE_DEMAND(eq_lagrangian_degrees.has_value() &&
+                 static_cast<int>(eq_lagrangian_degrees->size()) == c->rows());
+    eq_lagrangian->resize(c->rows());
     for (int i = 0; i < c->rows(); ++i) {
-      (*c_lagrangian)(i) =
-          prog->NewFreePolynomial(x_set, (*c_lagrangian_degrees)[i]);
+      (*eq_lagrangian)(i) =
+          prog->NewFreePolynomial(x_set, (*eq_lagrangian_degrees)[i]);
     }
-    sos_condition -= c_lagrangian->dot(*c);
+    sos_condition -= eq_lagrangian->dot(*c);
   }
   prog->AddSosConstraint(sos_condition);
 }
@@ -381,7 +381,7 @@ ControlLyapunov::SearchWithEllipsoidResult ControlLyapunov::Search(
     const std::vector<int>& l_degrees, int V_degree, double positivity_eps,
     int positivity_d, const std::vector<int>& positivity_eq_lagrangian_degrees,
     const std::vector<int>& p_degrees,
-    const std::vector<int>& ellipsoid_c_lagrangian_degrees, double deriv_eps,
+    const std::vector<int>& ellipsoid_eq_lagrangian_degrees, double deriv_eps,
     const Eigen::Ref<const Eigen::VectorXd>& x_star,
     const Eigen::Ref<const Eigen::MatrixXd>& S, int r_degree,
     const SearchOptions& search_options,
@@ -411,7 +411,7 @@ ControlLyapunov::SearchWithEllipsoidResult ControlLyapunov::Search(
         found_inner_ellipsoid = MaximizeInnerEllipsoidSize(
             x_, x_star, S, search_result.V - search_options.rho,
             ellipsoid_maximize_option.t, ellipsoid_maximize_option.s_degree,
-            state_constraints_, ellipsoid_c_lagrangian_degrees,
+            state_constraints_, ellipsoid_eq_lagrangian_degrees,
             search_options.ellipsoid_step_solver,
             search_options.ellipsoid_step_solver_options,
             ellipsoid_maximize_option.backoff_scale, &(search_result.d), &s_sol,
@@ -422,13 +422,13 @@ ControlLyapunov::SearchWithEllipsoidResult ControlLyapunov::Search(
             std::get<EllipsoidBisectionOption>(ellipsoid_option);
         found_inner_ellipsoid = MaximizeInnerEllipsoidSize(
             x_, x_star, S, search_result.V - search_options.rho,
-            state_constraints_, r_degree, ellipsoid_c_lagrangian_degrees,
+            state_constraints_, r_degree, ellipsoid_eq_lagrangian_degrees,
             ellipsoid_bisection_option.size_max,
             ellipsoid_bisection_option.size_min,
             search_options.ellipsoid_step_solver,
             search_options.ellipsoid_step_solver_options,
             ellipsoid_bisection_option.size_tol, &(search_result.d),
-            &(search_result.r), &(search_result.ellipsoid_c_lagrangian_sol));
+            &(search_result.r), &(search_result.ellipsoid_eq_lagrangian_sol));
       }
       if (!found_inner_ellipsoid) {
         drake::log()->error("Cannot find the inner ellipsoid.");
@@ -482,11 +482,11 @@ ControlLyapunov::SearchWithEllipsoidResult ControlLyapunov::Search(
       const auto V_on_ellipsoid =
           lyapunov_ret.prog->NewContinuousVariables<1>("V_e");
       symbolic::Polynomial r;
-      VectorX<symbolic::Polynomial> c_lagrangian;
+      VectorX<symbolic::Polynomial> eq_lagrangian;
       AddEllipsoidInRoaConstraint(
           lyapunov_ret.prog.get(), x_, V_on_ellipsoid(0), lyapunov_ret.V,
           x_star, S, search_result.d, r_degree, state_constraints_,
-          ellipsoid_c_lagrangian_degrees, &r, &c_lagrangian);
+          ellipsoid_eq_lagrangian_degrees, &r, &eq_lagrangian);
       lyapunov_ret.prog->AddBoundingBoxConstraint(-kInf, search_options.rho,
                                                   V_on_ellipsoid);
       lyapunov_ret.prog->AddLinearCost(Vector1d(1), 0, V_on_ellipsoid);
@@ -512,9 +512,9 @@ ControlLyapunov::SearchWithEllipsoidResult ControlLyapunov::Search(
         GetPolynomialSolutions(result_lyapunov, lyapunov_ret.p,
                                search_options.lsol_tiny_coeff_tol,
                                &(search_result.p));
-        GetPolynomialSolutions(result_lyapunov, c_lagrangian,
+        GetPolynomialSolutions(result_lyapunov, eq_lagrangian,
                                search_options.lsol_tiny_coeff_tol,
-                               &(search_result.ellipsoid_c_lagrangian_sol));
+                               &(search_result.ellipsoid_eq_lagrangian_sol));
         GetPolynomialSolutions(result_lyapunov,
                                lyapunov_ret.positivity_eq_lagrangian,
                                search_options.lsol_tiny_coeff_tol,

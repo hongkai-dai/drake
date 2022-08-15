@@ -118,7 +118,7 @@ class ControlLyapunov {
    * where c(x) is the state equality constraints (like unit quaternion
    * constraint).
    */
-  LagrangianReturn ConstructLagrangianProgram(
+  [[nodiscard]] LagrangianReturn ConstructLagrangianProgram(
       const symbolic::Polynomial& V, double rho, double deriv_eps,
       int lambda0_degree, const std::vector<int>& l_degrees,
       const std::vector<int>& p_degrees) const;
@@ -168,6 +168,7 @@ class ControlLyapunov {
     VectorX<symbolic::Polynomial> positivity_eq_lagrangian;
     VectorX<symbolic::Polynomial> p;
   };
+
   /**
    * Given λ₀(x) and l(x), construct a mathematical program
    * <pre>
@@ -226,6 +227,9 @@ class ControlLyapunov {
     EllipsoidBisectionOption(double m_size_min, double m_size_max,
                              double m_size_tol)
         : size_min{m_size_min}, size_max{m_size_max}, size_tol{m_size_tol} {}
+    // Add a default constructor because it is need in python binding
+    // std::variant<EllipsoidBisectionOption, EllipsoidMaximizeOption>
+    EllipsoidBisectionOption() {}
     double size_min;
     double size_max;
     double size_tol;
@@ -244,6 +248,9 @@ class ControlLyapunov {
         : t{std::move(m_t)},
           s_degree{m_s_degree},
           backoff_scale{m_backoff_scale} {}
+    // Add a default constructor because it is need in python binding
+    // std::variant<EllipsoidBisectionOption, EllipsoidMaximizeOption>
+    EllipsoidMaximizeOption() {}
     symbolic::Polynomial t;
     int s_degree;
     double backoff_scale;
@@ -262,13 +269,13 @@ class ControlLyapunov {
   struct SearchWithEllipsoidResult : public SearchResult {
     symbolic::Polynomial r;
     double d;
-    VectorX<symbolic::Polynomial> ellipsoid_c_lagrangian_sol;
+    VectorX<symbolic::Polynomial> ellipsoid_eq_lagrangian_sol;
   };
 
   /**
    * Use bilinear alternation to grow the region-of-attraction of the control
    * Lyapunov function (CLF).
-   * @param ellipsoid_c_lagrangian_degrees. The degrees of the Lagrangian
+   * @param ellipsoid_eq_lagrangian_degrees. The degrees of the Lagrangian
    * multiplier for state_constraints(x) = 0 when searching for the maximal
    * ellipsoid contained in the sub-level set { x | V(x) <= ρ}
    */
@@ -278,7 +285,7 @@ class ControlLyapunov {
       int positivity_d,
       const std::vector<int>& positivity_eq_lagrangian_degrees,
       const std::vector<int>& p_degrees,
-      const std::vector<int>& ellipsoid_c_lagrangian_degrees, double deriv_eps,
+      const std::vector<int>& ellipsoid_eq_lagrangian_degrees, double deriv_eps,
       const Eigen::Ref<const Eigen::VectorXd>& x_star,
       const Eigen::Ref<const Eigen::MatrixXd>& S, int r_degree,
       const SearchOptions& search_options,

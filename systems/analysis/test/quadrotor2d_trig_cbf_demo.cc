@@ -179,27 +179,17 @@ symbolic::Polynomial FindCbfInit(
   const std::vector<int> positivity_cin_lagrangian_degrees{h_degree - 2};
   const std::vector<int> derivative_cin_lagrangian_degrees =
       derivative_ceq_lagrangian_degrees;
-  symbolic::Polynomial V;
-  VectorX<symbolic::Polynomial> positivity_cin_lagrangian;
-  VectorX<symbolic::Polynomial> positivity_ceq_lagrangian;
-  VectorX<symbolic::Polynomial> derivative_cin_lagrangian;
-  VectorX<symbolic::Polynomial> derivative_ceq_lagrangian;
-  symbolic::Polynomial positivity_sos_condition;
-  symbolic::Polynomial derivative_sos_condition;
-  auto prog = FindCandidateRegionalLyapunov(
+  auto ret = FindCandidateRegionalLyapunov(
       x, dynamics, std::nullopt /* dynamics_denominator*/, h_degree,
       positivity_eps, d, deriv_eps, state_eq_constraints,
       positivity_ceq_lagrangian_degrees, derivative_ceq_lagrangian_degrees,
       state_ineq_constraints, positivity_cin_lagrangian_degrees,
-      derivative_cin_lagrangian_degrees, &V, &positivity_cin_lagrangian,
-      &positivity_ceq_lagrangian, &derivative_cin_lagrangian,
-      &derivative_ceq_lagrangian, &positivity_sos_condition,
-      &derivative_sos_condition);
+      derivative_cin_lagrangian_degrees);
   solvers::SolverOptions solver_options;
   // solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
-  const auto result = solvers::Solve(*prog, std::nullopt, solver_options);
+  const auto result = solvers::Solve(*(ret.prog), std::nullopt, solver_options);
   DRAKE_DEMAND(result.is_success());
-  const symbolic::Polynomial V_sol = result.GetSolution(V);
+  const symbolic::Polynomial V_sol = result.GetSolution(ret.V);
   return -V_sol + 0.1;
 }
 

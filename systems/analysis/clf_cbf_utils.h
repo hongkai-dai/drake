@@ -96,11 +96,11 @@ bool MaximizeInnerEllipsoidSize(
     const Eigen::Ref<const Eigen::VectorXd>& x_star,
     const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& f,
     const std::optional<VectorX<symbolic::Polynomial>>& c, int r_degree,
-    const std::optional<std::vector<int>>& c_lagrangian_degrees,
+    const std::optional<std::vector<int>>& eq_lagrangian_degrees,
     double size_max, double size_min, const solvers::SolverId& solver_id,
     const std::optional<solvers::SolverOptions>& solver_options,
     double size_tol, double* d_sol, symbolic::Polynomial* r_sol,
-    VectorX<symbolic::Polynomial>* c_lagrangian_sol);
+    VectorX<symbolic::Polynomial>* eq_lagrangian_sol);
 
 void GetPolynomialSolutions(const solvers::MathematicalProgramResult& result,
                             const VectorX<symbolic::Polynomial>& p,
@@ -164,10 +164,28 @@ std::unique_ptr<solvers::MathematicalProgram> FindCandidateLyapunov(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x, int V_degree,
     double positivity_eps, int d,
     const VectorX<symbolic::Polynomial>& state_constraints,
-    const std::vector<int>& c_lagrangian_degrees,
+    const std::vector<int>& eq_lagrangian_degrees,
     const Eigen::Ref<const Eigen::MatrixXd>& x_val,
     const Eigen::Ref<const Eigen::MatrixXd>& xdot_val, symbolic::Polynomial* V,
-    VectorX<symbolic::Polynomial>* c_lagrangian);
+    VectorX<symbolic::Polynomial>* eq_lagrangian);
+
+struct FindCandidateRegionalLyapunovReturn {
+  FindCandidateRegionalLyapunovReturn()
+      : prog{std::make_unique<solvers::MathematicalProgram>()} {}
+  FindCandidateRegionalLyapunovReturn(FindCandidateRegionalLyapunovReturn&&) =
+      default;
+  FindCandidateRegionalLyapunovReturn& operator=(
+      FindCandidateRegionalLyapunovReturn&&) = default;
+
+  std::unique_ptr<solvers::MathematicalProgram> prog;
+  symbolic::Polynomial V;
+  VectorX<symbolic::Polynomial> positivity_cin_lagrangian;
+  VectorX<symbolic::Polynomial> positivity_ceq_lagrangian;
+  VectorX<symbolic::Polynomial> derivative_cin_lagrangian;
+  VectorX<symbolic::Polynomial> derivative_ceq_lagrangian;
+  symbolic::Polynomial positivity_sos_condition;
+  symbolic::Polynomial derivative_sos_condition;
+};
 
 /**
  * Constructs a program to find Lyapunov candidate V that satisfy the Lyapunov
@@ -182,7 +200,7 @@ std::unique_ptr<solvers::MathematicalProgram> FindCandidateLyapunov(
  * @param[out] positivity_sos_condition The sos condition (1)
  * @param[out] derivative_sos_condition The sos condition (2)
  */
-std::unique_ptr<solvers::MathematicalProgram> FindCandidateRegionalLyapunov(
+FindCandidateRegionalLyapunovReturn FindCandidateRegionalLyapunov(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
     const VectorX<symbolic::Polynomial>& dynamics,
     const std::optional<symbolic::Polynomial>& dynamics_denominator,
@@ -192,14 +210,7 @@ std::unique_ptr<solvers::MathematicalProgram> FindCandidateRegionalLyapunov(
     const std::vector<int>& derivative_ceq_lagrangian_degrees,
     const VectorX<symbolic::Polynomial>& state_ineq_constraints,
     const std::vector<int>& positivity_cin_lagrangian_degrees,
-    const std::vector<int>& derivative_cin_lagrangian_degrees,
-    symbolic::Polynomial* V,
-    VectorX<symbolic::Polynomial>* positivity_cin_lagrangian,
-    VectorX<symbolic::Polynomial>* positivity_ceq_lagrangian,
-    VectorX<symbolic::Polynomial>* derivative_cin_lagrangian,
-    VectorX<symbolic::Polynomial>* derivative_ceq_lagrangian,
-    symbolic::Polynomial* positivity_sos_condition,
-    symbolic::Polynomial* derivative_sos_condition);
+    const std::vector<int>& derivative_cin_lagrangian_degrees);
 
 /**
  * Each x[i] contains the coordinate along one dimension, returns the matrix

@@ -202,11 +202,11 @@ GTEST_TEST(MaximizeInnerEllipsoidSize, Test2) {
     const double size_tol = 0.1;
     double d_sol_wo_c;
     symbolic::Polynomial r_sol;
-    VectorX<symbolic::Polynomial> c_lagrangian_sol;
+    VectorX<symbolic::Polynomial> eq_lagrangian_sol;
     MaximizeInnerEllipsoidSize(
         x, x_star, S, V - 1, std::nullopt, r_degree, std::nullopt, size_max,
         size_min, solvers::MosekSolver::id(), std::nullopt, size_tol,
-        &d_sol_wo_c, &r_sol, &c_lagrangian_sol);
+        &d_sol_wo_c, &r_sol, &eq_lagrangian_sol);
     CheckEllipsoidInSublevelSet(x, x_star, S, d_sol_wo_c, V - 1);
     // Check if r_sol is sos.
     Eigen::Matrix2Xd x_check = Eigen::Matrix2Xd::Random(2, 100);
@@ -222,12 +222,12 @@ GTEST_TEST(MaximizeInnerEllipsoidSize, Test2) {
     // Consider the algrbraic set x(0) + x(1) == 1
     const Vector1<symbolic::Polynomial> c(
         symbolic::Polynomial(x(0) + x(1) - 1));
-    const std::vector<int> c_lagrangian_degrees{{3}};
+    const std::vector<int> eq_lagrangian_degrees{{3}};
     double d_sol_w_c;
     MaximizeInnerEllipsoidSize(x, x_star, S, V - 1, c, r_degree,
-                               c_lagrangian_degrees, size_max, size_min,
+                               eq_lagrangian_degrees, size_max, size_min,
                                solvers::MosekSolver::id(), std::nullopt,
-                               size_tol, &d_sol_w_c, &r_sol, &c_lagrangian_sol);
+                               size_tol, &d_sol_w_c, &r_sol, &eq_lagrangian_sol);
     EXPECT_GT(d_sol_w_c, d_sol_wo_c);
     // Now sample many points on the plane x(0) + x(1) == 1, if they are within
     // the ellipsoid, then they should satisfy V(x) <= 1.
@@ -264,12 +264,12 @@ GTEST_TEST(FindCandidateLyapunov, Test) {
   const int positivity_eps = 0.1;
   const int d = 1;
   VectorX<symbolic::Polynomial> state_constraints(0);
-  std::vector<int> c_lagrangian_degrees{};
-  VectorX<symbolic::Polynomial> c_lagrangian;
+  std::vector<int> eq_lagrangian_degrees{};
+  VectorX<symbolic::Polynomial> eq_lagrangian;
 
   auto prog = FindCandidateLyapunov(x, V_degree, positivity_eps, d,
-                                    state_constraints, c_lagrangian_degrees,
-                                    x_val, xdot_val, &V, &c_lagrangian);
+                                    state_constraints, eq_lagrangian_degrees,
+                                    x_val, xdot_val, &V, &eq_lagrangian);
   const auto result = solvers::Solve(*prog);
   ASSERT_TRUE(result.is_success());
   const auto V_sol = result.GetSolution(V);
@@ -331,32 +331,22 @@ GTEST_TEST(FindCandidateRegionalLyapunov, Test) {
       symbolic::Polynomial(x.cast<symbolic::Expression>().dot(x) - 0.0001));
   const std::vector<int> positivity_cin_lagrangian_degrees{{V_degree - 2}};
   const std::vector<int> derivative_cin_lagrangian_degrees{{2}};
-  symbolic::Polynomial V;
-  VectorX<symbolic::Polynomial> positivity_cin_lagrangian;
-  VectorX<symbolic::Polynomial> positivity_ceq_lagrangian;
-  VectorX<symbolic::Polynomial> derivative_cin_lagrangian;
-  VectorX<symbolic::Polynomial> derivative_ceq_lagrangian;
-  symbolic::Polynomial positivity_sos_condition;
-  symbolic::Polynomial derivative_sos_condition;
-  auto prog = FindCandidateRegionalLyapunov(
+  auto ret = FindCandidateRegionalLyapunov(
       x, dynamics, std::nullopt /*dynamics_denominator */, V_degree,
       positivity_eps, d, deriv_eps, state_eq_constraints,
       positivity_ceq_lagrangian_degrees, derivative_ceq_lagrangian_degrees,
       state_ineq_constraints, positivity_cin_lagrangian_degrees,
-      derivative_cin_lagrangian_degrees, &V, &positivity_cin_lagrangian,
-      &positivity_ceq_lagrangian, &derivative_cin_lagrangian,
-      &derivative_ceq_lagrangian, &positivity_sos_condition,
-      &derivative_sos_condition);
+      derivative_cin_lagrangian_degrees);
   solvers::SolverOptions solver_options;
   solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
-  const auto result = solvers::Solve(*prog, std::nullopt, solver_options);
+  const auto result = solvers::Solve(*(ret.prog), std::nullopt, solver_options);
   ASSERT_TRUE(result.is_success());
-  const symbolic::Polynomial V_sol = result.GetSolution(V);
+  const symbolic::Polynomial V_sol = result.GetSolution(ret.V);
   VectorX<symbolic::Polynomial> positivity_cin_lagrangian_sol;
-  GetPolynomialSolutions(result, positivity_cin_lagrangian, 0,
+  GetPolynomialSolutions(result, ret.positivity_cin_lagrangian, 0,
                          &positivity_cin_lagrangian_sol);
   VectorX<symbolic::Polynomial> positivity_ceq_lagrangian_sol;
-  GetPolynomialSolutions(result, positivity_ceq_lagrangian, 0,
+  GetPolynomialSolutions(result, ret.positivity_ceq_lagrangian, 0,
                          &positivity_ceq_lagrangian_sol);
   const symbolic::Polynomial positivity_sos_condition_expected =
       V_sol -
@@ -366,22 +356,22 @@ GTEST_TEST(FindCandidateRegionalLyapunov, Test) {
       positivity_ceq_lagrangian_sol.dot(state_eq_constraints);
   EXPECT_PRED2(
       symbolic::test::PolyEqual,
-      result.GetSolution(positivity_sos_condition)
+      result.GetSolution(ret.positivity_sos_condition)
           .RemoveTermsWithSmallCoefficients(1E-5),
       positivity_sos_condition_expected.RemoveTermsWithSmallCoefficients(1E-5));
 
   VectorX<symbolic::Polynomial> derivative_cin_lagrangian_sol;
-  GetPolynomialSolutions(result, derivative_cin_lagrangian, 0,
+  GetPolynomialSolutions(result, ret.derivative_cin_lagrangian, 0,
                          &derivative_cin_lagrangian_sol);
   VectorX<symbolic::Polynomial> derivative_ceq_lagrangian_sol;
-  GetPolynomialSolutions(result, derivative_ceq_lagrangian, 0,
+  GetPolynomialSolutions(result, ret.derivative_ceq_lagrangian, 0,
                          &derivative_ceq_lagrangian_sol);
   const symbolic::Polynomial derivative_sos_condition_expected =
       -V_sol.Jacobian(x).dot(dynamics) - deriv_eps * V_sol +
       derivative_cin_lagrangian_sol.dot(state_ineq_constraints) -
       derivative_ceq_lagrangian_sol.dot(state_eq_constraints);
   EXPECT_PRED3(symbolic::test::PolynomialEqual,
-               result.GetSolution(derivative_sos_condition),
+               result.GetSolution(ret.derivative_sos_condition),
                derivative_sos_condition_expected, 1E-5);
 }
 

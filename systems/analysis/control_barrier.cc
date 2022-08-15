@@ -419,7 +419,7 @@ ControlBarrier::SearchResult ControlBarrier::Search(
         inner_ellipsoid_flag[ellipsoid_idx] = true;
         double d_sol;
         symbolic::Polynomial r_sol;
-        VectorX<symbolic::Polynomial> ellipsoid_c_lagrangian_sol;
+        VectorX<symbolic::Polynomial> ellipsoid_eq_lagrangian_sol;
         if (std::holds_alternative<EllipsoidBisectionOption>(
                 (*ellipsoid_options)[ellipsoid_idx])) {
           auto& ellipsoid_bisection_option = std::get<EllipsoidBisectionOption>(
@@ -433,7 +433,7 @@ ControlBarrier::SearchResult ControlBarrier::Search(
               search_options.ellipsoid_step_solver,
               search_options.ellipsoid_step_solver_options,
               ellipsoid_bisection_option.d_tol, &d_sol, &r_sol,
-              &ellipsoid_c_lagrangian_sol);
+              &ellipsoid_eq_lagrangian_sol);
           ellipsoid_bisection_option.d_min = d_sol;
         } else {
           symbolic::Polynomial s_sol;
@@ -447,7 +447,7 @@ ControlBarrier::SearchResult ControlBarrier::Search(
               search_options.ellipsoid_step_solver,
               search_options.ellipsoid_step_solver_options,
               ellipsoid_maximize_option.backoff_scale, &d_sol, &s_sol,
-              &ellipsoid_c_lagrangian_sol);
+              &ellipsoid_eq_lagrangian_sol);
         }
         drake::log()->info("Ellipsoid[{}] d {}", ellipsoid_idx, d_sol);
         ellipsoid.d = d_sol;

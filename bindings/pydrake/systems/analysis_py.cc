@@ -529,6 +529,205 @@ Parameter ``interruptible``:
                 py::arg("x"), py::arg("f"), py::arg("G"),
                 py::arg("dynamics_denominator"), py::arg("u_vertices"),
                 py::arg("state_constraints"), cls_doc.ctor.doc);
+
+    py::class_<analysis::ControlLyapunov::LagrangianReturn>(
+        control_lyapunov, "LagrangianReturn")
+        .def(
+            "prog",
+            [](const Class::LagrangianReturn& self) { return self.prog.get(); },
+            pybind11::return_value_policy::reference)
+        .def_readonly("lambda0", &Class::LagrangianReturn::lambda0)
+        .def_readonly("lambda0_gram", &Class::LagrangianReturn::lambda0_gram)
+        .def_readonly("l", &Class::LagrangianReturn::l)
+        .def_readonly("l_grams", &Class::LagrangianReturn::l_grams)
+        .def_readonly("p", &Class::LagrangianReturn::p)
+        .def_readonly("vdot_sos", &Class::LagrangianReturn::vdot_sos)
+        .def_readonly(
+            "vdot_monomials", &Class::LagrangianReturn::vdot_monomials)
+        .def_readonly("vdot_gram", &Class::LagrangianReturn::vdot_gram);
+
+    control_lyapunov.def(
+        "ConstructLagrangianProgram",
+        [](const Class& self, const symbolic::Polynomial& V, double rho,
+            double deriv_eps, int lambda0_degree,
+            const std::vector<int>& l_degrees,
+            const std::vector<int>& p_degrees) {
+          return self.ConstructLagrangianProgram(
+              V, rho, deriv_eps, lambda0_degree, l_degrees, p_degrees);
+        },
+        py::arg("V"), py::arg("rho"), py::arg("deriv_eps"),
+        py::arg("lambda0_degree"), py::arg("l_degrees"), py::arg("p_degrees"),
+        cls_doc.ConstructLagrangianProgram.doc);
+
+    py::class_<analysis::ControlLyapunov::LagrangianMaxRhoReturn>(
+        m, "LagrangianMaxRhoReturn")
+        .def(
+            "prog",
+            [](const Class::LagrangianMaxRhoReturn& self) {
+              return self.prog.get();
+            },
+            pybind11::return_value_policy::reference)
+        .def_readonly("l", &Class::LagrangianMaxRhoReturn::l)
+        .def_readonly("l_grams", &Class::LagrangianMaxRhoReturn::l_grams)
+        .def_readonly("p", &Class::LagrangianMaxRhoReturn::p)
+        .def_readonly("rho", &Class::LagrangianMaxRhoReturn::rho)
+        .def_readonly("vdot_sos", &Class::LagrangianMaxRhoReturn::vdot_sos)
+        .def_readonly(
+            "vdot_monomials", &Class::LagrangianMaxRhoReturn::vdot_monomials)
+        .def_readonly("vdot_gram", &Class::LagrangianMaxRhoReturn::vdot_gram);
+
+    control_lyapunov.def("ConstructLagrangianProgram",
+        py::overload_cast<const symbolic::Polynomial&,
+            const symbolic::Polynomial&, int, const std::vector<int>&,
+            const std::vector<int>&, double>(
+            &Class::ConstructLagrangianProgram, py::const_),
+        py::arg("V"), py::arg("lambda0"), py::arg("d_degree"),
+        py::arg("l_degrees"), py::arg("p_degrees"), py::arg("deriv_eps"));
+
+    py::class_<analysis::ControlLyapunov::LyapunovReturn>(
+        control_lyapunov, "LyapunovReturn")
+        .def(
+            "prog",
+            [](const Class::LagrangianReturn& self) { return self.prog.get(); },
+            pybind11::return_value_policy::reference)
+        .def_readonly("V", &Class::LyapunovReturn::V)
+        .def_readonly("positivity_eq_lagrangian",
+            &Class::LyapunovReturn::positivity_eq_lagrangian)
+        .def_readonly("p", &Class::LyapunovReturn::p);
+
+    control_lyapunov.def("ConstructLyapunovProgram",
+        &Class::ConstructLyapunovProgram, py::arg("lambda0"), py::arg("l"),
+        py::arg("V_degree"), py::arg("rho"), py::arg("positivity_eps"),
+        py::arg("positivity_d"), py::arg("positivity_eq_lagrangian_degrees"),
+        py::arg("p_degrees"), py::arg("deriv_eps"),
+        cls_doc.ConstructLyapunovProgram.doc);
+
+    py::class_<Class::SearchOptions>(control_lyapunov, "SearchOptions")
+        .def(py::init<>())
+        .def_readwrite(
+            "lyap_step_solver", &Class::SearchOptions::lyap_step_solver)
+        .def_readwrite("ellipsoid_step_solver",
+            &Class::SearchOptions::ellipsoid_step_solver)
+        .def_readwrite("lagrangian_step_solver",
+            &Class::SearchOptions::lagrangian_step_solver)
+        .def_readwrite(
+            "bilinear_iterations", &Class::SearchOptions::bilinear_iterations)
+        .def_readwrite("d_converge_tol", &Class::SearchOptions::d_converge_tol)
+        .def_readwrite("lyap_step_backoff_scale",
+            &Class::SearchOptions::lyap_step_backoff_scale)
+        .def_readwrite("lagrangian_step_solver_options",
+            &Class::SearchOptions::lagrangian_step_solver_options)
+        .def_readwrite("lyap_step_solver_options",
+            &Class::SearchOptions::lyap_step_solver_options)
+        .def_readwrite("ellipsoid_step_solver_options",
+            &Class::SearchOptions::ellipsoid_step_solver_options)
+        .def_readwrite(
+            "lyap_tiny_coeff_tol", &Class::SearchOptions::lyap_tiny_coeff_tol)
+        .def_readwrite("lagrangian_tiny_coeff_tol",
+            &Class::SearchOptions::lagrangian_tiny_coeff_tol)
+        .def_readwrite(
+            "Vsol_tiny_coeff_tol", &Class::SearchOptions::Vsol_tiny_coeff_tol)
+        .def_readwrite(
+            "lsol_tiny_coeff_tol", &Class::SearchOptions::lsol_tiny_coeff_tol)
+        .def_readwrite("rho", &Class::SearchOptions::rho)
+        .def_readwrite("save_clf_file", &Class::SearchOptions::save_clf_file);
+
+    py::class_<Class::EllipsoidBisectionOption>(
+        control_lyapunov, "EllipsoidBisectionOption")
+        .def(py::init<>())
+        .def(py::init<double, double, double>(), py::arg("size_min"),
+            py::arg("size_max"), py::arg("size_tol"))
+        .def_readwrite("size_min", &Class::EllipsoidBisectionOption::size_min)
+        .def_readwrite("size_max", &Class::EllipsoidBisectionOption::size_max)
+        .def_readwrite("size_tol", &Class::EllipsoidBisectionOption::size_tol);
+
+    py::class_<Class::EllipsoidMaximizeOption>(
+        control_lyapunov, "EllipsoidMaximizeOption")
+        .def(py::init<>())
+        .def(py::init<symbolic::Polynomial, int, double>(), py::arg("t"),
+            py::arg("s_degree"), py::arg("backoff_scale"))
+        .def_readwrite("t", &Class::EllipsoidMaximizeOption::t)
+        .def_readwrite("s_degree", &Class::EllipsoidMaximizeOption::s_degree)
+        .def_readwrite(
+            "backoff_scale", &Class::EllipsoidMaximizeOption::backoff_scale);
+
+    py::class_<Class::SearchResult>(control_lyapunov, "SearchResult")
+        .def_readonly("success", &Class::SearchResult::success)
+        .def_readonly("V", &Class::SearchResult::V)
+        .def_readonly("positivity_eq_lagrangian",
+            &Class::SearchResult::positivity_eq_lagrangian)
+        .def_readonly("lambda0", &Class::SearchResult::lambda0)
+        .def_readonly("l", &Class::SearchResult::l)
+        .def_readonly("p", &Class::SearchResult::p)
+        .def_readonly("search_result_details",
+            &Class::SearchResult::search_result_details);
+
+    py::class_<Class::SearchWithEllipsoidResult, Class::SearchResult>(
+        control_lyapunov, "SearchWithEllipsoidResult")
+        .def_readonly("r", &Class::SearchWithEllipsoidResult::r)
+        .def_readonly("d", &Class::SearchWithEllipsoidResult::d)
+        .def_readonly("ellipsoid_eq_lagrangian_sol",
+            &Class::SearchWithEllipsoidResult::ellipsoid_eq_lagrangian_sol);
+
+    control_lyapunov
+        .def("Search",
+            py::overload_cast<const symbolic::Polynomial&, int,
+                const std::vector<int>&, int, double, int,
+                const std::vector<int>&, const std::vector<int>&,
+                const std::vector<int>&, double,
+                const Eigen::Ref<const Eigen::VectorXd>&,
+                const Eigen::Ref<const Eigen::MatrixXd>&, int,
+                const Class::SearchOptions&,
+                const std::variant<Class::EllipsoidBisectionOption,
+                    Class::EllipsoidMaximizeOption>&>(
+                &Class::Search, py::const_),
+            py::arg("V_init"), py::arg("lambda0_degree"), py::arg("l_degrees"),
+            py::arg("V_degree"), py::arg("positivity_eps"),
+            py::arg("positivity_d"),
+            py::arg("positivity_eq_lagrangian_degrees"), py::arg("p_degrees"),
+            py::arg("ellipsoid_eq_lagrangian_degrees"), py::arg("deriv_eps"),
+            py::arg("x_star"), py::arg("S"), py::arg("r_degree"),
+            py::arg("search_options"), py::arg("ellipsoid_option"))
+        .def(
+            "Search",
+            [](const Class& self, const symbolic::Polynomial& V_init,
+                int lambda0_degree, const std::vector<int>& l_degrees,
+                int V_degree, double positivity_eps, int positivity_d,
+                const std::vector<int>& positivity_eq_lagrangian_degrees,
+                const std::vector<int>& p_degrees, double deriv_eps,
+                const Eigen::Ref<const Eigen::MatrixXd>& x_samples,
+                const std::optional<Eigen::MatrixXd>& in_roa_samples,
+                bool minimize_max, const Class::SearchOptions& search_options) {
+              return self.Search(V_init, lambda0_degree, l_degrees, V_degree,
+                  positivity_eps, positivity_d,
+                  positivity_eq_lagrangian_degrees, p_degrees, deriv_eps,
+                  x_samples, in_roa_samples, minimize_max, search_options);
+            },
+            py::arg("V_init"), py::arg("lambda0_degree"), py::arg("l_degrees"),
+            py::arg("V_degree"), py::arg("positivity_eps"),
+            py::arg("positivity_d"),
+            py::arg("positivity_eq_lagrangian_degrees"), py::arg("p_degrees"),
+            py::arg("deriv_eps"), py::arg("x_samples"),
+            py::arg("in_roa_samples"), py::arg("minimize_max"),
+            py::arg("search_options"))
+        .def(
+            "SearchLagrangian",
+            [](const Class& self, const symbolic::Polynomial& V, double rho,
+                int lambda0_degree, const std::vector<int>& l_degrees,
+                const std::vector<int>& p_degrees, double deriv_eps,
+                const Class::SearchOptions& search_options,
+                std::optional<bool> always_write_sol) {
+              symbolic::Polynomial lambda0;
+              VectorX<symbolic::Polynomial> l;
+              VectorX<symbolic::Polynomial> p;
+              bool success = self.SearchLagrangian(V, rho, lambda0_degree,
+                  l_degrees, p_degrees, deriv_eps, search_options,
+                  always_write_sol, &lambda0, &l, &p);
+              return std::make_tuple(success, lambda0, l, p);
+            },
+            py::arg("V"), py::arg("rho"), py::arg("lambda0_degree"),
+            py::arg("l_degrees"), py::arg("p_degrees"), py::arg("deriv_eps"),
+            py::arg("search_options"), py::arg("always_write_sol"));
   }
 
   {
@@ -870,6 +1069,45 @@ Parameter ``interruptible``:
             py::arg("poly_type") = analysis::SlackPolynomialType::kSos)
         .def_readwrite("degree", &analysis::SlackPolynomialInfo::degree)
         .def_readwrite("type", &analysis::SlackPolynomialInfo::type);
+
+    py::class_<analysis::FindCandidateRegionalLyapunovReturn>(
+        m, "FindCandidateRegionalLyapunovReturn")
+        .def(
+            "prog",
+            [](const analysis::FindCandidateRegionalLyapunovReturn& self) {
+              return self.prog.get();
+            },
+            pybind11::return_value_policy::reference)
+        .def_readonly("V", &analysis::FindCandidateRegionalLyapunovReturn::V)
+        .def_readonly("positivity_cin_lagrangian",
+            &analysis::FindCandidateRegionalLyapunovReturn::
+                positivity_cin_lagrangian)
+        .def_readonly("positivity_ceq_lagrangian",
+            &analysis::FindCandidateRegionalLyapunovReturn::
+                positivity_ceq_lagrangian)
+        .def_readonly("derivative_cin_lagrangian",
+            &analysis::FindCandidateRegionalLyapunovReturn::
+                derivative_cin_lagrangian)
+        .def_readonly("derivative_ceq_lagrangian",
+            &analysis::FindCandidateRegionalLyapunovReturn::
+                derivative_ceq_lagrangian)
+        .def_readonly("positivity_sos_condition",
+            &analysis::FindCandidateRegionalLyapunovReturn::
+                positivity_sos_condition)
+        .def_readonly("derivative_sos_condition",
+            &analysis::FindCandidateRegionalLyapunovReturn::
+                derivative_sos_condition);
+
+    m.def("FindCandidateRegionalLyapunov",
+        &analysis::FindCandidateRegionalLyapunov, py::arg("x"),
+        py::arg("dynamics"), py::arg("dynamics_denominator"),
+        py::arg("V_degree"), py::arg("positivity_eps"), py::arg("d"),
+        py::arg("deriv_eps"), py::arg("state_eq_constraints"),
+        py::arg("positivity_ceq_lagrangian_degrees"),
+        py::arg("derivative_ceq_lagrangian_degrees"),
+        py::arg("state_ineq_constraints"),
+        py::arg("positivity_cin_lagrangian_degrees"),
+        py::arg("derivative_cin_lagrangian_degrees"));
   }
 
   {

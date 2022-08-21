@@ -119,7 +119,7 @@ def SearchWTrigDynamics():
     p_degrees = [4]
 
     deriv_eps = 0.1
-    maximize_init_rho = False 
+    maximize_init_rho = True
     if maximize_init_rho:
         # Maximize rho such that V(x) <= rho defines a valid ROA.
         d_degree = int(lambda0_degree / 2) + 1
@@ -143,8 +143,8 @@ def SearchWTrigDynamics():
 
     search_options = analysis.ControlLyapunov.SearchOptions()
     search_options.d_converge_tol = 0.
-    search_options.bilinear_iterations = 1
-    search_options.lyap_step_backoff_scale = 0.01
+    search_options.bilinear_iterations = 15
+    search_options.lyap_step_backoff_scale = 0.015
     search_options.lsol_tiny_coeff_tol = 1E-8
     search_options.lyap_tiny_coeff_tol = 1E-8
     search_options.lagrangian_step_solver_options = mp.SolverOptions()

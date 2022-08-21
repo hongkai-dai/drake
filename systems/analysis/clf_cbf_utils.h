@@ -288,16 +288,18 @@ enum class SlackPolynomialType {
 
 struct SlackPolynomialInfo {
   SlackPolynomialInfo(int m_degree,
-                      SlackPolynomialType m_type = SlackPolynomialType::kSos)
-      : degree{m_degree}, type{m_type} {}
-
-  int degree;
-  SlackPolynomialType type;
+                      SlackPolynomialType m_type = SlackPolynomialType::kSos,
+                      double m_cost_weight = 1.)
+      : degree{m_degree}, type{m_type}, cost_weight{m_cost_weight} {}
 
   void AddToProgram(solvers::MathematicalProgram* prog,
                     const symbolic::Variables& x, const std::string& gram_name,
                     symbolic::Polynomial* a,
                     MatrixX<symbolic::Expression>* a_gram) const;
+
+  int degree;
+  SlackPolynomialType type;
+  double cost_weight;
 };
 
 Eigen::MatrixXd GetGramSolution(

@@ -165,7 +165,7 @@ ControlBarrier::LagrangianReturn ControlBarrier::ConstructLagrangianProgram(
     a_info->AddToProgram(ret.prog.get(), x_set_, "a", &(ret.a.value()),
                          &(ret.a_gram.value()));
     // Minimize trace(a_gram);
-    ret.prog->AddLinearCost(ret.a_gram->trace());
+    ret.prog->AddLinearCost(ret.a_gram->trace() * a_info->cost_weight);
   }
   this->AddControlBarrierConstraint(ret.prog.get(), ret.lambda0, ret.lambda1,
                                     ret.l, ret.state_constraints_lagrangian, h,
@@ -204,7 +204,7 @@ ControlBarrier::UnsafeReturn ControlBarrier::ConstructUnsafeRegionProgram(
     ret.a_gram.emplace(MatrixX<symbolic::Expression>());
     a_info->AddToProgram(ret.prog.get(), x_set_, "a", &(ret.a.value()),
                          &(ret.a_gram.value()));
-    ret.prog->AddLinearCost(ret.a_gram->trace());
+    ret.prog->AddLinearCost(ret.a_gram->trace() * a_info->cost_weight);
   }
   ret.sos_poly = (1 + ret.t) * (-h) + ret.s.dot(unsafe_regions_[region_index]) -
                  ret.state_constraints_lagrangian.dot(state_eq_constraints_);
@@ -636,12 +636,12 @@ ControlBarrier::SearchWithSlackAResult ControlBarrier::SearchWithSlackA(
       // Now add the cost
       symbolic::Expression cost_expr = 0;
       if (hdot_a_info_search.has_value()) {
-        cost_expr += search_options.hdot_a_cost_weight *
-                     barrier_ret.hdot_a_gram->trace();
+        cost_expr +=
+            hdot_a_info_search->cost_weight * barrier_ret.hdot_a_gram->trace();
       }
       for (int i = 0; i < static_cast<int>(unsafe_regions_.size()); ++i) {
         if (unsafe_a_info_search[i].has_value()) {
-          cost_expr += search_options.unsafe_a_cost_weight[i] *
+          cost_expr += unsafe_a_info_search[i]->cost_weight *
                        barrier_ret.unsafe_a_gram[i]->trace();
         }
       }

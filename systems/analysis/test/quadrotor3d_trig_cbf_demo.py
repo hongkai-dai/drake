@@ -49,7 +49,7 @@ def Search(
 
     #h_init = sym.Polynomial((x[4] - 0.5) ** 2 + x[5] **
     #                        2 + x[6] ** 2 + 0.01 * x[7:].dot(x[7:]) - 0.07)
-    with open("quadrotor3d_trig_cbf7.pickle", "rb") as input_file:
+    with open("quadrotor3d_trig_cbf12.pickle", "rb") as input_file:
        h_init = clf_cbf_utils.deserialize_polynomial(
            x_set, pickle.load(input_file)["h"])
 
@@ -68,31 +68,37 @@ def Search(
 
     if with_slack_a:
         hdot_a_info = analysis.SlackPolynomialInfo(
-            degree=6, poly_type=analysis.SlackPolynomialType.kSos)
+            degree=6, poly_type=analysis.SlackPolynomialType.kSos,
+            cost_weight=1.)
 
     t_degrees = [0]
     s_degrees = [[h_degree - 2]]
     unsafe_eq_lagrangian_degrees = [[h_degree - 2]]
     if with_slack_a:
-        unsafe_a_info = [analysis.SlackPolynomialInfo(
-            degree=h_degree, poly_type=analysis.SlackPolynomialType.kSos)]
+        #unsafe_a_info = [analysis.SlackPolynomialInfo(
+        #    degree=h_degree, poly_type=analysis.SlackPolynomialType.kSos,
+        #    cost_weight=1.)]
+        unsafe_a_info = [None]
     h_x_safe_min = np.array([0.01] * x_safe.shape[1])
 
     if with_slack_a:
-        hdot_a_zero_tol = 3E-9
+        hdot_a_zero_tol = 1E-9
         unsafe_a_zero_tol = 1E-8
         search_options = analysis.ControlBarrier.SearchWithSlackAOptions(
-            hdot_a_zero_tol, unsafe_a_zero_tol, use_zero_a=True,
-            hdot_a_cost_weight=1., unsafe_a_cost_weight=[1., 1.])
-        search_options.bilinear_iterations = 3
+            hdot_a_zero_tol, unsafe_a_zero_tol, use_zero_a=True)
+        search_options.bilinear_iterations = 10
         search_options.lagrangian_step_solver_options = mp.SolverOptions()
         search_options.lagrangian_step_solver_options.SetOption(
             mp.CommonSolverOption.kPrintToConsole, 1)
+        search_options.lagrangian_step_solver_options.SetOption(
+            MosekSolver().id(), "MSK_DPAR_INTPNT_CO_TOL_REL_GAP", 1E-9)
         search_options.barrier_step_solver_options = mp.SolverOptions()
         search_options.barrier_step_solver_options.SetOption(
             mp.CommonSolverOption.kPrintToConsole, 1)
-        search_options.barrier_step_backoff_scale = 0.015
-        search_options.lagrangian_step_backoff_scale = 0.015
+        search_options.barrier_step_solver_options.SetOption(
+            MosekSolver().id(), "MSK_DPAR_INTPNT_CO_TOL_REL_GAP", 1E-9)
+        search_options.barrier_step_backoff_scale = 0.01
+        search_options.lagrangian_step_backoff_scale = 0.01
         search_options.hsol_tiny_coeff_tol = 1E-6
         search_result = dut.SearchWithSlackA(
             h_init, h_degree, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
@@ -128,7 +134,7 @@ def Search(
             l_degrees, hdot_eq_lagrangian_degrees, t_degrees, s_degrees,
             unsafe_eq_lagrangian_degrees, x_anchor, h_x_anchor_max,
             search_options, ellipsoids, ellipsoid_options)
-    with open("quadrotor3d_trig_cbf8.pickle", "wb") as handle:
+    with open("quadrotor3d_trig_cbf13.pickle", "wb") as handle:
         pickle.dump({
             "h": clf_cbf_utils.serialize_polynomial(search_result.h),
             "beta_plus": beta_plus, "beta_minus": beta_minus,

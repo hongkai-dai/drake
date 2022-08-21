@@ -374,14 +374,10 @@ class ControlBarrier {
 
   struct SearchWithSlackAOptions : public SearchOptions {
     SearchWithSlackAOptions(double m_hdot_a_zero_tol,
-                            double m_unsafe_a_zero_tol, bool m_use_zero_a,
-                            double m_hdot_a_cost_weight,
-                            std::vector<double> m_unsafe_a_cost_weight)
+                            double m_unsafe_a_zero_tol, bool m_use_zero_a)
         : hdot_a_zero_tol(m_hdot_a_zero_tol),
           unsafe_a_zero_tol(m_unsafe_a_zero_tol),
-          use_zero_a(m_use_zero_a),
-          hdot_a_cost_weight{m_hdot_a_cost_weight},
-          unsafe_a_cost_weight{std::move(m_unsafe_a_cost_weight)} {}
+          use_zero_a(m_use_zero_a) {}
 
     // When trace(hdot_a_gram) is smaller than this tolerance, we regard the
     // polynomial hdot_a(x) as 0-polynomial.
@@ -394,11 +390,6 @@ class ControlBarrier {
     // use a(x)=0 afterwards.
     bool use_zero_a;
 
-    // When searching for barrier h(x), the cost of the optimization program is
-    // hdot_a_cost_weight * hdot_a_gram.trace() + ∑ᵢ unsafe_a_cost_weight[i] *
-    // unsafe_a_grams[i].trace()
-    double hdot_a_cost_weight;
-    std::vector<double> unsafe_a_cost_weight;
     double lagrangian_step_backoff_scale{0.};
   };
 

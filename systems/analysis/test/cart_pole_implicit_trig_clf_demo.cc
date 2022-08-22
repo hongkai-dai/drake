@@ -53,12 +53,12 @@ symbolic::Polynomial FindClfInit(
   Eigen::Matrix<double, 5, 1> lqr_Q_diag;
   lqr_Q_diag << 1, 1, 1, 10, 10;
   const Eigen::Matrix<double, 5, 5> lqr_Q = lqr_Q_diag.asDiagonal();
-  const auto lqr_result = SynthesizeTrigLqr(params, lqr_Q, 20);
+  const auto lqr_result = SynthesizeCartpoleTrigLqr(params, lqr_Q, 20);
 
   const symbolic::Expression u_lqr = -lqr_result.K.row(0).dot(x);
   Eigen::Matrix<symbolic::Expression, 5, 1> n_expr;
   symbolic::Expression d_expr;
-  TrigDynamics<symbolic::Expression>(params, x.cast<symbolic::Expression>(),
+  CartpoleTrigDynamics<symbolic::Expression>(params, x.cast<symbolic::Expression>(),
                                      u_lqr, &n_expr, &d_expr);
   Eigen::Matrix<symbolic::Polynomial, 5, 1> dynamics_numerator;
   for (int i = 0; i < 5; ++i) {
@@ -71,7 +71,7 @@ symbolic::Polynomial FindClfInit(
   const int d = V_degree / 2;
   const double deriv_eps = 0.01;
   const Vector1<symbolic::Polynomial> state_eq_constraints(
-      StateEqConstraint(x));
+      CartpoleStateEqConstraint(x));
   const std::vector<int> positivity_ceq_lagrangian_degrees{{V_degree - 2}};
   const std::vector<int> derivative_ceq_lagrangian_degrees{{4}};
   const Vector1<symbolic::Polynomial> state_ineq_constraints(
@@ -209,12 +209,12 @@ void Search(const std::optional<std::string>& load_V_init,
   const Eigen::Matrix<symbolic::Expression, 5, 1> x_expr =
       x.cast<symbolic::Expression>();
   const Matrix2<symbolic::Expression> M_expr =
-      MassMatrix<symbolic::Expression>(params, x_expr);
+      CartpoleMassMatrix<symbolic::Expression>(params, x_expr);
   const Vector2<symbolic::Expression> bias_expr =
-      CalcBiasTerm<symbolic::Expression>(params, x_expr) -
-      CalcGravityVector<symbolic::Expression>(params, x_expr);
+      CalcCartpoleBiasTerm<symbolic::Expression>(params, x_expr) -
+      CalcCartpoleGravityVector<symbolic::Expression>(params, x_expr);
   Eigen::Matrix<symbolic::Polynomial, 5, 1> state_constraints;
-  state_constraints(0) = StateEqConstraint(x);
+  state_constraints(0) = CartpoleStateEqConstraint(x);
   const Vector2<symbolic::Expression> constraint_expr1 =
       M_expr * z1 - Eigen::Vector2d(u_max, 0) / z_factor + bias_expr / z_factor;
   const Vector2<symbolic::Expression> constraint_expr2 =
@@ -382,7 +382,7 @@ void Search(const std::optional<std::string>& load_V_init,
       const int positivity_lagrangian_degree{V_degree - 2};
       symbolic::Polynomial positivity_lagrangian =
           prog.NewFreePolynomial(x_set, positivity_lagrangian_degree);
-      positivity_sos -= positivity_lagrangian * StateEqConstraint(x);
+      positivity_sos -= positivity_lagrangian * CartpoleStateEqConstraint(x);
       prog.AddSosConstraint(positivity_sos);
       // Now add the constraint on Vdot.
       Eigen::Matrix<symbolic::Polynomial, 5, 1> p;
@@ -399,7 +399,7 @@ void Search(const std::optional<std::string>& load_V_init,
       Eigen::Matrix<double, 5, Eigen::Dynamic> x_swingup(5,
                                                          state_swingup.cols());
       for (int i = 0; i < x_swingup.cols(); ++i) {
-        x_swingup.col(i) = ToTrigState<double>(state_swingup.col(i));
+        x_swingup.col(i) = ToCartpoleTrigState<double>(state_swingup.col(i));
       }
       std::cout << "V_init at x_swingup "
                 << V_init.EvaluateIndeterminates(x, x_swingup).transpose()
@@ -413,7 +413,7 @@ void Search(const std::optional<std::string>& load_V_init,
       std::cout << "state samples:\n" << state_samples.transpose() << "\n";
       Eigen::MatrixXd x_samples(5, state_samples.cols());
       for (int i = 0; i < state_samples.cols(); ++i) {
-        x_samples.col(i) = ToTrigState<double>(state_samples.col(i));
+        x_samples.col(i) = ToCartpoleTrigState<double>(state_samples.col(i));
       }
 
       std::optional<Eigen::MatrixXd> in_roa_samples;
@@ -482,7 +482,7 @@ void Search(const std::optional<std::string>& load_V_init,
   }
 
   Eigen::Vector4d state_val = state_swingup.col(13);
-  const Eigen::Matrix<double, 5, 1> x_val = ToTrigState<double>(state_val);
+  const Eigen::Matrix<double, 5, 1> x_val = ToCartpoleTrigState<double>(state_val);
   symbolic::Environment env;
   env.insert(x, x_val);
   const double V_val = V_sol.Evaluate(env);
@@ -502,8 +502,8 @@ void Search(const std::optional<std::string>& load_V_init,
   Eigen::Matrix<double, 5, 1> n_val1;
   Eigen::Matrix<double, 5, 1> n_val2;
   double d_val1, d_val2;
-  TrigDynamics<double>(params, x_val, u_max, &n_val1, &d_val1);
-  TrigDynamics<double>(params, x_val, -u_max, &n_val2, &d_val2);
+  CartpoleTrigDynamics<double>(params, x_val, u_max, &n_val1, &d_val1);
+  CartpoleTrigDynamics<double>(params, x_val, -u_max, &n_val2, &d_val2);
   const Eigen::Matrix<double, 5, 1> xdot_val1 = n_val1 / d_val1;
   const Eigen::Matrix<double, 5, 1> xdot_val2 = n_val2 / d_val2;
   const Eigen::Vector2d z1_val = xdot_val1.tail<2>() / z_factor;

@@ -101,6 +101,8 @@ class ControlLyapunov {
     VectorX<symbolic::Polynomial> l;
     std::vector<MatrixX<symbolic::Variable>> l_grams;
     VectorX<symbolic::Polynomial> p;
+    std::optional<symbolic::Polynomial> a;
+    std::optional<MatrixX<symbolic::Expression>> a_gram;
     symbolic::Polynomial vdot_sos;
     VectorX<symbolic::Monomial> vdot_monomials;
     MatrixX<symbolic::Variable> vdot_gram;
@@ -121,7 +123,8 @@ class ControlLyapunov {
   [[nodiscard]] LagrangianReturn ConstructLagrangianProgram(
       const symbolic::Polynomial& V, double rho, double deriv_eps,
       int lambda0_degree, const std::vector<int>& l_degrees,
-      const std::vector<int>& p_degrees) const;
+      const std::vector<int>& p_degrees,
+      std::optional<SlackPolynomialInfo> a_info) const;
 
   struct LagrangianMaxRhoReturn {
     LagrangianMaxRhoReturn()
@@ -167,6 +170,8 @@ class ControlLyapunov {
     symbolic::Polynomial V;
     VectorX<symbolic::Polynomial> positivity_eq_lagrangian;
     VectorX<symbolic::Polynomial> p;
+    std::optional<symbolic::Polynomial> a;
+    std::optional<MatrixX<symbolic::Expression>> a_gram;
   };
 
   /**
@@ -184,7 +189,8 @@ class ControlLyapunov {
       const VectorX<symbolic::Polynomial>& l, int V_degree, double rho,
       double positivity_eps, int positivity_d,
       const std::vector<int>& positivity_eq_lagrangian_degrees,
-      const std::vector<int>& p_degrees, double deriv_eps) const;
+      const std::vector<int>& p_degrees, double deriv_eps,
+      std::optional<SlackPolynomialInfo> a_info) const;
 
   struct SearchOptions {
     solvers::SolverId lyap_step_solver{solvers::MosekSolver::id()};
@@ -321,6 +327,33 @@ class ControlLyapunov {
                       bool minimize_max,
                       const SearchOptions& search_options) const;
 
+  struct SearchWithSlackAResult : public SearchResult {
+    symbolic::Polynomial a;
+    Eigen::MatrixXd a_gram;
+  };
+
+  struct SearchWithSlackAOptions : public SearchOptions {
+    double a_zero_tol{0};
+    double lagrangian_step_backoff_scale{0.};
+  };
+
+  /**
+   * Minimize a(x) subject to
+   * (1+λ(x))xᵀx(V−ρ) − ∑ᵢ lᵢ(x)(∂V/∂x*f(x)+∂V/∂x*G(x)uᵢ+εV) + a(x) >= 0
+   * V(x) >= ε(xᵀx)ᵈ
+   * λ(x) is sos. lᵢ(x) is sos
+   * through bilinear alternation.
+   */
+  [[nodiscard]] SearchWithSlackAResult SearchWithSlackA(
+      const symbolic::Polynomial& V_init, int lambda0_degree,
+      const std::vector<int>& l_degrees, int V_degree, double positivity_eps,
+      int positivity_d,
+      const std::vector<int>& positivity_eq_lagrangian_degrees,
+      const std::vector<int>& p_degrees, double deriv_eps,
+      const std::optional<Eigen::MatrixXd>& in_roa_samples, 
+      SlackPolynomialInfo a_info,
+      const SearchWithSlackAOptions& search_options) const;
+
   [[nodiscard]] const VectorX<symbolic::Variable>& x() const { return x_; }
 
   [[nodiscard]] const VectorX<symbolic::Polynomial>& f() const { return f_; }
@@ -331,14 +364,22 @@ class ControlLyapunov {
     return u_vertices_;
   }
 
-  bool SearchLagrangian(const symbolic::Polynomial& V, double rho,
-                        int lambda0_degree, const std::vector<int>& l_degrees,
-                        const std::vector<int>& p_degrees, double deriv_eps,
-                        const SearchOptions& search_options,
-                        std::optional<bool> always_write_sol,
-                        symbolic::Polynomial* lambda0,
-                        VectorX<symbolic::Polynomial>* l,
-                        VectorX<symbolic::Polynomial>* p) const;
+  struct SearchLagrangianResult {
+    bool success;
+    symbolic::Polynomial lambda0;
+    VectorX<symbolic::Polynomial> l;
+    VectorX<symbolic::Polynomial> p;
+    std::optional<symbolic::Polynomial> a;
+    std::optional<Eigen::MatrixXd> a_gram;
+  };
+
+  SearchLagrangianResult SearchLagrangian(
+      const symbolic::Polynomial& V, double rho, int lambda0_degree,
+      const std::vector<int>& l_degrees, const std::vector<int>& p_degrees,
+      double deriv_eps, const SearchOptions& search_options,
+      std::optional<bool> always_write_sol,
+      std::optional<SlackPolynomialInfo> a_info,
+      std::optional<double> backoff_scale) const;
 
   /**
    * Fix V, find rho through binary search such that V(x)<=rho satisfies the

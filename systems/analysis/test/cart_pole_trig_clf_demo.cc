@@ -57,11 +57,11 @@ const double kInf = std::numeric_limits<double>::infinity();
   Eigen::Matrix<double, 5, 1> lqr_Q_diag;
   lqr_Q_diag << 1, 1, 1, 10, 10;
   const Eigen::Matrix<double, 5, 5> lqr_Q = lqr_Q_diag.asDiagonal();
-  const auto lqr_result = SynthesizeTrigLqr(params, lqr_Q, 20);
+  const auto lqr_result = SynthesizeCartpoleTrigLqr(params, lqr_Q, 20);
   const symbolic::Expression u_lqr = -lqr_result.K.row(0).dot(x);
   Eigen::Matrix<symbolic::Expression, 5, 1> n_expr;
   symbolic::Expression d_expr;
-  TrigDynamics<symbolic::Expression>(params, x.cast<symbolic::Expression>(),
+  CartpoleTrigDynamics<symbolic::Expression>(params, x.cast<symbolic::Expression>(),
                                      u_lqr, &n_expr, &d_expr);
   Eigen::Matrix<symbolic::Polynomial, 5, 1> dynamics_numerator;
   for (int i = 0; i < 5; ++i) {
@@ -74,7 +74,7 @@ const double kInf = std::numeric_limits<double>::infinity();
   const int d = V_degree / 2;
   const double deriv_eps = 0.01;
   const Vector1<symbolic::Polynomial> state_eq_constraints(
-      StateEqConstraint(x));
+      CartpoleStateEqConstraint(x));
   const std::vector<int> positivity_ceq_lagrangian_degrees{{V_degree - 2}};
   const std::vector<int> derivative_ceq_lagrangian_degrees{{4}};
   const Vector1<symbolic::Polynomial> state_ineq_constraints(
@@ -112,7 +112,7 @@ const double kInf = std::numeric_limits<double>::infinity();
   Eigen::Matrix<double, 5, 1> lqr_Q_diag;
   lqr_Q_diag << 1, 1, 1, 10, 10;
   const Eigen::Matrix<double, 5, 5> lqr_Q = lqr_Q_diag.asDiagonal();
-  const auto lqr_result = SynthesizeTrigLqr(params, lqr_Q, 10);
+  const auto lqr_result = SynthesizeCartpoleTrigLqr(params, lqr_Q, 10);
   const Vector1<symbolic::Polynomial> u_lqr(symbolic::Polynomial(
       -lqr_result.K.row(0).dot(x), symbolic::Variables(x)));
 
@@ -123,13 +123,13 @@ const double kInf = std::numeric_limits<double>::infinity();
   TrigPolyDynamics(params, x, &f, &G, &dynamics_numerator);
   Eigen::Matrix<double, 1, 1> R(10);
   const symbolic::Polynomial l(x.cast<symbolic::Expression>().dot(lqr_Q * x));
-  const Vector1<symbolic::Polynomial> state_constraints(StateEqConstraint(x));
+  const Vector1<symbolic::Polynomial> state_constraints(CartpoleStateEqConstraint(x));
   const HjbUpper dut(x, l, R, f, G, dynamics_numerator, state_constraints);
   Eigen::MatrixXd state_samples =
       Eigen::MatrixXd::Random(4, 1000) * 0.1 + Eigen::Vector4d(0, M_PI, 0, 0);
   Eigen::Matrix<double, 5, Eigen::Dynamic> x_samples(5, state_samples.cols());
   for (int i = 0; i < state_samples.cols(); ++i) {
-    x_samples.col(i) = ToTrigState<double>(state_samples.col(i));
+    x_samples.col(i) = ToCartpoleTrigState<double>(state_samples.col(i));
   }
   int J_degree = 2;
   Vector1<symbolic::Polynomial> cin(
@@ -172,7 +172,7 @@ const double kInf = std::numeric_limits<double>::infinity();
 //  Eigen::Matrix<symbolic::Polynomial, 5, 1> G;
 //  symbolic::Polynomial dynamics_denominator;
 //  TrigPolyDynamics(params, x, &f, &G, &dynamics_denominator);
-//  const Vector1<symbolic::Polynomial> state_constraints(StateEqConstraint(x));
+//  const Vector1<symbolic::Polynomial> state_constraints(CartpoleStateEqConstraint(x));
 //  const ControlLyapunovNoInputBound dut(x, f, G, dynamics_denominator,
 //                                        state_constraints);
 //  const symbolic::Variables x_set(x);
@@ -212,7 +212,7 @@ const double kInf = std::numeric_limits<double>::infinity();
 //  SwingUpTrajectoryOptimization(&state_swingup, &control_swingup);
 //  Eigen::Matrix<double, 5, Eigen::Dynamic> x_swingup(5, state_swingup.cols());
 //  for (int i = 0; i < state_swingup.cols(); ++i) {
-//    x_swingup.col(i) = ToTrigState<double>(state_swingup.col(i));
+//    x_swingup.col(i) = ToCartpoleTrigState<double>(state_swingup.col(i));
 //  }
 //  drake::log()->info("Before bilinear alternation, V(x_swingup)={}",
 //                     V_sol.EvaluateIndeterminates(x, x_swingup).transpose());
@@ -346,12 +346,12 @@ const double kInf = std::numeric_limits<double>::infinity();
 //    const Eigen::Matrix<symbolic::Variable, 5, 1>& x, double u_max,
 //    double deriv_eps, const std::string& load_V_init,
 //    const std::string& save_V) {
-//  const Vector1<symbolic::Polynomial> state_constraints(StateEqConstraint(x));
+//  const Vector1<symbolic::Polynomial> state_constraints(CartpoleStateEqConstraint(x));
 //  const Eigen::RowVector2d u_vertices(-u_max, u_max);
 //  Eigen::Matrix<symbolic::Polynomial, 5, 1> f;
 //  Eigen::Matrix<symbolic::Polynomial, 5, 1> G;
 //  symbolic::Polynomial dynamics_denominator;
-//  TrigPolyDynamics(params, x, &f, &G, &dynamics_denominator);
+//  CartpoleTrigPolyDynamics(params, x, &f, &G, &dynamics_denominator);
 //  const ControlLyapunov dut(x, f, G, dynamics_denominator, u_vertices,
 //                            state_constraints);
 //
@@ -360,14 +360,14 @@ const double kInf = std::numeric_limits<double>::infinity();
 //  SwingUpTrajectoryOptimization(&state_swingup, &control_swingup);
 //  Eigen::MatrixXd x_swingup(5, state_swingup.cols());
 //  for (int i = 0; i < x_swingup.cols(); ++i) {
-//    x_swingup.col(i) = ToTrigState<double>(state_swingup.col(i));
+//    x_swingup.col(i) = ToCartpoleTrigState<double>(state_swingup.col(i));
 //  }
 //  Eigen::MatrixXd in_roa_state(4, 2);
 //  in_roa_state.col(0) = state_swingup.col(12);
 //  in_roa_state.col(1) = state_swingup.col(13);
 //  Eigen::MatrixXd in_roa_x(5, in_roa_state.cols());
 //  for (int i = 0; i < in_roa_state.cols(); ++i) {
-//    in_roa_x.col(i) = ToTrigState<double>(in_roa_state.col(i));
+//    in_roa_x.col(i) = ToCartpoleTrigState<double>(in_roa_state.col(i));
 //  }
 //
 //  const symbolic::Variables x_set{x};
@@ -407,7 +407,7 @@ const double kInf = std::numeric_limits<double>::infinity();
 //    Eigen::MatrixXd theta_monte_carlo_x(5, theta_monte_carlo_state.cols());
 //    for (int i = 0; i < theta_monte_carlo_x.cols(); ++i) {
 //      theta_monte_carlo_x.col(i) =
-//          ToTrigState<double>(theta_monte_carlo_state.col(i));
+//          ToCartpoleTrigState<double>(theta_monte_carlo_state.col(i));
 //    }
 //
 //    auto cost = OptimizePolynomialAtSamples(
@@ -594,7 +594,7 @@ symbolic::Polynomial SearchWTrigDynamics(
   symbolic::Polynomial dynamics_denominator;
   TrigPolyDynamics(params, x, &f, &G, &dynamics_denominator);
 
-  const Vector1<symbolic::Polynomial> state_constraints(StateEqConstraint(x));
+  const Vector1<symbolic::Polynomial> state_constraints(CartpoleStateEqConstraint(x));
   const Eigen::RowVector2d u_vertices(-u_max, u_max);
   const ControlLyapunov dut(x, f, G, dynamics_denominator, u_vertices,
                             state_constraints);
@@ -612,7 +612,7 @@ symbolic::Polynomial SearchWTrigDynamics(
     rho_sol = 1;
     std::cout << "V_init(x_bottom): "
               << V_init.EvaluateIndeterminates(
-                     x, ToTrigState<double>(Eigen::Vector4d::Zero()))
+                     x, ToCartpoleTrigState<double>(Eigen::Vector4d::Zero()))
               << "\n";
   } else {
     V_init = FindClfInit(params, V_degree, x);
@@ -665,7 +665,7 @@ symbolic::Polynomial SearchWTrigDynamics(
   std::cout << "state_swingup\n" << state_swingup.transpose() << "\n";
   Eigen::Matrix<double, 5, Eigen::Dynamic> x_swingup(5, state_swingup.cols());
   for (int i = 0; i < x_swingup.cols(); ++i) {
-    x_swingup.col(i) = ToTrigState<double>(state_swingup.col(i));
+    x_swingup.col(i) = ToCartpoleTrigState<double>(state_swingup.col(i));
   }
   symbolic::Polynomial V_sol;
   {
@@ -707,7 +707,7 @@ symbolic::Polynomial SearchWTrigDynamics(
       const double size_max = 0.5;
       const double size_tol = 0.001;
       const std::vector<int> ellipsoid_eq_lagrangian_degrees{{V_degree - 2}};
-      const Eigen::Matrix<double, 5, 1> x_star = ToTrigState<double>(
+      const Eigen::Matrix<double, 5, 1> x_star = ToCartpoleTrigState<double>(
           0.55 * state_swingup.col(12) +
           0.45 * state_swingup.col(13));  // x_swingup.col(16);
       Eigen::Matrix<double, 5, 5> S;
@@ -742,7 +742,7 @@ symbolic::Polynomial SearchWTrigDynamics(
       std::cout << "state samples:\n" << state_samples.transpose() << "\n";
       Eigen::MatrixXd x_samples(5, state_samples.cols());
       for (int i = 0; i < state_samples.cols(); ++i) {
-        x_samples.col(i) = ToTrigState<double>(state_samples.col(i));
+        x_samples.col(i) = ToCartpoleTrigState<double>(state_samples.col(i));
       }
 
       std::optional<Eigen::MatrixXd> in_roa_samples;

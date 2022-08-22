@@ -24,7 +24,7 @@ struct CartPoleParams {
 };
 
 template <typename T>
-Eigen::Matrix<T, 5, 1> ToTrigState(
+Eigen::Matrix<T, 5, 1> ToCartpoleTrigState(
     const Eigen::Ref<const Eigen::Matrix<T, 4, 1>>& x_orig) {
   Eigen::Matrix<T, 5, 1> x_trig;
   x_trig(0) = x_orig(0);
@@ -38,7 +38,7 @@ Eigen::Matrix<T, 5, 1> ToTrigState(
 }
 
 template <typename T>
-Matrix2<T> MassMatrix(const CartPoleParams& params,
+Matrix2<T> CartpoleMassMatrix(const CartPoleParams& params,
                       const Eigen::Ref<const Eigen::Matrix<T, 5, 1>>& x) {
   const T c = x(2) - 1;
   Matrix2<T> M;
@@ -48,7 +48,7 @@ Matrix2<T> MassMatrix(const CartPoleParams& params,
 }
 
 template <typename T>
-Vector2<T> CalcBiasTerm(const CartPoleParams& params,
+Vector2<T> CalcCartpoleBiasTerm(const CartPoleParams& params,
                         const Eigen::Ref<const Eigen::Matrix<T, 5, 1>>& x) {
   const T s = x(1);
   // C*v
@@ -57,7 +57,7 @@ Vector2<T> CalcBiasTerm(const CartPoleParams& params,
 }
 
 template <typename T>
-Vector2<T> CalcGravityVector(
+Vector2<T> CalcCartpoleGravityVector(
     const CartPoleParams& params,
     const Eigen::Ref<const Eigen::Matrix<T, 5, 1>>& x) {
   const T& s = x(1);
@@ -65,10 +65,10 @@ Vector2<T> CalcGravityVector(
 }
 
 template <typename T>
-void TrigDynamics(const CartPoleParams& params,
+void CartpoleTrigDynamics(const CartPoleParams& params,
                   const Eigen::Ref<const Eigen::Matrix<T, 5, 1>>& x, const T& u,
                   Eigen::Matrix<T, 5, 1>* n, T* d) {
-  const Matrix2<T> M = MassMatrix<T>(params, x);
+  const Matrix2<T> M = CartpoleMassMatrix<T>(params, x);
   *d = M(0, 0) * M(1, 1) - M(1, 0) * M(0, 1);
   const T s = x(1);
   const T c = x(2) - 1;
@@ -78,8 +78,8 @@ void TrigDynamics(const CartPoleParams& params,
   Matrix2<T> M_adj;
   M_adj << M(1, 1), -M(1, 0), -M(0, 1), M(0, 0);
   n->template tail<2>() =
-      M_adj * (Vector2<T>(u, 0) + CalcGravityVector<T>(params, x) -
-               CalcBiasTerm<T>(params, x));
+      M_adj * (Vector2<T>(u, 0) + CalcCartpoleGravityVector<T>(params, x) -
+               CalcCartpoleBiasTerm<T>(params, x));
 }
 
 void TrigPolyDynamics(
@@ -88,10 +88,10 @@ void TrigPolyDynamics(
     Eigen::Matrix<symbolic::Polynomial, 5, 1>* f,
     Eigen::Matrix<symbolic::Polynomial, 5, 1>* G, symbolic::Polynomial* d);
 
-symbolic::Polynomial StateEqConstraint(
+symbolic::Polynomial CartpoleStateEqConstraint(
     const Eigen::Ref<const Eigen::Matrix<symbolic::Variable, 5, 1>>& x);
 
-controllers::LinearQuadraticRegulatorResult SynthesizeTrigLqr(
+controllers::LinearQuadraticRegulatorResult SynthesizeCartpoleTrigLqr(
     const CartPoleParams& params,
     const Eigen::Ref<const Eigen::Matrix<double, 5, 5>>& Q, double R);
 
@@ -103,15 +103,15 @@ Vector3<T> CalcQdot(const Eigen::Ref<const Eigen::Matrix<T, 5, 1>>& x) {
 }
 
 template <typename T>
-class ToTrigStateConverter : public LeafSystem<T> {
+class CartpoleTrigStateConverter : public LeafSystem<T> {
  public:
-  ToTrigStateConverter();
+  CartpoleTrigStateConverter();
 
   template <typename U>
-  explicit ToTrigStateConverter(const ToTrigStateConverter<U>&)
-      : ToTrigStateConverter<T>() {}
+  explicit CartpoleTrigStateConverter(const CartpoleTrigStateConverter<U>&)
+      : CartpoleTrigStateConverter<T>() {}
 
-  ~ToTrigStateConverter(){};
+  ~CartpoleTrigStateConverter(){};
 
  private:
   void CalcTrigState(const Context<T>& context, BasicVector<T>* x_trig) const;

@@ -20,6 +20,7 @@ drake_cc_package_library(
         ":antiderivative_function",
         ":batch_eval",
         ":bogacki_shampine3_integrator",
+        ":cart_pole",
         ":control_lyapunov",
         ":control_barrier",
         ":dense_output",

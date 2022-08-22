@@ -22,6 +22,7 @@
 #include "drake/systems/analysis/simulator_python_internal.h"
 #include "drake/systems/analysis/test/quadrotor.h"
 #include "drake/systems/analysis/test/quadrotor2d.h"
+#include "drake/systems/analysis/test/cart_pole.h"
 
 using std::unique_ptr;
 
@@ -234,6 +235,11 @@ PYBIND11_MODULE(analysis, m) {
             &analysis::Quadrotor2dTrigPlant<T>::get_actuation_input_port,
             py_rvp::reference_internal,
             doc.analysis.Quadrotor2dTrigPlant.get_actuation_input_port.doc);
+
+    DefineTemplateClassWithDefault<analysis::CartpoleTrigStateConverter<T>,
+        LeafSystem<T>>(m, "CartpoleTrigStateConverter", GetPyParam<T>(),
+        doc.analysis.CartpoleTrigStateConverter.doc)
+        .def(py::init<>(), doc.analysis.CartpoleTrigStateConverter.ctor.doc);
 
     DefineTemplateClassWithDefault<analysis::Quadrotor2dTrigStateConverter<T>,
         LeafSystem<T>>(m, "Quadrotor2dTrigStateConverter", GetPyParam<T>(),
@@ -551,13 +557,14 @@ Parameter ``interruptible``:
         [](const Class& self, const symbolic::Polynomial& V, double rho,
             double deriv_eps, int lambda0_degree,
             const std::vector<int>& l_degrees,
-            const std::vector<int>& p_degrees) {
+            const std::vector<int>& p_degrees,
+            std::optional<analysis::SlackPolynomialInfo> a_info) {
           return self.ConstructLagrangianProgram(
-              V, rho, deriv_eps, lambda0_degree, l_degrees, p_degrees);
+              V, rho, deriv_eps, lambda0_degree, l_degrees, p_degrees, a_info);
         },
         py::arg("V"), py::arg("rho"), py::arg("deriv_eps"),
         py::arg("lambda0_degree"), py::arg("l_degrees"), py::arg("p_degrees"),
-        cls_doc.ConstructLagrangianProgram.doc);
+        py::arg("a_info"), cls_doc.ConstructLagrangianProgram.doc);
 
     py::class_<analysis::ControlLyapunov::LagrangianMaxRhoReturn>(
         m, "LagrangianMaxRhoReturn")
@@ -599,7 +606,7 @@ Parameter ``interruptible``:
         &Class::ConstructLyapunovProgram, py::arg("lambda0"), py::arg("l"),
         py::arg("V_degree"), py::arg("rho"), py::arg("positivity_eps"),
         py::arg("positivity_d"), py::arg("positivity_eq_lagrangian_degrees"),
-        py::arg("p_degrees"), py::arg("deriv_eps"),
+        py::arg("p_degrees"), py::arg("deriv_eps"), py::arg("a_info"),
         cls_doc.ConstructLyapunovProgram.doc);
 
     py::class_<Class::SearchOptions>(control_lyapunov, "SearchOptions")
@@ -709,25 +716,43 @@ Parameter ``interruptible``:
             py::arg("positivity_eq_lagrangian_degrees"), py::arg("p_degrees"),
             py::arg("deriv_eps"), py::arg("x_samples"),
             py::arg("in_roa_samples"), py::arg("minimize_max"),
-            py::arg("search_options"))
-        .def(
-            "SearchLagrangian",
-            [](const Class& self, const symbolic::Polynomial& V, double rho,
-                int lambda0_degree, const std::vector<int>& l_degrees,
-                const std::vector<int>& p_degrees, double deriv_eps,
-                const Class::SearchOptions& search_options,
-                std::optional<bool> always_write_sol) {
-              symbolic::Polynomial lambda0;
-              VectorX<symbolic::Polynomial> l;
-              VectorX<symbolic::Polynomial> p;
-              bool success = self.SearchLagrangian(V, rho, lambda0_degree,
-                  l_degrees, p_degrees, deriv_eps, search_options,
-                  always_write_sol, &lambda0, &l, &p);
-              return std::make_tuple(success, lambda0, l, p);
-            },
-            py::arg("V"), py::arg("rho"), py::arg("lambda0_degree"),
-            py::arg("l_degrees"), py::arg("p_degrees"), py::arg("deriv_eps"),
-            py::arg("search_options"), py::arg("always_write_sol"));
+            py::arg("search_options"));
+
+    py::class_<Class::SearchWithSlackAResult, Class::SearchResult>(
+        control_lyapunov, "SearchWithSlackAResult")
+        .def(py::init<>())
+        .def_readwrite("a", &Class::SearchWithSlackAResult::a)
+        .def_readwrite("a_gram", &Class::SearchWithSlackAResult::a_gram);
+
+    py::class_<Class::SearchWithSlackAOptions, Class::SearchOptions>(
+        control_lyapunov, "SearchWithSlackAOptions")
+        .def(py::init<>())
+        .def_readwrite(
+            "a_zero_tol", &Class::SearchWithSlackAOptions::a_zero_tol)
+        .def_readwrite("lagrangian_step_backoff_scale",
+            &Class::SearchWithSlackAOptions::lagrangian_step_backoff_scale);
+
+    control_lyapunov.def("SearchWithSlackA", &Class::SearchWithSlackA,
+        py::arg("V_init"), py::arg("lambda0_degree"), py::arg("l_degrees"),
+        py::arg("V_degree"), py::arg("positivity_eps"), py::arg("positivity_d"),
+        py::arg("positivity_eq_lagrangian_degrees"), py::arg("p_degrees"),
+        py::arg("deriv_eps"), py::arg("in_roa_samples"), py::arg("a_info"),
+        py::arg("search_options"));
+
+    py::class_<Class::SearchLagrangianResult>(
+        control_lyapunov, "SearchLagrangianResult")
+        .def_readonly("success", &Class::SearchLagrangianResult::success)
+        .def_readonly("lambda0", &Class::SearchLagrangianResult::lambda0)
+        .def_readonly("l", &Class::SearchLagrangianResult::l)
+        .def_readonly("p", &Class::SearchLagrangianResult::p)
+        .def_readonly("a", &Class::SearchLagrangianResult::a)
+        .def_readonly("a_gram", &Class::SearchLagrangianResult::a_gram);
+
+    control_lyapunov.def("SearchLagrangian", &Class::SearchLagrangian,
+        py::arg("V"), py::arg("rho"), py::arg("lambda0_degree"),
+        py::arg("l_degrees"), py::arg("p_degrees"), py::arg("deriv_eps"),
+        py::arg("search_options"), py::arg("always_write_sol"),
+        py::arg("a_info"), py::arg("backoff_scale"));
   }
 
   {
@@ -1053,6 +1078,19 @@ Parameter ``interruptible``:
             pydrake_doc.drake.systems.analysis.MaximizeInnerEllipsoidSize
                 .doc_14args);
 
+    py::enum_<analysis::BilinearIterationStatus>(m, "BilinearIterationStatus")
+        .value("kIterationLimit", analysis::kIterationLimit)
+        .value("kFailLagrangian", analysis::kFailLagrangian)
+        .value("kFailLyapunov", analysis::kFailLyapunov)
+        .value("kInsufficientDecrease", analysis::kInsufficientDecrease)
+        .value("kUnknown", analysis::kUnknown);
+
+    py::class_<analysis::SearchResultDetails>(m, "SearchResultDetails")
+        .def_readonly("num_bilinear_iterations",
+            &analysis::SearchResultDetails::num_bilinear_iterations)
+        .def_readonly("bilinear_iteration_status",
+            &analysis::SearchResultDetails::bilinear_iteration_status);
+
     py::enum_<analysis::SlackPolynomialType>(m, "SlackPolynomialType")
         .value("kSos", analysis::SlackPolynomialType::kSos)
         .value("kSquare", analysis::SlackPolynomialType::kSquare)
@@ -1106,6 +1144,90 @@ Parameter ``interruptible``:
         py::arg("state_ineq_constraints"),
         py::arg("positivity_cin_lagrangian_degrees"),
         py::arg("derivative_cin_lagrangian_degrees"));
+  }
+
+  {
+    // Cart-pole
+    py::class_<analysis::CartPoleParams>(m, "CartPoleParams")
+        .def(py::init<>())
+        .def_readwrite("mc", &analysis::CartPoleParams::mc)
+        .def_readwrite("mp", &analysis::CartPoleParams::mp)
+        .def_readwrite("l", &analysis::CartPoleParams::l)
+        .def_readwrite("gravity", &analysis::CartPoleParams::gravity);
+
+    AddTemplateFunction(m, "ToCartpoleTrigState",
+        &analysis::ToCartpoleTrigState<double>, GetPyParam<double>());
+
+    AddTemplateFunction(
+        m, "CartpoleMassMatrix",
+        [](const analysis::CartPoleParams& params,
+            const Eigen::Ref<const Eigen::Matrix<double, 5, 1>>& x) {
+          return analysis::CartpoleMassMatrix(params, x);
+        },
+        GetPyParam<double>());
+
+    AddTemplateFunction(
+        m, "CalcCartpoleBiasTerm",
+        [](const analysis::CartPoleParams& params,
+            const Eigen::Ref<const Eigen::Matrix<double, 5, 1>>& x) {
+          return analysis::CalcCartpoleBiasTerm(params, x);
+        },
+        GetPyParam<double>());
+
+    AddTemplateFunction(
+        m, "CalcCartpoleGravityVector",
+        [](const analysis::CartPoleParams& params,
+            const Eigen::Ref<const Eigen::Matrix<double, 5, 1>>& x) {
+          return analysis::CalcCartpoleGravityVector(params, x);
+        },
+        GetPyParam<double>());
+
+    AddTemplateFunction(
+        m, "CartpoleTrigDynamics",
+        [](const analysis::CartPoleParams& params,
+            const Eigen::Ref<const Eigen::Matrix<double, 5, 1>>& x, double u) {
+          Eigen::Matrix<double, 5, 1> n;
+          double d;
+          analysis::CartpoleTrigDynamics(params, x, u, &n, &d);
+          return std::make_pair(n, d);
+        },
+        GetPyParam<double>());
+
+    AddTemplateFunction(
+        m, "CartpoleTrigDynamics",
+        [](const analysis::CartPoleParams& params,
+            const Eigen::Ref<const Eigen::Matrix<symbolic::Expression, 5, 1>>& x, const symbolic::Expression& u) {
+          Eigen::Matrix<symbolic::Expression, 5, 1> n;
+          symbolic::Expression d;
+          analysis::CartpoleTrigDynamics(params, x, u, &n, &d);
+          return std::make_pair(n, d);
+        },
+        GetPyParam<symbolic::Expression>());
+
+    m.def(
+        "TrigPolyDynamics",
+        [](const analysis::CartPoleParams& params,
+            const Eigen::Ref<const Eigen::Matrix<symbolic::Variable, 5, 1>>&
+                x) {
+          Eigen::Matrix<symbolic::Polynomial, 5, 1> f;
+          Eigen::Matrix<symbolic::Polynomial, 5, 1> G;
+          symbolic::Polynomial d;
+          analysis::TrigPolyDynamics(params, x, &f, &G, &d);
+          return std::make_tuple(f, G, d);
+        },
+        py::arg("params"), py::arg("x"));
+
+    m.def("CartpoleStateEqConstraint", &analysis::CartpoleStateEqConstraint,
+        py::arg("x"));
+
+    m.def(
+        "SynthesizeCartpoleTrigLqr",
+        [](const analysis::CartPoleParams& params,
+            const Eigen::Ref<const Eigen::Matrix<double, 5, 5>>& Q, double R) {
+          const auto result = analysis::SynthesizeCartpoleTrigLqr(params, Q, R);
+          return std::make_tuple(result.K, result.S);
+        },
+        py::arg("params"), py::arg("Q"), py::arg("R"));
   }
 
   {

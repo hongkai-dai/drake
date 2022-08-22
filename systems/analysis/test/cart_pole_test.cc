@@ -28,21 +28,21 @@ GTEST_TEST(CartPole, Test) {
   Eigen::Matrix2d M_expected;
   plant.CalcMassMatrix(*context, &M_expected);
 
-  const Eigen::Matrix<double, 5, 1> x_trig = ToTrigState<double>(x_val);
+  const Eigen::Matrix<double, 5, 1> x_trig = ToCartpoleTrigState<double>(x_val);
   const CartPoleParams params{};
-  const Eigen::Matrix2d M = MassMatrix<double>(params, x_trig);
+  const Eigen::Matrix2d M = CartpoleMassMatrix<double>(params, x_trig);
   EXPECT_TRUE(CompareMatrices(M, M_expected, 1E-12));
 
   // Test bias
   Eigen::Vector2d bias_expected;
   plant.CalcBiasTerm(*context, &bias_expected);
-  const Eigen::Vector2d bias = CalcBiasTerm<double>(params, x_trig);
+  const Eigen::Vector2d bias = CalcCartpoleBiasTerm<double>(params, x_trig);
   EXPECT_TRUE(CompareMatrices(bias, bias_expected, 1E-12));
 
   // Test gravity vector
   const Eigen::Vector2d tau_g_expected =
       plant.CalcGravityGeneralizedForces(*context);
-  const Eigen::Vector2d tau_g = CalcGravityVector<double>(params, x_trig);
+  const Eigen::Vector2d tau_g = CalcCartpoleGravityVector<double>(params, x_trig);
   EXPECT_TRUE(CompareMatrices(tau_g, tau_g_expected, 1E-12));
 
   // Test TrigDynamics
@@ -53,7 +53,7 @@ GTEST_TEST(CartPole, Test) {
       -std::sin(x_val(1)) * x_val(3), xdot_orig(2), xdot_orig(3);
   Eigen::Matrix<double, 5, 1> n;
   double d;
-  TrigDynamics<double>(params, x_trig, u_val, &n, &d);
+  CartpoleTrigDynamics<double>(params, x_trig, u_val, &n, &d);
   EXPECT_TRUE(CompareMatrices(n / d, x_trig_dot_expected, 1E-12));
 
   // Test TrigPolyDynamics
@@ -72,7 +72,7 @@ GTEST_TEST(CartPole, Test) {
     EXPECT_NEAR((f(i) + G(i) * u_val).Evaluate(env), n(i), 1E-12);
   }
 
-  const symbolic::Polynomial state_constraint = StateEqConstraint(x);
+  const symbolic::Polynomial state_constraint = CartpoleStateEqConstraint(x);
   EXPECT_EQ(state_constraint.Evaluate(env), 0);
 
   // Test CalcQdot

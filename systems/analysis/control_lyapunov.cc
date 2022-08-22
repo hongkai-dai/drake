@@ -165,7 +165,8 @@ template void ControlLyapunov::AddControlLyapunovConstraint<symbolic::Variable>(
 ControlLyapunov::LagrangianReturn ControlLyapunov::ConstructLagrangianProgram(
     const symbolic::Polynomial& V, double rho, double deriv_eps,
     int lambda0_degree, const std::vector<int>& l_degrees,
-    const std::vector<int>& p_degrees) const {
+    const std::vector<int>& p_degrees,
+    std::optional<SlackPolynomialInfo> a_info) const {
   LagrangianReturn ret;
   // Make sure that V(0) = 0
   auto it_V_constant =
@@ -195,10 +196,18 @@ ControlLyapunov::LagrangianReturn ControlLyapunov::ConstructLagrangianProgram(
     ret.p(i) = ret.prog->NewFreePolynomial(x_set_, p_degrees[i], "P");
   }
   const int d_degree = 1;
-  this->AddControlLyapunovConstraint(
-      ret.prog.get(), x_, ret.lambda0, d_degree, ret.l, V, rho, u_vertices_,
-      deriv_eps, ret.p, std::nullopt /* a */, &(ret.vdot_sos),
-      &(ret.vdot_monomials), &(ret.vdot_gram));
+
+  if (a_info.has_value()) {
+    ret.a.emplace(symbolic::Polynomial());
+    ret.a_gram.emplace(MatrixX<symbolic::Expression>());
+    a_info->AddToProgram(ret.prog.get(), x_set_, "a", &(ret.a.value()),
+                         &(ret.a_gram.value()));
+    ret.prog->AddLinearCost(ret.a_gram->trace());
+  }
+  this->AddControlLyapunovConstraint(ret.prog.get(), x_, ret.lambda0, d_degree,
+                                     ret.l, V, rho, u_vertices_, deriv_eps,
+                                     ret.p, ret.a, &(ret.vdot_sos),
+                                     &(ret.vdot_monomials), &(ret.vdot_gram));
   return ret;
 }
 
@@ -240,7 +249,8 @@ ControlLyapunov::LyapunovReturn ControlLyapunov::ConstructLyapunovProgram(
     const symbolic::Polynomial& lambda0, const VectorX<symbolic::Polynomial>& l,
     int V_degree, double rho, double positivity_eps, int positivity_d,
     const std::vector<int>& positivity_eq_lagrangian_degrees,
-    const std::vector<int>& p_degrees, double deriv_eps) const {
+    const std::vector<int>& p_degrees, double deriv_eps,
+    std::optional<SlackPolynomialInfo> a_info) const {
   LyapunovReturn ret;
   ret.prog->AddIndeterminates(x_);
   VectorX<symbolic::Monomial> V_monomial;
@@ -293,49 +303,73 @@ ControlLyapunov::LyapunovReturn ControlLyapunov::ConstructLyapunovProgram(
     ret.p(i) = ret.prog->NewFreePolynomial(x_set_, p_degrees[i], "P");
   }
   const int d_degree = 1;
-  this->AddControlLyapunovConstraint(ret.prog.get(), x_, lambda0, d_degree, l,
-                                     ret.V, rho, u_vertices_, deriv_eps, ret.p,
-                                     std::nullopt /* a */, &vdot_poly,
-                                     &vdot_monomials, &vdot_gram);
+  if (a_info.has_value()) {
+    ret.a.emplace(symbolic::Polynomial());
+    ret.a_gram.emplace(MatrixX<symbolic::Expression>());
+    a_info->AddToProgram(ret.prog.get(), x_set_, "a", &(ret.a.value()),
+                         &(ret.a_gram.value()));
+    ret.prog->AddLinearCost(ret.a_gram->trace());
+  }
+  this->AddControlLyapunovConstraint(
+      ret.prog.get(), x_, lambda0, d_degree, l, ret.V, rho, u_vertices_,
+      deriv_eps, ret.p, ret.a, &vdot_poly, &vdot_monomials, &vdot_gram);
   return ret;
 }
 
-bool ControlLyapunov::SearchLagrangian(
+ControlLyapunov::SearchLagrangianResult ControlLyapunov::SearchLagrangian(
     const symbolic::Polynomial& V, double rho, int lambda0_degree,
     const std::vector<int>& l_degrees, const std::vector<int>& p_degrees,
     double deriv_eps, const ControlLyapunov::SearchOptions& search_options,
-    std::optional<bool> always_write_sol, symbolic::Polynomial* lambda0_sol,
-    VectorX<symbolic::Polynomial>* l_sol,
-    VectorX<symbolic::Polynomial>* p_sol) const {
+    std::optional<bool> always_write_sol,
+    std::optional<SlackPolynomialInfo> a_info,
+    std::optional<double> backoff_scale) const {
+  SearchLagrangianResult search_result;
   auto lagrangian_ret = this->ConstructLagrangianProgram(
-      V, rho, deriv_eps, lambda0_degree, l_degrees, p_degrees);
+      V, rho, deriv_eps, lambda0_degree, l_degrees, p_degrees, a_info);
   RemoveTinyCoeff(lagrangian_ret.prog.get(),
                   search_options.lagrangian_tiny_coeff_tol);
   solvers::MathematicalProgramResult result_lagrangian;
   drake::log()->info("Search Lagrangian");
   drake::log()->info("Smallest coeff {}",
                      SmallestCoeff(*(lagrangian_ret.prog)));
-  solvers::MakeSolver(search_options.lagrangian_step_solver)
-      ->Solve(*(lagrangian_ret.prog), std::nullopt,
-              search_options.lagrangian_step_solver_options,
-              &result_lagrangian);
+  if (backoff_scale.has_value()) {
+    result_lagrangian = SearchWithBackoff(
+        lagrangian_ret.prog.get(), search_options.lagrangian_step_solver,
+        search_options.lagrangian_step_solver_options, backoff_scale.value());
+  } else {
+    solvers::MakeSolver(search_options.lagrangian_step_solver)
+        ->Solve(*(lagrangian_ret.prog), std::nullopt,
+                search_options.lagrangian_step_solver_options,
+                &result_lagrangian);
+  }
   if (result_lagrangian.is_success() ||
       (always_write_sol.has_value() && always_write_sol.value())) {
     // internal::PrintPsdConstraintStat(*prog_lagrangian,
     // result_lagrangian);
-    *lambda0_sol = result_lagrangian.GetSolution(lagrangian_ret.lambda0);
+    search_result.lambda0 =
+        result_lagrangian.GetSolution(lagrangian_ret.lambda0);
     if (search_options.lsol_tiny_coeff_tol > 0) {
-      *lambda0_sol = lambda0_sol->RemoveTermsWithSmallCoefficients(
-          search_options.lsol_tiny_coeff_tol);
+      search_result.lambda0 =
+          search_result.lambda0.RemoveTermsWithSmallCoefficients(
+              search_options.lsol_tiny_coeff_tol);
     }
     GetPolynomialSolutions(result_lagrangian, lagrangian_ret.l,
-                           search_options.lsol_tiny_coeff_tol, l_sol);
+                           search_options.lsol_tiny_coeff_tol,
+                           &(search_result.l));
     GetPolynomialSolutions(result_lagrangian, lagrangian_ret.p,
-                           search_options.lsol_tiny_coeff_tol, p_sol);
+                           search_options.lsol_tiny_coeff_tol,
+                           &(search_result.p));
+    if (a_info.has_value()) {
+      search_result.a.emplace(
+          result_lagrangian.GetSolution(lagrangian_ret.a.value()));
+      search_result.a_gram.emplace(
+          GetGramSolution(result_lagrangian, lagrangian_ret.a_gram.value()));
+    }
   } else {
     drake::log()->error("Failed to find Lagrangian.");
   }
-  return result_lagrangian.is_success();
+  search_result.success = result_lagrangian.is_success();
+  return search_result;
 }
 
 bool ControlLyapunov::FindRhoBinarySearch(
@@ -348,9 +382,16 @@ bool ControlLyapunov::FindRhoBinarySearch(
   auto is_rho_feasible = [this, &V, lambda0_degree, &l_degrees, &p_degrees,
                           deriv_eps, &search_options, lambda0, l,
                           p](double rho) {
-    return this->SearchLagrangian(
+    SearchLagrangianResult search_result = this->SearchLagrangian(
         V, rho, lambda0_degree, l_degrees, p_degrees, deriv_eps, search_options,
-        std::nullopt /* always_write_sol */, lambda0, l, p);
+        std::nullopt /* always_write_sol */, std::nullopt /* a_info */,
+        std::nullopt /* backoff_scale */);
+    if (search_result.success) {
+      *lambda0 = search_result.lambda0;
+      *l = search_result.l;
+      *p = search_result.p;
+    }
+    return search_result.success;
   };
   DRAKE_DEMAND(rho_max >= rho_min);
   DRAKE_DEMAND(rho_tol > 0);
@@ -453,15 +494,19 @@ ControlLyapunov::SearchWithEllipsoidResult ControlLyapunov::Search(
       }
     }
 
-    const bool found_lagrangian = SearchLagrangian(
+    const SearchLagrangianResult search_lagrangian_result = SearchLagrangian(
         search_result.V, search_options.rho, lambda0_degree, l_degrees,
         p_degrees, deriv_eps, search_options, true /* always_write_sol */,
-        &(search_result.lambda0), &(search_result.l), &(search_result.p));
+        std::nullopt /* a_info */, std::nullopt /* backoff_scale */);
+    const bool found_lagrangian = search_lagrangian_result.success;
+    search_result.lambda0 = search_lagrangian_result.lambda0;
+    search_result.l = search_lagrangian_result.l;
+    search_result.p = search_lagrangian_result.p;
     if (!found_lagrangian) {
       std::cout
           << "Type 0 to reject the solution, type 1 to accept the solution\n";
       int accept = 0;
-      std::cin >> accept;
+      //std::cin >> accept;
       if (!accept) {
         drake::log()->error("Failed to find Lagrangian in iter {}", iter_count);
         search_result.success = false;
@@ -478,7 +523,7 @@ ControlLyapunov::SearchWithEllipsoidResult ControlLyapunov::Search(
       auto lyapunov_ret = this->ConstructLyapunovProgram(
           search_result.lambda0, search_result.l, V_degree, search_options.rho,
           positivity_eps, positivity_d, positivity_eq_lagrangian_degrees,
-          p_degrees, deriv_eps);
+          p_degrees, deriv_eps, std::nullopt /* a_info */);
       const auto V_on_ellipsoid =
           lyapunov_ret.prog->NewContinuousVariables<1>("V_e");
       symbolic::Polynomial r;
@@ -567,11 +612,12 @@ ControlLyapunov::SearchResult ControlLyapunov::Search(
   search_result.V = V_init;
   while (iter_count < search_options.bilinear_iterations) {
     drake::log()->info("Iteration {}", iter_count);
-    const bool found_lagrangian = SearchLagrangian(
+    const SearchLagrangianResult search_lagrangian_result = SearchLagrangian(
         search_result.V, search_options.rho, lambda0_degree, l_degrees,
         p_degrees, deriv_eps, search_options,
-        std::nullopt /* always_write_sol */, &(search_result.lambda0),
-        &(search_result.l), &(search_result.p));
+        std::nullopt /* always_write_sol */, std::nullopt /* a_info */,
+        std::nullopt /* backoff_scale */);
+    const bool found_lagrangian = search_lagrangian_result.success;
     if (!found_lagrangian) {
       drake::log()->error("Failed to find Lagrangian in iter {}", iter_count);
       search_result.success = false;
@@ -579,6 +625,10 @@ ControlLyapunov::SearchResult ControlLyapunov::Search(
           BilinearIterationStatus::kFailLagrangian;
       search_result.search_result_details.num_bilinear_iterations = iter_count;
       return search_result;
+    } else {
+      search_result.lambda0 = search_lagrangian_result.lambda0;
+      search_result.l = search_lagrangian_result.l;
+      search_result.p = search_lagrangian_result.p;
     }
 
     {
@@ -586,7 +636,7 @@ ControlLyapunov::SearchResult ControlLyapunov::Search(
       auto lyapunov_ret = this->ConstructLyapunovProgram(
           search_result.lambda0, search_result.l, V_degree, search_options.rho,
           positivity_eps, positivity_d, positivity_eq_lagrangian_degrees,
-          p_degrees, deriv_eps);
+          p_degrees, deriv_eps, std::nullopt /* a_info */);
       if (in_roa_samples.has_value()) {
         // Add the constraint V_search(in_roa_samples) <= rho.
         Eigen::MatrixXd A_in_roa_samples;
@@ -670,6 +720,104 @@ ControlLyapunov::SearchResult ControlLyapunov::Search(
   search_result.search_result_details.bilinear_iteration_status =
       BilinearIterationStatus::kIterationLimit;
   search_result.search_result_details.num_bilinear_iterations = iter_count;
+  return search_result;
+}
+
+ControlLyapunov::SearchWithSlackAResult ControlLyapunov::SearchWithSlackA(
+    const symbolic::Polynomial& V_init, int lambda0_degree,
+    const std::vector<int>& l_degrees, int V_degree, double positivity_eps,
+    int positivity_d, const std::vector<int>& positivity_eq_lagrangian_degrees,
+    const std::vector<int>& p_degrees, double deriv_eps,
+    const std::optional<Eigen::MatrixXd>& in_roa_samples,
+    SlackPolynomialInfo a_info,
+    const SearchWithSlackAOptions& search_options) const {
+  SearchWithSlackAResult search_result;
+  int iter_count = 0;
+  search_result.V = V_init;
+  while (iter_count < search_options.bilinear_iterations) {
+    drake::log()->info("Iteration {}", iter_count);
+    const SearchLagrangianResult search_lagrangian_result =
+        SearchLagrangian(search_result.V, search_options.rho, lambda0_degree,
+                         l_degrees, p_degrees, deriv_eps, search_options,
+                         std::nullopt /* always_write_sol */, a_info,
+                         search_options.lagrangian_step_backoff_scale);
+    const bool found_lagrangian = search_lagrangian_result.success;
+    if (!found_lagrangian) {
+      drake::log()->error("Failed to find Lagrangian in iter {}", iter_count);
+      search_result.success = false;
+      search_result.search_result_details.bilinear_iteration_status =
+          BilinearIterationStatus::kFailLagrangian;
+      search_result.search_result_details.num_bilinear_iterations = iter_count;
+      return search_result;
+    } else {
+      search_result.lambda0 = search_lagrangian_result.lambda0;
+      search_result.l = search_lagrangian_result.l;
+      search_result.p = search_lagrangian_result.p;
+      if (search_lagrangian_result.a_gram->trace() <=
+          search_options.a_zero_tol) {
+        search_result.success = true;
+        return search_result;
+      }
+    }
+
+    {
+      // Given Lagrangian, find V and a.
+      auto lyapunov_ret = this->ConstructLyapunovProgram(
+          search_result.lambda0, search_result.l, V_degree, search_options.rho,
+          positivity_eps, positivity_d, positivity_eq_lagrangian_degrees,
+          p_degrees, deriv_eps, a_info);
+      if (in_roa_samples.has_value()) {
+        // Add the constraint V_search(in_roa_samples) <= rho.
+        Eigen::MatrixXd A_in_roa_samples;
+        Eigen::VectorXd b_in_roa_samples;
+        VectorX<symbolic::Variable> variables_in_roa_samples;
+        lyapunov_ret.V.EvaluateWithAffineCoefficients(
+            x_, in_roa_samples.value(), &A_in_roa_samples,
+            &variables_in_roa_samples, &b_in_roa_samples);
+        lyapunov_ret.prog->AddLinearConstraint(
+            A_in_roa_samples,
+            Eigen::VectorXd::Constant(b_in_roa_samples.rows(), -kInf),
+            Eigen::VectorXd::Constant(b_in_roa_samples.rows(),
+                                      search_options.rho) -
+                b_in_roa_samples,
+            variables_in_roa_samples);
+      }
+      RemoveTinyCoeff(lyapunov_ret.prog.get(),
+                      search_options.lyap_tiny_coeff_tol);
+      drake::log()->info("Search Lyapunov, Lyapunov program smallest coeff: {}",
+                         SmallestCoeff(*(lyapunov_ret.prog)));
+      const auto result_lyapunov = SearchWithBackoff(
+          lyapunov_ret.prog.get(), search_options.lyap_step_solver,
+          search_options.lyap_step_solver_options,
+          search_options.lyap_step_backoff_scale);
+      if (result_lyapunov.is_success()) {
+        search_result.V = result_lyapunov.GetSolution(lyapunov_ret.V);
+        if (search_options.Vsol_tiny_coeff_tol > 0) {
+          search_result.V = search_result.V.RemoveTermsWithSmallCoefficients(
+              search_options.Vsol_tiny_coeff_tol);
+        }
+        GetPolynomialSolutions(result_lyapunov,
+                               lyapunov_ret.positivity_eq_lagrangian,
+                               search_options.lsol_tiny_coeff_tol,
+                               &(search_result.positivity_eq_lagrangian));
+        GetPolynomialSolutions(result_lyapunov, lyapunov_ret.p,
+                               search_options.lsol_tiny_coeff_tol,
+                               &(search_result.p));
+        const Eigen::MatrixXd a_gram_sol =
+            GetGramSolution(result_lyapunov, lyapunov_ret.a_gram.value());
+        drake::log()->info("a_gram.trace() = {}", a_gram_sol.trace());
+        if (a_gram_sol.trace() <= search_options.a_zero_tol) {
+          search_result.success = true;
+          return search_result;
+        }
+      } else {
+        drake::log()->error("Cannot find Lyapunov in iter {}", iter_count);
+        search_result.success = false;
+        return search_result;
+      }
+    }
+    iter_count++;
+  }
   return search_result;
 }
 

@@ -845,7 +845,8 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunov) {
   const double deriv_eps = 0.01;
   const double rho = 1;
   auto lagrangian_ret = dut.ConstructLagrangianProgram(
-      V, rho, deriv_eps, lambda0_degree, l_degrees, p_degrees);
+      V, rho, deriv_eps, lambda0_degree, l_degrees, p_degrees,
+      std::nullopt /* a_info */);
   solvers::SolverOptions solver_options;
   // solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
   const auto result_lagrangian =
@@ -901,7 +902,8 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunov) {
   const int V_degree = V.TotalDegree();
   auto lyapunov_ret = dut.ConstructLyapunovProgram(
       lambda0_sol, l_sol, V_degree, rho, positivity_eps, positivity_d,
-      positivity_eq_lagrangian_degrees, p_degrees, deriv_eps);
+      positivity_eq_lagrangian_degrees, p_degrees, deriv_eps,
+      std::nullopt /* a_info */);
   for (const auto& binding : lyapunov_ret.prog->linear_equality_constraints()) {
     binding.evaluator()->RemoveTinyCoefficient(1E-12);
   }

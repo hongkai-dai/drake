@@ -29,7 +29,7 @@ void TrigPolyDynamics(
   const Eigen::Matrix<symbolic::Expression, 5, 1> x_expr =
       x.cast<symbolic::Expression>();
   const Matrix2<symbolic::Expression> M_expr =
-      MassMatrix<symbolic::Expression>(params, x_expr);
+      CartpoleMassMatrix<symbolic::Expression>(params, x_expr);
   *d = symbolic::Polynomial(M_expr(0, 0) * M_expr(1, 1) -
                             M_expr(1, 0) * M_expr(0, 1));
   const symbolic::Polynomial s(x(1));
@@ -41,8 +41,8 @@ void TrigPolyDynamics(
   Matrix2<symbolic::Expression> M_adj_expr;
   M_adj_expr << M_expr(1, 1), -M_expr(1, 0), -M_expr(0, 1), M_expr(0, 0);
   const Vector2<symbolic::Expression> f_tail_expr =
-      M_adj_expr * (CalcGravityVector<symbolic::Expression>(params, x_expr) -
-                    CalcBiasTerm<symbolic::Expression>(params, x_expr));
+      M_adj_expr * (CalcCartpoleGravityVector<symbolic::Expression>(params, x_expr) -
+                    CalcCartpoleBiasTerm<symbolic::Expression>(params, x_expr));
   (*f)(3) = symbolic::Polynomial(f_tail_expr(0));
   (*f)(4) = symbolic::Polynomial(f_tail_expr(1));
   (*G)(0) = symbolic::Polynomial();
@@ -52,19 +52,20 @@ void TrigPolyDynamics(
   (*G)(4) = symbolic::Polynomial(M_adj_expr(1, 0));
 }
 
-symbolic::Polynomial StateEqConstraint(
+symbolic::Polynomial CartpoleStateEqConstraint(
     const Eigen::Ref<const Eigen::Matrix<symbolic::Variable, 5, 1>>& x) {
   return symbolic::Polynomial(x(1) * x(1) + x(2) * x(2) - 2 * x(2));
 }
 
-controllers::LinearQuadraticRegulatorResult SynthesizeTrigLqr(
+controllers::LinearQuadraticRegulatorResult SynthesizeCartpoleTrigLqr(
     const CartPoleParams& params,
     const Eigen::Ref<const Eigen::Matrix<double, 5, 5>>& Q, double R) {
   const Eigen::Matrix<double, 6, 1> xu_des = Vector6d::Zero();
   const auto xu_des_ad = math::InitializeAutoDiff(xu_des);
   Eigen::Matrix<AutoDiffXd, 5, 1> n;
   AutoDiffXd d;
-  TrigDynamics<AutoDiffXd>(params, xu_des_ad.head<5>(), xu_des_ad(5), &n, &d);
+  CartpoleTrigDynamics<AutoDiffXd>(params, xu_des_ad.head<5>(), xu_des_ad(5),
+                                   &n, &d);
   const Eigen::Matrix<AutoDiffXd, 5, 1> xdot_ad = n / d;
   const auto xdot_grad = math::ExtractGradient(xdot_ad);
   Eigen::Matrix<double, 1, 5> F;
@@ -76,18 +77,18 @@ controllers::LinearQuadraticRegulatorResult SynthesizeTrigLqr(
 }
 
 template <typename T>
-ToTrigStateConverter<T>::ToTrigStateConverter()
-    : LeafSystem<T>(SystemTypeTag<ToTrigStateConverter>{}) {
+CartpoleTrigStateConverter<T>::CartpoleTrigStateConverter()
+    : LeafSystem<T>(SystemTypeTag<CartpoleTrigStateConverter>{}) {
   this->DeclareInputPort("state", systems::PortDataType::kVectorValued, 4);
   this->DeclareVectorOutputPort("x_trig", 5,
-                                &ToTrigStateConverter<T>::CalcTrigState);
+                                &CartpoleTrigStateConverter<T>::CalcTrigState);
 }
 
 template <typename T>
-void ToTrigStateConverter<T>::CalcTrigState(const Context<T>& context,
+void CartpoleTrigStateConverter<T>::CalcTrigState(const Context<T>& context,
                                             BasicVector<T>* x_trig) const {
   const Vector4<T> x_orig = this->get_input_port().Eval(context);
-  x_trig->get_mutable_value() = ToTrigState<T>(x_orig);
+  x_trig->get_mutable_value() = ToCartpoleTrigState<T>(x_orig);
 }
 
 void Simulate(const CartPoleParams& parameters,
@@ -134,7 +135,7 @@ void Simulate(const CartPoleParams& parameters,
       clf_controller->get_output_port(clf_controller->control_output_index()),
       &builder);
   unused(control_logger);
-  auto trig_state_converter = builder.AddSystem<ToTrigStateConverter<double>>();
+  auto trig_state_converter = builder.AddSystem<CartpoleTrigStateConverter<double>>();
   builder.Connect(cart_pole->get_state_output_port(),
                   trig_state_converter->get_input_port());
   builder.Connect(
@@ -145,7 +146,7 @@ void Simulate(const CartPoleParams& parameters,
       cart_pole->get_actuation_input_port());
 
   symbolic::Environment env;
-  env.insert(x, ToTrigState<double>(initial_state));
+  env.insert(x, ToCartpoleTrigState<double>(initial_state));
   std::cout << std::setprecision(10)
             << "V(initial_state): " << clf.Evaluate(env) << "\n";
   auto diagram = builder.Build();
@@ -175,4 +176,4 @@ void Simulate(const CartPoleParams& parameters,
 }  // namespace systems
 }  // namespace drake
 DRAKE_DEFINE_CLASS_TEMPLATE_INSTANTIATIONS_ON_DEFAULT_SCALARS(
-    class ::drake::systems::analysis::ToTrigStateConverter)
+    class ::drake::systems::analysis::CartpoleTrigStateConverter)

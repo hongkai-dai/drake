@@ -19,7 +19,7 @@ int DoMain() {
   Eigen::Matrix<double, 5, 1> lqr_Q_diag;
   lqr_Q_diag << 1, 1, 1, 10, 10;
   const Eigen::Matrix<double, 5, 5> lqr_Q = lqr_Q_diag.asDiagonal();
-  const auto lqr_result = SynthesizeTrigLqr(params, lqr_Q, 10);
+  const auto lqr_result = SynthesizeCartpoleTrigLqr(params, lqr_Q, 10);
   const Vector1<symbolic::Polynomial> u_lqr(symbolic::Polynomial(
       -lqr_result.K.row(0).dot(x), symbolic::Variables(x)));
 
@@ -30,13 +30,13 @@ int DoMain() {
   TrigPolyDynamics(params, x, &f, &G, &dynamics_numerator);
   Eigen::Matrix<double, 1, 1> R(10);
   const symbolic::Polynomial l(x.cast<symbolic::Expression>().dot(lqr_Q * x));
-  const Vector1<symbolic::Polynomial> state_constraints(StateEqConstraint(x));
+  const Vector1<symbolic::Polynomial> state_constraints(CartpoleStateEqConstraint(x));
   const HjbUpper dut(x, l, R, f, G, dynamics_numerator, state_constraints);
   Eigen::MatrixXd state_samples =
       Eigen::MatrixXd::Random(4, 1000) * 0.1 + Eigen::Vector4d(0, M_PI, 0, 0);
   Eigen::Matrix<double, 5, Eigen::Dynamic> x_samples(5, state_samples.cols());
   for (int i = 0; i < state_samples.cols(); ++i) {
-    x_samples.col(i) = ToTrigState<double>(state_samples.col(i));
+    x_samples.col(i) = ToCartpoleTrigState<double>(state_samples.col(i));
   }
   int J_degree = 2;
   Vector1<symbolic::Polynomial> cin(

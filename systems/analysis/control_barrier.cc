@@ -299,37 +299,46 @@ ControlBarrier::BarrierReturn ControlBarrier::ConstructBarrierProgram(
 
 void ControlBarrier::AddBarrierProgramCost(
     solvers::MathematicalProgram* prog, const symbolic::Polynomial& h,
-    const Eigen::MatrixXd& verified_safe_states,
-    const Eigen::MatrixXd& unverified_candidate_states,
-    const double eps) const {
+    const std::optional<Eigen::MatrixXd>& verified_safe_states,
+    const Eigen::MatrixXd& unverified_candidate_states, const double eps,
+    const bool maximize_minimal) const {
   // Add the constraint that the verified states all have h(x) >= 0
-  Eigen::MatrixXd h_monomial_vals;
-  VectorX<symbolic::Variable> h_coeff_vars;
-  EvaluatePolynomial(h, x_, verified_safe_states, &h_monomial_vals,
-                     &h_coeff_vars);
-  prog->AddLinearConstraint(
-      h_monomial_vals, Eigen::VectorXd::Zero(h_monomial_vals.rows()),
-      Eigen::VectorXd::Constant(h_monomial_vals.rows(), kInf), h_coeff_vars);
-  // Add the objective to maximize sum min(h(xʲ), eps) for xʲ in
-  // unverified_candidate_states
-  EvaluatePolynomial(h, x_, unverified_candidate_states, &h_monomial_vals,
-                     &h_coeff_vars);
-  auto h_unverified_min0 =
-      prog->NewContinuousVariables(unverified_candidate_states.cols());
-  prog->AddBoundingBoxConstraint(-kInf, eps, h_unverified_min0);
-  // Add constraint h_unverified_min0 <= h(xʲ)
-  Eigen::MatrixXd A_unverified(
-      unverified_candidate_states.cols(),
-      unverified_candidate_states.cols() + h_monomial_vals.cols());
-  A_unverified << Eigen::MatrixXd::Identity(unverified_candidate_states.cols(),
-                                            unverified_candidate_states.cols()),
-      -h_monomial_vals;
-  prog->AddLinearConstraint(
-      A_unverified, Eigen::VectorXd::Constant(A_unverified.rows(), -kInf),
-      Eigen::VectorXd::Zero(A_unverified.rows()),
-      {h_unverified_min0, h_coeff_vars});
-  prog->AddLinearCost(-Eigen::VectorXd::Ones(h_unverified_min0.rows()), 0,
-                      h_unverified_min0);
+  if (verified_safe_states.has_value()) {
+    Eigen::MatrixXd h_monomial_vals;
+    VectorX<symbolic::Variable> h_coeff_vars;
+    EvaluatePolynomial(h, x_, verified_safe_states.value(), &h_monomial_vals,
+                       &h_coeff_vars);
+    prog->AddLinearConstraint(
+        h_monomial_vals, Eigen::VectorXd::Zero(h_monomial_vals.rows()),
+        Eigen::VectorXd::Constant(h_monomial_vals.rows(), kInf), h_coeff_vars);
+  }
+  if (maximize_minimal) {
+    OptimizePolynomialAtSamples(prog, h, x_, unverified_candidate_states,
+                                OptimizePolynomialMode::kMaximizeMinimal);
+  } else {
+    // Add the objective to maximize sum min(h(xʲ), eps) for xʲ in
+    // unverified_candidate_states
+    Eigen::MatrixXd h_monomial_vals;
+    VectorX<symbolic::Variable> h_coeff_vars;
+    EvaluatePolynomial(h, x_, unverified_candidate_states, &h_monomial_vals,
+                       &h_coeff_vars);
+    auto h_unverified_min0 =
+        prog->NewContinuousVariables(unverified_candidate_states.cols());
+    prog->AddBoundingBoxConstraint(-kInf, eps, h_unverified_min0);
+    // Add constraint h_unverified_min0 <= h(xʲ)
+    Eigen::MatrixXd A_unverified(
+        unverified_candidate_states.cols(),
+        unverified_candidate_states.cols() + h_monomial_vals.cols());
+    A_unverified << Eigen::MatrixXd::Identity(
+        unverified_candidate_states.cols(), unverified_candidate_states.cols()),
+        -h_monomial_vals;
+    prog->AddLinearConstraint(
+        A_unverified, Eigen::VectorXd::Constant(A_unverified.rows(), -kInf),
+        Eigen::VectorXd::Zero(A_unverified.rows()),
+        {h_unverified_min0, h_coeff_vars});
+    prog->AddLinearCost(-Eigen::VectorXd::Ones(h_unverified_min0.rows()), 0,
+                        h_unverified_min0);
+  }
 }
 
 void ControlBarrier::AddBarrierProgramCost(
@@ -511,6 +520,113 @@ ControlBarrier::SearchResult ControlBarrier::Search(
                                &(ret.hdot_state_constraints_lagrangian));
         drake::log()->info("min h(x) on ellipsoid: {}",
                            result_barrier.GetSolution(rho).transpose());
+        for (int i = 0; i < static_cast<int>(unsafe_regions_.size()); ++i) {
+          GetPolynomialSolutions(result_barrier, barrier_ret.s[i],
+                                 search_options.lsol_tiny_coeff_tol,
+                                 &(ret.s[i]));
+          GetPolynomialSolutions(
+              result_barrier,
+              barrier_ret.unsafe_state_constraints_lagrangian[i],
+              search_options.lsol_tiny_coeff_tol,
+              &(ret.unsafe_state_constraints_lagrangian[i]));
+          DRAKE_DEMAND(!barrier_ret.unsafe_a[i].has_value());
+        }
+        DRAKE_DEMAND(!barrier_ret.hdot_a.has_value());
+      } else {
+        drake::log()->error("Failed to find the barrier.");
+        ret.success = false;
+        return ret;
+      }
+    }
+    iter_count++;
+  }
+  ret.success = true;
+  return ret;
+}
+
+ControlBarrier::SearchResult ControlBarrier::Search(
+    const symbolic::Polynomial& h_init, int h_degree, double deriv_eps,
+    int lambda0_degree, std::optional<int> lambda1_degree,
+    const std::vector<int>& l_degrees,
+    const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
+    const std::vector<int>& t_degrees,
+    const std::vector<std::vector<int>>& s_degrees,
+    const std::vector<std::vector<int>>&
+        unsafe_state_constraints_lagrangian_degrees,
+    const std::optional<Eigen::VectorXd>& x_anchor,
+    std::optional<double> h_x_anchor_max,
+    const std::optional<Eigen::MatrixXd>& x_safe,
+    const Eigen::Ref<const Eigen::MatrixXd>& x_samples, bool maximize_minimal,
+    const SearchOptions& search_options) const {
+  SearchResult ret(unsafe_regions_.size());
+  ret.success = false;
+  ret.h = h_init;
+  int iter_count = 0;
+
+  const std::optional<SlackPolynomialInfo> hdot_a_info = std::nullopt;
+  const std::vector<std::optional<SlackPolynomialInfo>> unsafe_a_info(
+      unsafe_regions_.size(), std::nullopt);
+  while (iter_count < search_options.bilinear_iterations) {
+    drake::log()->info("iter {}", iter_count);
+    const auto search_lagrangian_ret = SearchLagrangian(
+        ret.h, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
+        hdot_state_constraints_lagrangian_degrees, hdot_a_info, t_degrees,
+        s_degrees, unsafe_state_constraints_lagrangian_degrees, unsafe_a_info,
+        search_options, std::nullopt /* backoff_scale */);
+    SetLagrangianResult(search_lagrangian_ret, &ret);
+    DRAKE_DEMAND(!search_lagrangian_ret.hdot_a.has_value());
+    for (int i = 0; i < static_cast<int>(unsafe_regions_.size()); ++i) {
+      DRAKE_DEMAND(!search_lagrangian_ret.unsafe_a[i].has_value());
+    }
+    if (!search_lagrangian_ret.success) {
+      ret.success = false;
+      return ret;
+    }
+
+    {
+      // Now search for the barrier function.
+      auto barrier_ret = this->ConstructBarrierProgram(
+          ret.lambda0, ret.lambda1, ret.l,
+          hdot_state_constraints_lagrangian_degrees, hdot_a_info, ret.t,
+          unsafe_state_constraints_lagrangian_degrees, h_degree, deriv_eps,
+          s_degrees, unsafe_a_info);
+      this->AddBarrierProgramCost(barrier_ret.prog.get(), barrier_ret.h, x_safe,
+                                  x_samples, 0. /* eps*/, maximize_minimal);
+
+      if (x_anchor.has_value()) {
+        // Add the constraint h(x_anchor) <= h_x_anchor_max
+        DRAKE_DEMAND(h_x_anchor_max.has_value());
+        Eigen::MatrixXd h_monomial_vals;
+        VectorX<symbolic::Variable> h_coeff_vars;
+        EvaluatePolynomial(barrier_ret.h, x_, x_anchor.value(),
+                           &h_monomial_vals, &h_coeff_vars);
+        barrier_ret.prog->AddLinearConstraint(h_monomial_vals.row(0), -kInf,
+                                              h_x_anchor_max.value(),
+                                              h_coeff_vars);
+      }
+
+      if (search_options.barrier_tiny_coeff_tol > 0) {
+        RemoveTinyCoeff(barrier_ret.prog.get(),
+                        search_options.barrier_tiny_coeff_tol);
+      }
+      drake::log()->info("Search barrier");
+      const auto result_barrier = SearchWithBackoff(
+          barrier_ret.prog.get(), search_options.barrier_step_solver,
+          search_options.barrier_step_solver_options,
+          search_options.barrier_step_backoff_scale);
+      if (result_barrier.is_success()) {
+        ret.h = result_barrier.GetSolution(barrier_ret.h);
+        if (search_options.hsol_tiny_coeff_tol > 0) {
+          ret.h = ret.h.RemoveTermsWithSmallCoefficients(
+              search_options.hsol_tiny_coeff_tol);
+        }
+        GetPolynomialSolutions(result_barrier,
+                               barrier_ret.hdot_state_constraints_lagrangian,
+                               search_options.lsol_tiny_coeff_tol,
+                               &(ret.hdot_state_constraints_lagrangian));
+        drake::log()->info(
+            "h(x_samples) on ellipsoid: {}",
+            ret.h.EvaluateIndeterminates(x_, x_samples).transpose());
         for (int i = 0; i < static_cast<int>(unsafe_regions_.size()); ++i) {
           GetPolynomialSolutions(result_barrier, barrier_ret.s[i],
                                  search_options.lsol_tiny_coeff_tol,

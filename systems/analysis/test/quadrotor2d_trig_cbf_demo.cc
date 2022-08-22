@@ -282,7 +282,7 @@ symbolic::Polynomial FindCbfInit(
   double hdot_a_zero_tol = 3E-9;
   double unsafe_a_zero_tol = 1E-9;
   ControlBarrier::SearchWithSlackAOptions search_options(
-      hdot_a_zero_tol, unsafe_a_zero_tol, true, 1, std::vector<double>{1., 1.});
+      hdot_a_zero_tol, unsafe_a_zero_tol, true);
   search_options.bilinear_iterations = 100;
   const auto search_result = dut.SearchWithSlackA(
       h_init, h_degree, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,

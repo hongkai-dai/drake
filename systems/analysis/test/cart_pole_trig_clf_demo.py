@@ -221,7 +221,7 @@ def SearchWTrigDynamics(params, x, u_max, deriv_eps):
 
     load_clf = True
     if load_clf:
-        with open("/home/hongkaidai/sos_clf_cbf_data/cart_pole/cartpole_trig_clf30.pickle", "rb") as input_file:
+        with open("/home/hongkaidai/sos_clf_cbf_data/cart_pole/cartpole_trig_clf31.pickle", "rb") as input_file:
             load_data = pickle.load(input_file)
             V_init = clf_cbf_utils.deserialize_polynomial(
                 x_set, load_data["V"])
@@ -279,13 +279,13 @@ def SearchWTrigDynamics(params, x, u_max, deriv_eps):
     r_degree = 0
     ellipsoid_maximize_option = \
         analysis.ControlLyapunov.EllipsoidMaximizeOption(
-            t=sym.Polynomial(), s_degree=0, backoff_scale=0.025)
+            t=sym.Polynomial(), s_degree=0, backoff_scale=0.02)
     search_result = dut.Search(
         V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
         positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
         ellipsoid_eq_lagrangian_degrees, deriv_eps, x_star, S, r_degree,
         search_options, ellipsoid_maximize_option)
-    with open("/home/hongkaidai/sos_clf_cbf_data/cart_pole/cartpole_trig_clf31.pickle", "wb") as handle:
+    with open("/home/hongkaidai/sos_clf_cbf_data/cart_pole/cartpole_trig_clf32.pickle", "wb") as handle:
         pickle.dump({
             "V": clf_cbf_utils.serialize_polynomial(search_result.V),
             "deriv_eps": deriv_eps, "u_max": u_max, "rho": search_options.rho,
@@ -299,7 +299,7 @@ def main():
     pydrake.common.configure_logging()
     params = analysis.CartPoleParams()
     x = sym.MakeVectorContinuousVariable(5, "x")
-    u_max = 140
+    u_max = 145
     deriv_eps = 0.01
     #V_sol = SearchWithSlackA(params, x, u_max, deriv_eps)
     SearchWTrigDynamics(params, x, u_max, deriv_eps)

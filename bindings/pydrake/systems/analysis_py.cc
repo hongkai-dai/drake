@@ -873,22 +873,30 @@ Parameter ``interruptible``:
         py::arg("h_degree"), py::arg("deriv_eps"), py::arg("s_degrees"),
         py::arg("unsafe_a_info"), cls_doc.ConstructBarrierProgram.doc);
 
-    control_barrier.def(
-        "AddBarrierProgramCost",
-        [](const Class& self, solvers::MathematicalProgram* prog,
-            const symbolic::Polynomial& h,
-            const std::vector<Class::Ellipsoid>& inner_ellipsoids) {
-          std::vector<symbolic::Polynomial> r;
-          VectorX<symbolic::Variable> rho;
-          std::vector<VectorX<symbolic::Polynomial>>
-              ellipsoids_state_constraints_lagrangian;
-          self.AddBarrierProgramCost(prog, h, inner_ellipsoids, &r, &rho,
-              &ellipsoids_state_constraints_lagrangian);
-          return std::make_tuple(
-              r, rho, ellipsoids_state_constraints_lagrangian);
-        },
-        py::arg("prog"), py::arg("h"), py::arg("inner_ellipsoids"),
-        cls_doc.AddBarrierProgramCost.doc_6args);
+    control_barrier
+        .def(
+            "AddBarrierProgramCost",
+            [](const Class& self, solvers::MathematicalProgram* prog,
+                const symbolic::Polynomial& h,
+                const std::vector<Class::Ellipsoid>& inner_ellipsoids) {
+              std::vector<symbolic::Polynomial> r;
+              VectorX<symbolic::Variable> rho;
+              std::vector<VectorX<symbolic::Polynomial>>
+                  ellipsoids_state_constraints_lagrangian;
+              self.AddBarrierProgramCost(prog, h, inner_ellipsoids, &r, &rho,
+                  &ellipsoids_state_constraints_lagrangian);
+              return std::make_tuple(
+                  r, rho, ellipsoids_state_constraints_lagrangian);
+            },
+            py::arg("prog"), py::arg("h"), py::arg("inner_ellipsoids"))
+        .def("AddBarrierProramCost",
+            py::overload_cast<solvers::MathematicalProgram*,
+                const symbolic::Polynomial&,
+                const std::optional<Eigen::MatrixXd>&, const Eigen::MatrixXd&,
+                double, bool>(&Class::AddBarrierProgramCost, py::const_),
+            py::arg("prog"), py::arg("h"), py::arg("verified_safe_states"),
+            py::arg("unverified_candidae_states"), py::arg("eps"),
+            py::arg("maximize_minimal"));
 
     py::class_<Class::SearchOptions>(control_barrier, "SearchOptions")
         .def(py::init<>())
@@ -965,15 +973,46 @@ Parameter ``interruptible``:
         .def_readwrite(
             "backoff_scale", &Class::EllipsoidMaximizeOption::backoff_scale);
 
-    control_barrier.def("Search", &Class::Search, py::arg("h_init"),
-        py::arg("h_degree"), py::arg("deriv_eps"), py::arg("lambda0_degree"),
-        py::arg("lambda1_degree"), py::arg("l_degrees"),
-        py::arg("hdot_state_constraints_lagrangian_degrees"),
-        py::arg("t_degrees"), py::arg("s_degrees"),
-        py::arg("unsafe_state_constraints_lagrangian_degrees"),
-        py::arg("x_anchor"), py::arg("h_x_anchor_max"),
-        py::arg("search_options"), py::arg("ellipsoids"),
-        py::arg("ellipsoid_options"), cls_doc.Search.doc);
+    control_barrier
+        .def("Search",
+            py::overload_cast<const symbolic::Polynomial&, int, double, int,
+                std::optional<int>, const std::vector<int>&,
+                const std::vector<int>&, const std::vector<int>&,
+                const std::vector<std::vector<int>>&,
+                const std::vector<std::vector<int>>&,
+                const Eigen::Ref<const Eigen::VectorXd>&, double,
+                const Class::SearchOptions&, std::vector<Class::Ellipsoid>*,
+                std::vector<std::variant<Class::EllipsoidBisectionOption,
+                    Class::EllipsoidMaximizeOption>>*>(
+                &Class::Search, py::const_),
+            py::arg("h_init"), py::arg("h_degree"), py::arg("deriv_eps"),
+            py::arg("lambda0_degree"), py::arg("lambda1_degree"),
+            py::arg("l_degrees"),
+            py::arg("hdot_state_constraints_lagrangian_degrees"),
+            py::arg("t_degrees"), py::arg("s_degrees"),
+            py::arg("unsafe_state_constraints_lagrangian_degrees"),
+            py::arg("x_anchor"), py::arg("h_x_anchor_max"),
+            py::arg("search_options"), py::arg("ellipsoids"),
+            py::arg("ellipsoid_options"))
+        .def("Search",
+            py::overload_cast<const symbolic::Polynomial&, int, double, int,
+                std::optional<int>, const std::vector<int>&,
+                const std::vector<int>&, const std::vector<int>&,
+                const std::vector<std::vector<int>>&,
+                const std::vector<std::vector<int>>&,
+                const std::optional<Eigen::VectorXd>&, std::optional<double>,
+                const std::optional<Eigen::MatrixXd>&,
+                const Eigen::Ref<const Eigen::MatrixXd>&, bool,
+                const Class::SearchOptions&>(&Class::Search, py::const_),
+            py::arg("h_init"), py::arg("h_degree"), py::arg("deriv_eps"),
+            py::arg("lambda0_degree"), py::arg("lambda1_degree"),
+            py::arg("l_degrees"),
+            py::arg("hdot_state_constraints_lagrangian_degrees"),
+            py::arg("t_degrees"), py::arg("s_degrees"),
+            py::arg("unsafe_state_constraints_lagrangian_degrees"),
+            py::arg("x_anchor"), py::arg("h_x_anchor_max"), py::arg("x_safe"),
+            py::arg("x_samples"), py::arg("maximize_minimal"),
+            py::arg("search_options"));
 
     py::class_<Class::SearchWithSlackAOptions, Class::SearchOptions>(
         control_barrier, "SearchWithSlackAOptions")

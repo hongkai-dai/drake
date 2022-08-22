@@ -222,7 +222,7 @@ TEST_F(SimpleLinearSystemTest, ControlBarrier) {
     auto prog_cost1 = barrier_ret.prog->Clone();
     dut.AddBarrierProgramCost(prog_cost1.get(), barrier_ret.h,
                               verified_safe_states, unverified_candidate_states,
-                              eps);
+                              eps, false /* minimize_max */);
     result_barrier = solvers::Solve(*prog_cost1);
     h_sol = result_barrier.GetSolution(barrier_ret.h);
     EXPECT_TRUE(

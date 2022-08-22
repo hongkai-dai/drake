@@ -206,17 +206,20 @@ class ControlBarrier {
       const;
 
   /**
-   * Add the cost
+   * If maximize_minimal=true, add the cost
    * max ∑ᵢ min(h(xⁱ), eps),   xⁱ ∈ unverified_candidate_states
-   * and the constraint
+   * else, add the cost
+   * max minᵢ h(xⁱ),   xⁱ ∈ unverified_candidate_states
+   *
+   * always add the constraint
    * h(xʲ) >= 0, xʲ ∈ verified_safe_states
    * to prog.
    */
-  void AddBarrierProgramCost(solvers::MathematicalProgram* prog,
-                             const symbolic::Polynomial& h,
-                             const Eigen::MatrixXd& verified_safe_states,
-                             const Eigen::MatrixXd& unverified_candidate_states,
-                             double eps) const;
+  void AddBarrierProgramCost(
+      solvers::MathematicalProgram* prog, const symbolic::Polynomial& h,
+      const std::optional<Eigen::MatrixXd>& verified_safe_states,
+      const Eigen::MatrixXd& unverified_candidate_states, double eps,
+      bool maximize_minimal) const;
 
   /**
    * An ellipsoid as
@@ -360,6 +363,29 @@ class ControlBarrier {
       std::vector<
           std::variant<EllipsoidBisectionOption, EllipsoidMaximizeOption>>*
           ellipsoid_options) const;
+
+  /**
+   * Find the constrol barrier function h.
+   * The goal is to maximize some function of h(x_samples).
+   * If maximize_minimal is true, then the goal is
+   * max minᵢ h(x_samples.col(i))
+   * If maximize_minimal is false, then the goal is
+   * max meanᵢ h(x_samples.col(i))
+   */
+  SearchResult Search(
+      const symbolic::Polynomial& h_init, int h_degree, double deriv_eps,
+      int lambda0_degree, std::optional<int> lambda1_degree,
+      const std::vector<int>& l_degrees,
+      const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
+      const std::vector<int>& t_degrees,
+      const std::vector<std::vector<int>>& s_degrees,
+      const std::vector<std::vector<int>>&
+          unsafe_state_constraints_lagrangian_degrees,
+      const std::optional<Eigen::VectorXd>& x_anchor,
+      std::optional<double> h_x_anchor_max,
+      const std::optional<Eigen::MatrixXd>& x_safe,
+      const Eigen::Ref<const Eigen::MatrixXd>& x_samples, bool maximize_minimal,
+      const SearchOptions& search_options) const;
 
   struct SearchWithSlackAResult : public SearchResult {
     SearchWithSlackAResult(int num_unsafe_regions)

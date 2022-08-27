@@ -625,7 +625,7 @@ ControlBarrier::SearchResult ControlBarrier::Search(
                                search_options.lsol_tiny_coeff_tol,
                                &(ret.hdot_state_constraints_lagrangian));
         drake::log()->info(
-            "h(x_samples) on ellipsoid: {}",
+            "h(x_samples)={}",
             ret.h.EvaluateIndeterminates(x_, x_samples).transpose());
         for (int i = 0; i < static_cast<int>(unsafe_regions_.size()); ++i) {
           GetPolynomialSolutions(result_barrier, barrier_ret.s[i],
@@ -858,7 +858,8 @@ ControlBarrier::SearchLagrangianResult ControlBarrier::SearchLagrangian(
         solvers::MakeSolver(search_options.lagrangian_step_solver);
     solvers::MathematicalProgramResult result_lagrangian;
     drake::log()->info("search Lagrangian");
-    if (backoff_scale.has_value()) {
+    if (backoff_scale.has_value() &&
+        !lagrangian_ret.prog->linear_costs().empty()) {
       result_lagrangian = SearchWithBackoff(
           lagrangian_ret.prog.get(), search_options.lagrangian_step_solver,
           search_options.lagrangian_step_solver_options, backoff_scale.value());
@@ -918,11 +919,19 @@ ControlBarrier::SearchLagrangianResult ControlBarrier::SearchLagrangian(
       drake::log()->info("Search Lagrangian multiplier for unsafe region {}",
                          i);
       solvers::MathematicalProgramResult result_unsafe;
-      auto lagrangian_solver =
-          solvers::MakeSolver(search_options.lagrangian_step_solver);
-      lagrangian_solver->Solve(*(unsafe_ret.prog), std::nullopt,
-                               search_options.lagrangian_step_solver_options,
-                               &result_unsafe);
+      if (!unsafe_ret.prog->linear_costs().empty() &&
+          backoff_scale.has_value()) {
+        result_unsafe = SearchWithBackoff(
+            unsafe_ret.prog.get(), search_options.lagrangian_step_solver,
+            search_options.lagrangian_step_solver_options,
+            backoff_scale.value());
+      } else {
+        auto lagrangian_solver =
+            solvers::MakeSolver(search_options.lagrangian_step_solver);
+        lagrangian_solver->Solve(*(unsafe_ret.prog), std::nullopt,
+                                 search_options.lagrangian_step_solver_options,
+                                 &result_unsafe);
+      }
       if (result_unsafe.is_success()) {
         search_lagrangian_ret.t[i] = result_unsafe.GetSolution(unsafe_ret.t);
         if (search_options.lsol_tiny_coeff_tol > 0) {

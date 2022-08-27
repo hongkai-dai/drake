@@ -36,7 +36,7 @@ def Search(
 
     dynamics_denominator = None
 
-    beta_minus = -0.005
+    beta_minus = 0.00
 
     beta_plus = 0.005
 
@@ -47,11 +47,11 @@ def Search(
     h_degree = 2
     x_set = sym.Variables(x)
 
-    #h_init = sym.Polynomial((x[4] - 0.5) ** 2 + x[5] **
-    #                        2 + x[6] ** 2 + 0.01 * x[7:].dot(x[7:]) - 0.07)
-    with open("quadrotor3d_trig_cbf12.pickle", "rb") as input_file:
-       h_init = clf_cbf_utils.deserialize_polynomial(
-           x_set, pickle.load(input_file)["h"])
+    h_init = sym.Polynomial((x[4] - 0.5) ** 2 + x[5] **
+                            2 + x[6] ** 2 + 0.01 * x[7:].dot(x[7:]) - 0.2)
+    #with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_cbf/quadrotor3d_trig_cbf13.pickle", "rb") as input_file:
+    #   h_init = clf_cbf_utils.deserialize_polynomial(
+    #       x_set, pickle.load(input_file)["h"])
 
     h_init_x_safe = h_init.EvaluateIndeterminates(x, x_safe)
     print(f"h_init(x_safe): {h_init_x_safe.squeeze()}")
@@ -61,24 +61,25 @@ def Search(
 
     with_slack_a = True
 
-    lambda0_degree = 4
-    lambda1_degree = 4
+    lambda0_degree = 2
+    lambda1_degree = 2
     l_degrees = [2] * 16
     hdot_eq_lagrangian_degrees = [h_degree + lambda0_degree - 2]
 
     if with_slack_a:
         hdot_a_info = analysis.SlackPolynomialInfo(
-            degree=6, poly_type=analysis.SlackPolynomialType.kSos,
+            degree=4, poly_type=analysis.SlackPolynomialType.kSos,
             cost_weight=1.)
+        #hdot_a_info = None
 
     t_degrees = [0]
     s_degrees = [[h_degree - 2]]
     unsafe_eq_lagrangian_degrees = [[h_degree - 2]]
     if with_slack_a:
-        #unsafe_a_info = [analysis.SlackPolynomialInfo(
-        #    degree=h_degree, poly_type=analysis.SlackPolynomialType.kSos,
-        #    cost_weight=1.)]
-        unsafe_a_info = [None]
+        unsafe_a_info = [analysis.SlackPolynomialInfo(
+            degree=h_degree, poly_type=analysis.SlackPolynomialType.kSos,
+            cost_weight=1.)]
+        #unsafe_a_info = [None]
     h_x_safe_min = np.array([0.01] * x_safe.shape[1])
 
     if with_slack_a:
@@ -86,7 +87,7 @@ def Search(
         unsafe_a_zero_tol = 1E-8
         search_options = analysis.ControlBarrier.SearchWithSlackAOptions(
             hdot_a_zero_tol, unsafe_a_zero_tol, use_zero_a=True)
-        search_options.bilinear_iterations = 10
+        search_options.bilinear_iterations = 200
         search_options.lagrangian_step_solver_options = mp.SolverOptions()
         search_options.lagrangian_step_solver_options.SetOption(
             mp.CommonSolverOption.kPrintToConsole, 1)
@@ -97,8 +98,8 @@ def Search(
             mp.CommonSolverOption.kPrintToConsole, 1)
         search_options.barrier_step_solver_options.SetOption(
             MosekSolver().id(), "MSK_DPAR_INTPNT_CO_TOL_REL_GAP", 1E-9)
-        search_options.barrier_step_backoff_scale = 0.01
-        search_options.lagrangian_step_backoff_scale = 0.01
+        search_options.barrier_step_backoff_scale = 0.02
+        search_options.lagrangian_step_backoff_scale = 0.02
         search_options.hsol_tiny_coeff_tol = 1E-6
         search_result = dut.SearchWithSlackA(
             h_init, h_degree, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
@@ -111,12 +112,6 @@ def Search(
             unsafe_eq_lagrangian_degrees, [None] * len(unsafe_regions),
             search_options, backoff_scale=None)
     else:
-        ellipsoids = [analysis.ControlBarrier.Ellipsoid(
-            c=x_safe[:, 0], S=np.eye(13), d=0., r_degree=0,
-            eq_lagrangian_degrees=[0])]
-        ellipsoid_options = [
-            analysis.ControlBarrier.EllipsoidMaximizeOption(
-                t=sym.Polynomial(), s_degree=0, backoff_scale=0.04)]
         search_options = analysis.ControlBarrier.SearchOptions()
         search_options.lagrangian_step_solver_options = mp.SolverOptions()
         search_options.lagrangian_step_solver_options.SetOption(
@@ -124,22 +119,48 @@ def Search(
         search_options.barrier_step_solver_options = mp.SolverOptions()
         search_options.barrier_step_solver_options.SetOption(
             mp.CommonSolverOption.kPrintToConsole, 1)
-        search_options.lsol_tiny_coeff_tol = 0#1E-6
-        search_options.hsol_tiny_coeff_tol = 0#1E-6
-        search_options.barrier_step_backoff_scale = 0.1
-        x_anchor = x_safe[:, 0]
-        h_x_anchor_max = h_init.EvaluateIndeterminates(x, x_anchor)[0] * 2
-        search_result = dut.Search(
-            h_init, h_degree, deriv_eps, lambda0_degree, lambda1_degree,
-            l_degrees, hdot_eq_lagrangian_degrees, t_degrees, s_degrees,
-            unsafe_eq_lagrangian_degrees, x_anchor, h_x_anchor_max,
-            search_options, ellipsoids, ellipsoid_options)
-    with open("quadrotor3d_trig_cbf13.pickle", "wb") as handle:
+        search_options.bilinear_iterations = 5
+
+        search_with_ellipsoid = False
+        if search_with_ellipsoid:
+            ellipsoids = [analysis.ControlBarrier.Ellipsoid(
+                c=x_safe[:, 0], S=np.eye(13), d=0., r_degree=0,
+                eq_lagrangian_degrees=[0])]
+            ellipsoid_options = [
+                analysis.ControlBarrier.EllipsoidMaximizeOption(
+                    t=sym.Polynomial(), s_degree=0, backoff_scale=0.04)]
+            search_options.lsol_tiny_coeff_tol = 0#1E-6
+            search_options.hsol_tiny_coeff_tol = 0#1E-6
+            search_options.barrier_step_backoff_scale = 0.01
+            x_anchor = x_safe[:, 0]
+            h_x_anchor_max = h_init.EvaluateIndeterminates(x, x_anchor)[0] * 10 
+            search_result = dut.Search(
+                h_init, h_degree, deriv_eps, lambda0_degree, lambda1_degree,
+                l_degrees, hdot_eq_lagrangian_degrees, t_degrees, s_degrees,
+                unsafe_eq_lagrangian_degrees, x_anchor, h_x_anchor_max,
+                search_options, ellipsoids, ellipsoid_options)
+        else:
+            search_options.barrier_step_backoff_scale = 0.02
+            x_anchor = np.zeros((13,))
+            h_x_anchor_max = h_init.EvaluateIndeterminates(
+                x, x_anchor.reshape((-1, 1)))[0] * 10
+            x_samples = np.array(
+                    [[0, 0, 0, 0, 1, 0, 0, 0., 0, 0, 0, 0, 0],
+                     [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]).T
+            maximize_minimal = True
+            search_result = dut.Search(
+                h_init, h_degree, deriv_eps, lambda0_degree, lambda1_degree,
+                l_degrees, hdot_eq_lagrangian_degrees, t_degrees, s_degrees,
+                unsafe_eq_lagrangian_degrees, x_anchor, h_x_anchor_max, x_safe,
+                x_samples, maximize_minimal, search_options)
+
+    with open("quadrotor3d_trig_cbf16.pickle", "wb") as handle:
         pickle.dump({
             "h": clf_cbf_utils.serialize_polynomial(search_result.h),
             "beta_plus": beta_plus, "beta_minus": beta_minus,
             "deriv_eps": deriv_eps, "thrust_max": thrust_max,
-            "x_safe": x_safe}, handle)
+            "x_safe": x_safe,
+            "unsafe_region0": clf_cbf_utils.serialize_polynomial(unsafe_regions[0][0])}, handle)
     return search_result.h
 
 #def reexecute_if_unbuffered():
@@ -182,15 +203,13 @@ def main():
     x = sym.MakeVectorContinuousVariable(13, "x")
     thrust_equilibrium = analysis.EquilibriumThrust(quadrotor)
     thrust_max = 3 * thrust_equilibrium
-    deriv_eps = 1.
-    # Unsafe region.
-    # 1. The quadrotor gets close to a sphere at (0.5, 0, 0)
-    unsafe_regions = [np.array([sym.Polynomial(
-        (x[4] - 0.5) ** 2 + x[5] ** 2 + x[6] ** 2- quadrotor.length() ** 2)])]
-    x_safe = np.empty((13, 2))
+    deriv_eps = 1
+    unsafe_regions = [np.array([#sym.Polynomial(x[6] + 0.15)])]
+        sym.Polynomial((x[4] - 0.5) ** 2 + x[5] ** 2 + x[6] ** 2- (0.8*quadrotor.length()) ** 2)])]
+    x_safe = np.empty((13, 1))
     x_safe[:, 0] = np.zeros(13)
-    x_safe[:, 1] = np.zeros(13)
-    x_safe[4, 1] = 1
+    #x_safe[:, 1] = np.zeros(13)
+    #x_safe[4, 1] = 1
     h_sol = Search(quadrotor, x, thrust_max, deriv_eps, unsafe_regions, x_safe)
 
 

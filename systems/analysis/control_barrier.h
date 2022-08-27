@@ -609,10 +609,10 @@ class CbfController : public systems::LeafSystem<double> {
     return dhdx_times_G_;
   }
 
- private:
   virtual void DoCalcControl(const Context<double>& context,
                              BasicVector<double>* output) const = 0;
 
+ private:
   VectorX<symbolic::Variable> x_;
   VectorX<symbolic::Polynomial> f_;
   MatrixX<symbolic::Polynomial> G_;

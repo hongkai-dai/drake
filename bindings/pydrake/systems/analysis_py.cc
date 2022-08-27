@@ -42,6 +42,36 @@ void ThrowIfPythonHasPendingSignals() {
   }
 }
 }  // namespace
+class CbfControllerPublic : public systems::analysis::CbfController {
+ public:
+  using Base = systems::analysis::CbfController;
+  using Base::CalcCbf;
+  using Base::CalcControl;
+  using Base::cbf_output_port;
+  using Base::CbfController;
+  using Base::control_output_port;
+  using Base::DoCalcControl;
+  using Base::x_input_port;
+  using Base::x;
+  using Base::f;
+  using Base::G;
+  using Base::dynamics_denominator;
+  using Base::cbf;
+  using Base::deriv_eps;
+  using Base::dhdx_times_f;
+  using Base::dhdx_times_G;
+};
+
+class PyCbfController : public CbfControllerPublic {
+ public:
+  using CbfControllerPublic::CbfControllerPublic;
+
+  void DoCalcControl(const systems::Context<double>& context,
+      systems::BasicVector<double>* output) const override {
+    PYBIND11_OVERRIDE_PURE(
+        void, CbfControllerPublic, DoCalcControl, context, output);
+  }
+};
 
 PYBIND11_MODULE(analysis, m) {
   // NOLINTNEXTLINE(build/namespaces): Emulate placement in namespace.
@@ -1100,6 +1130,32 @@ Parameter ``interruptible``:
         py::arg("unsafe_state_constraints_lagrangian_degrees"),
         py::arg("unsafe_a_info"), py::arg("search_options"),
         py::arg("backoff_scale"), cls_doc.SearchLagrangian.doc);
+  }
+
+  {
+    // CbfController
+    py::class_<systems::analysis::CbfController, PyCbfController>(
+        m, "CbfController")
+        .def(py::init<const Eigen::Ref<const VectorX<symbolic::Variable>>&,
+                 const Eigen::Ref<const VectorX<symbolic::Polynomial>>&,
+                 const Eigen::Ref<const MatrixX<symbolic::Polynomial>>&,
+                 std::optional<symbolic::Polynomial>, symbolic::Polynomial,
+                 double>(),
+            py::arg("x"), py::arg("f"), py::arg("G"),
+            py::arg("dynamics_denominator"), py::arg("cbf"),
+            py::arg("deriv_eps"))
+        .def("x_input_port", &PyCbfController::x_input_port)
+        .def("cbf_output_port", &PyCbfController::cbf_output_port)
+        .def("control_output_port", &PyCbfController::control_output_port)
+        .def("DoCalcControl", &CbfControllerPublic::DoCalcControl)
+        .def("x", &PyCbfController::x, py_rvp::copy)
+        .def("f", &PyCbfController::f, py_rvp::copy)
+        .def("G", &PyCbfController::G, py_rvp::copy)
+        .def("dynamics_denominator", &PyCbfController::dynamics_denominator, py_rvp::reference_internal)
+        .def("cbf", &PyCbfController::cbf, py_rvp::reference_internal)
+        .def("deriv_eps", &PyCbfController::deriv_eps)
+        .def("dhdx_times_f", &PyCbfController::dhdx_times_f, py_rvp::copy)
+        .def("dhdx_times_G", &PyCbfController::dhdx_times_G, py_rvp::copy);
   }
 
   {

@@ -8,12 +8,131 @@ from pydrake.solvers import mathematicalprogram as mp
 from pydrake.solvers.mosek import MosekSolver
 import pydrake.symbolic as sym
 import pydrake.common
+from pydrake.systems.framework import (
+    DiagramBuilder,
+    LeafSystem,
+)
+from pydrake.systems.primitives import LogVectorOutput
+from pydrake.examples import (
+    QuadrotorGeometry,
+    QuadrotorPlant,
+)
+
+from pydrake.geometry import(
+    MeshcatVisualizer,
+    MeshcatVisualizerParams,
+    Role,
+    StartMeshcat,
+    SceneGraph,
+)
+
+meshcat = StartMeshcat()
+
+class QuadrotorCbfController(LeafSystem):
+    def __init__(self, x, f, G, cbf, deriv_eps, thrust_max, beta_minus, beta_plus):
+        LeafSystem.__init__(self)
+        assert (x.shape == (13,))
+        self.x = x
+        assert (f.shape == (13,))
+        self.f = f
+        assert (G.shape == (13, 4))
+        self.G = G
+        self.cbf = cbf
+        self.deriv_eps = deriv_eps
+        self.thrust_max = thrust_max
+        self.beta_minus = beta_minus
+        self.beta_plus = beta_plus
+        dhdx = self.cbf.Jacobian(self.x)
+        self.dhdx_times_f = dhdx.dot(self.f)
+        self.dhdx_times_G = dhdx @ self.G
+
+        self.x_input_index = self.DeclareVectorInputPort("x", 13).get_index()
+        self.control_output_index = self.DeclareVectorOutputPort("control", 4, self.CalcControl).get_index()
+        self.cbf_output_index = self.DeclareVectorOutputPort("cbf", 1, self.CalcCbf).get_index()
+
+    def x_input_port(self):
+        return self.get_input_port(self.x_input_index)
+
+    def control_output_port(self):
+        return self.get_output_port(self.control_output_index)
+
+    def cbf_output_port(self):
+        return self.get_output_port(self.cbf_output_index)
+
+    def CalcControl(self, context, output):
+        x_val = self.x_input_port().Eval(context)
+        env = {self.x[i]: x_val[i] for i in range(13)}
+
+        prog = mp.MathematicalProgram()
+        nu = 4
+        u = prog.NewContinuousVariables(nu, "u")
+        prog.AddBoundingBoxConstraint(0, self.thrust_max, u)
+        prog.AddQuadraticCost(np.identity(nu), np.zeros((nu,)), 0, u)
+        dhdx_times_f_val = self.dhdx_times_f.Evaluate(env)
+        dhdx_times_G_val = np.array([
+            self.dhdx_times_G[i].Evaluate(env) for i in range(nu)])
+        h_val = self.cbf.Evaluate(env)
+        # dhdx * G * u + dhdx * f >= -eps * h
+        if self.beta_minus <= h_val <= self.beta_plus:
+            prog.AddLinearConstraint(
+                dhdx_times_G_val.reshape((1, -1)),
+                np.array([-self.deriv_eps * h_val - dhdx_times_f_val]),
+                np.array([np.inf]), u)
+        result = mp.Solve(prog)
+        if not result.is_success():
+            raise Exception("CBF controller cannot find u")
+        output.SetFromVector(result.GetSolution(u))
+
+    def CalcCbf(self, context, output):
+        x_val = self.x_input_port().Eval(context)
+        env = {self.x[i] : x_val[i] for i in range(13)}
+        output.SetFromVector(np.array([self.cbf.Evaluate(env)]))
+
+def simulate(x, f, G, cbf, thrust_max, deriv_eps, beta_minus, beta_plus, initial_state, duration):
+    builder = DiagramBuilder()
+
+    quadrotor = builder.AddSystem(QuadrotorPlant())
+
+    scene_graph = builder.AddSystem(pydrake.geometry.SceneGraph())
+
+    geom = QuadrotorGeometry.AddToBuilder(
+        builder, quadrotor.get_output_port(0), scene_graph)
+
+    MeshcatVisualizer.AddToBuilder(
+        builder, scene_graph, meshcat,
+        MeshcatVisualizerParams(role=Role.kPerception))
+
+    state_converter = builder.AddSystem(analysis.QuadrotorTrigStateConverter())
+
+    builder.Connect(quadrotor.get_output_port(0), state_converter.get_input_port())
+
+    cbf_controller = builder.AddSystem(QuadrotorCbfController(x,f, G, cbf, deriv_eps, thrust_max, beta_minus, beta_plus))
+
+    builder.Connect(cbf_controller.control_output_port(), quadrotor.get_input_port())
+    builder.Connect(state_converter.get_output_port(), cbf_controller.x_input_port())
+
+    state_logger = LogVectorOutput(quadrotor.get_output_port(), builder)
+    cbf_logger = LogVectorOutput(cbf_controller.cbf_output_port(), builder)
+    control_logger = LogVectorOutput(cbf_controller.control_output_port(), builder)
+
+    diagram = builder.Build()
+
+    simulator = analysis.Simulator(diagram)
+
+    analysis.ResetIntegratorFromFlags(simulator, "implicit_euler", 0.001)
+
+    simulator.get_mutable_context().SetContinuousState(initial_state)
+    simulator.AdvanceTo(duration)
+
+    state_data = state_logger.FindLog(simulator.get_context()).data()
+    cbf_data = cbf_logger.FindLog(simulator.get_context()).data()
+    control_data = control_logger.FindLog(simulator.get_context()).data()
+    pass
 
 
-def Search(
-    quadrotor: analysis.QuadrotorTrigPlant, x: np.ndarray, thrust_max: float,
+def search(
+    x: np.ndarray, f, G, thrust_max: float,
         deriv_eps: float, unsafe_regions: list, x_safe: np.ndarray) -> sym.Polynomial:
-    f, G = analysis.TrigPolyDynamics(quadrotor, x)
     u_vertices = np.array([
         [0, 0, 0, 0],
         [0, 0, 0, 1],
@@ -201,6 +320,7 @@ def main():
     pydrake.common.configure_logging()
     quadrotor = analysis.QuadrotorTrigPlant()
     x = sym.MakeVectorContinuousVariable(13, "x")
+    f, G = analysis.TrigPolyDynamics(quadrotor, x)
     thrust_equilibrium = analysis.EquilibriumThrust(quadrotor)
     thrust_max = 3 * thrust_equilibrium
     deriv_eps = 1
@@ -210,7 +330,13 @@ def main():
     x_safe[:, 0] = np.zeros(13)
     #x_safe[:, 1] = np.zeros(13)
     #x_safe[4, 1] = 1
-    h_sol = Search(quadrotor, x, thrust_max, deriv_eps, unsafe_regions, x_safe)
+    #h_sol = search(x, f, G, thrust_max, deriv_eps, unsafe_regions, x_safe)
+
+    with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_cbf/quadrotor3d_trig_cbf15.pickle", "rb") as input_file:
+        input_data = pickle.load(input_file)
+    x_set = sym.Variables(x)
+    cbf = clf_cbf_utils.deserialize_polynomial(x_set, input_data["h"])
+    simulate(x, f, G, cbf, thrust_max, input_data["deriv_eps"], input_data["beta_minus"], input_data["beta_plus"], np.zeros((12,)), 1)
 
 
 if __name__ == "__main__":

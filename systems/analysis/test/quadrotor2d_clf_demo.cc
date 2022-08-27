@@ -23,54 +23,54 @@ namespace analysis {
 
 const double kInf = std::numeric_limits<double>::infinity();
 
-[[maybe_unused]] void Simulate(
-    const Vector6<symbolic::Variable>& x,
-    const Vector6<symbolic::Polynomial>& f,
-    const Eigen::Matrix<symbolic::Polynomial, 6, 2>& G, double thrust_max,
-    const symbolic::Polynomial& clf, double deriv_eps, const Vector6d& x0,
-    double duration) {
-  systems::DiagramBuilder<double> builder;
-  auto quadrotor = builder.AddSystem<Quadrotor2dTrigPlant<double>>();
-  Eigen::Matrix<double, 4, 2> Au;
-  Au.topRows<2>() = Eigen::Matrix2d::Identity();
-  Au.bottomRows<2>() = -Eigen::Matrix2d::Identity();
-  const Eigen::Vector4d bu(thrust_max, thrust_max, 0, 0);
-  const Eigen::Vector2d u_star(0, 0);
-  const Eigen::Matrix2d Ru = Eigen::Matrix2d::Identity();
-  const double vdot_cost = 0;
-  auto clf_controller = builder.AddSystem<ClfController>(
-      x, f, G, std::nullopt /* dynamics numerator */, clf, deriv_eps, Au, bu,
-      u_star, Ru, vdot_cost);
-
-  auto state_logger =
-      LogVectorOutput(quadrotor->get_state_output_port(), &builder);
-  auto clf_logger = LogVectorOutput(
-      clf_controller->get_output_port(clf_controller->clf_output_index()),
-      &builder);
-  builder.Connect(quadrotor->get_state_output_port(),
-                  clf_controller->get_input_port());
-  builder.Connect(
-      clf_controller->get_output_port(clf_controller->control_output_index()),
-      quadrotor->get_input_port());
-  auto diagram = builder.Build();
-  auto context = diagram->CreateDefaultContext();
-
-  Simulator<double> simulator(*diagram);
-  ResetIntegratorFromFlags(&simulator, "implicit_euler", 0.01);
-
-  simulator.get_mutable_context().SetContinuousState(x0);
-
-  simulator.AdvanceTo(duration);
-  std::cout << "finish simulation\n";
-
-  std::cout << fmt::format(
-      "final state: {}, final V: {}\n",
-      state_logger->FindLog(simulator.get_context())
-          .data()
-          .rightCols<1>()
-          .transpose(),
-      clf_logger->FindLog(simulator.get_context()).data().rightCols<1>());
-}
+//[[maybe_unused]] void Simulate(
+//    const Vector6<symbolic::Variable>& x,
+//    const Vector6<symbolic::Polynomial>& f,
+//    const Eigen::Matrix<symbolic::Polynomial, 6, 2>& G, double thrust_max,
+//    const symbolic::Polynomial& clf, double deriv_eps, const Vector6d& x0,
+//    double duration) {
+//  systems::DiagramBuilder<double> builder;
+//  auto quadrotor = builder.AddSystem<Quadrotor2dTrigPlant<double>>();
+//  Eigen::Matrix<double, 4, 2> Au;
+//  Au.topRows<2>() = Eigen::Matrix2d::Identity();
+//  Au.bottomRows<2>() = -Eigen::Matrix2d::Identity();
+//  const Eigen::Vector4d bu(thrust_max, thrust_max, 0, 0);
+//  const Eigen::Vector2d u_star(0, 0);
+//  const Eigen::Matrix2d Ru = Eigen::Matrix2d::Identity();
+//  const double vdot_cost = 0;
+//  auto clf_controller = builder.AddSystem<ClfController>(
+//      x, f, G, std::nullopt /* dynamics numerator */, clf, deriv_eps, Au, bu,
+//      u_star, Ru, vdot_cost);
+//
+//  auto state_logger =
+//      LogVectorOutput(quadrotor->get_state_output_port(), &builder);
+//  auto clf_logger = LogVectorOutput(
+//      clf_controller->get_output_port(clf_controller->clf_output_index()),
+//      &builder);
+//  builder.Connect(quadrotor->get_state_output_port(),
+//                  clf_controller->get_input_port());
+//  builder.Connect(
+//      clf_controller->get_output_port(clf_controller->control_output_index()),
+//      quadrotor->get_input_port());
+//  auto diagram = builder.Build();
+//  auto context = diagram->CreateDefaultContext();
+//
+//  Simulator<double> simulator(*diagram);
+//  ResetIntegratorFromFlags(&simulator, "implicit_euler", 0.01);
+//
+//  simulator.get_mutable_context().SetContinuousState(x0);
+//
+//  simulator.AdvanceTo(duration);
+//  std::cout << "finish simulation\n";
+//
+//  std::cout << fmt::format(
+//      "final state: {}, final V: {}\n",
+//      state_logger->FindLog(simulator.get_context())
+//          .data()
+//          .rightCols<1>()
+//          .transpose(),
+//      clf_logger->FindLog(simulator.get_context()).data().rightCols<1>());
+//}
 
 [[maybe_unused]] void SearchWTaylorDynamics() {
   Quadrotor2dTrigPlant<double> quadrotor;
@@ -169,7 +169,6 @@ const double kInf = std::numeric_limits<double>::infinity();
   Vector6d x0 = Vector6d::Zero();
   x0(0) += 0.5;
   x0(2) += 0.2 * M_PI;
-  Simulate(x, f, G, thrust_max, V_sol, deriv_eps, x0, 10);
 }
 
 int DoMain() {

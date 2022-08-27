@@ -54,86 +54,6 @@ const double kInf = std::numeric_limits<double>::infinity();
   std::cout << "swingup control traj: " << *control_traj << "\n";
 }
 
-void Simulate(const examples::acrobot::AcrobotParams<double>& parameters,
-              const Vector6<symbolic::Variable>& x,
-              const symbolic::Polynomial& clf, double u_bound, double deriv_eps,
-              const Eigen::Vector4d& initial_state, double duration) {
-  systems::DiagramBuilder<double> builder;
-  auto acrobot = builder.AddSystem<examples::acrobot::AcrobotPlant<double>>();
-  auto scene_graph = builder.AddSystem<geometry::SceneGraph<double>>();
-  examples::acrobot::AcrobotGeometry::AddToBuilder(
-      &builder, acrobot->get_output_port(0), scene_graph);
-
-  auto meshcat = std::make_shared<geometry::Meshcat>();
-  geometry::MeshcatVisualizerParams meshcat_params{};
-  meshcat_params.role = geometry::Role::kIllustration;
-  auto visualizer = &geometry::MeshcatVisualizer<double>::AddToBuilder(
-      &builder, *scene_graph, meshcat, meshcat_params);
-  unused(visualizer);
-
-  const Eigen::Vector2d Au(1, -1);
-  const Eigen::Vector2d bu(u_bound, u_bound);
-  const Vector1d u_star(0);
-  const Vector1d Ru(1);
-
-  Vector6<symbolic::Polynomial> f;
-  Vector6<symbolic::Polynomial> G;
-  symbolic::Polynomial dynamics_numerator;
-  TrigPolyDynamics(parameters, x, &f, &G, &dynamics_numerator);
-
-  const double vdot_cost = 0;
-  auto clf_controller = builder.AddSystem<ClfController>(
-      x, f, G, dynamics_numerator, clf, deriv_eps, Au, bu, u_star, Ru,
-      vdot_cost);
-  auto state_logger = LogVectorOutput(acrobot->get_output_port(0), &builder);
-  auto clf_logger = LogVectorOutput(
-      clf_controller->get_output_port(clf_controller->clf_output_index()),
-      &builder);
-  auto control_logger = LogVectorOutput(
-      clf_controller->get_output_port(clf_controller->control_output_index()),
-      &builder);
-  unused(control_logger);
-  auto trig_state_converter = builder.AddSystem<ToTrigStateConverter<double>>();
-  builder.Connect(acrobot->get_output_port(0),
-                  trig_state_converter->get_input_port());
-  builder.Connect(
-      trig_state_converter->get_output_port(),
-      clf_controller->get_input_port(clf_controller->x_input_index()));
-  builder.Connect(
-      clf_controller->get_output_port(clf_controller->control_output_index()),
-      acrobot->get_input_port());
-
-  symbolic::Environment env;
-  env.insert(x, ToTrigState<double>(initial_state));
-  std::cout << std::setprecision(10)
-            << "V(initial_state): " << clf.Evaluate(env) << "\n";
-
-  auto diagram = builder.Build();
-  auto context = diagram->CreateDefaultContext();
-
-  Simulator<double> simulator(*diagram);
-  // ResetIntegratorFromFlags(&simulator, "implicit_euler", 0.0002);
-  simulator.get_mutable_context().SetContinuousState(initial_state);
-  diagram->Publish(simulator.get_context());
-  std::cout << "Refresh meshcat brower and press to continue\n";
-  std::cin.get();
-
-  simulator.AdvanceTo(duration);
-  std::cout << "finish simulation\n";
-
-  std::cout << fmt::format(
-      "final state: {}, final V: {}\n",
-      state_logger->FindLog(simulator.get_context())
-          .data()
-          .rightCols<1>()
-          .transpose(),
-      clf_logger->FindLog(simulator.get_context()).data().rightCols<1>());
-  std::cout << "V: " << std::setprecision(10)
-            << clf_logger->FindLog(simulator.get_context()).data() << "\n";
-  std::cout << "u: " << control_logger->FindLog(simulator.get_context()).data()
-            << "\n";
-}
-
 controllers::LinearQuadraticRegulatorResult SynthesizeTrigLqr(
     const examples::acrobot::AcrobotParams<double>& p) {
   const Eigen::Matrix<double, 7, 1> xu_des =
@@ -141,7 +61,7 @@ controllers::LinearQuadraticRegulatorResult SynthesizeTrigLqr(
   const auto xu_des_ad = math::InitializeAutoDiff(xu_des);
   Vector6<AutoDiffXd> n;
   AutoDiffXd d;
-  TrigDynamics<AutoDiffXd>(p, xu_des_ad.head<6>(), xu_des_ad(6), &n, &d);
+  AcrobotTrigDynamics<AutoDiffXd>(p, xu_des_ad.head<6>(), xu_des_ad(6), &n, &d);
   const Vector6<AutoDiffXd> xdot_des_ad = n / d;
   const auto xdot_des_grad = math::ExtractGradient(xdot_des_ad);
   // The constraints are x(0) * x(0) + (x(1) + 1) * (x(1) + 1) = 1
@@ -165,8 +85,8 @@ symbolic::Polynomial FindClfInit(
   const symbolic::Expression u_lqr = -lqr_result.K.row(0).dot(x);
   Vector6<symbolic::Expression> n_expr;
   symbolic::Expression d_expr;
-  TrigDynamics<symbolic::Expression>(p, x.cast<symbolic::Expression>(), u_lqr,
-                                     &n_expr, &d_expr);
+  AcrobotTrigDynamics<symbolic::Expression>(p, x.cast<symbolic::Expression>(),
+                                            u_lqr, &n_expr, &d_expr);
   Vector6<symbolic::Polynomial> dynamics_numerator;
   for (int i = 0; i < 6; ++i) {
     dynamics_numerator(i) = symbolic::Polynomial(n_expr(i));
@@ -178,7 +98,7 @@ symbolic::Polynomial FindClfInit(
   const int d = V_degree / 2;
   const double deriv_eps = 0.01;
   const Vector2<symbolic::Polynomial> state_eq_constraints =
-      StateEqConstraints(x);
+      AcrobotStateEqConstraints(x);
   const std::vector<int> positivity_ceq_lagrangian_degrees{
       {V_degree - 2, V_degree - 2}};
   const std::vector<int> derivative_ceq_lagrangian_degrees{{4, 4}};
@@ -276,7 +196,7 @@ void SearchWImplicitTrigDynamics() {
   symbolic::Polynomial V_init = FindClfInit(parameters, V_degree, x);
   std::cout << "V_init(x_bottom): "
             << V_init.EvaluateIndeterminates(
-                   x, ToTrigState<double>(Eigen::Vector4d::Zero()))
+                   x, ToAcrobotTrigState<double>(Eigen::Vector4d::Zero()))
             << "\n";
 
   Vector4<symbolic::Variable> z;
@@ -285,13 +205,14 @@ void SearchWImplicitTrigDynamics() {
   }
   const double u_max = 20;
   const double z_factor = 10;
-  const Matrix2<symbolic::Expression> M_expr = MassMatrix<symbolic::Expression>(
-      parameters, x.cast<symbolic::Expression>());
+  const Matrix2<symbolic::Expression> M_expr =
+      AcrobotMassMatrix<symbolic::Expression>(parameters,
+                                              x.cast<symbolic::Expression>());
   const Vector2<symbolic::Expression> bias_expr =
-      DynamicsBiasTerm<symbolic::Expression>(parameters,
-                                             x.cast<symbolic::Expression>());
+      AcrobotDynamicsBiasTerm<symbolic::Expression>(
+          parameters, x.cast<symbolic::Expression>());
   Vector6<symbolic::Polynomial> state_constraints;
-  state_constraints.head<2>() = StateEqConstraints(x);
+  state_constraints.head<2>() = AcrobotStateEqConstraints(x);
   const Vector2<symbolic::Expression> constraint_expr1 =
       M_expr * z.head<2>() - Eigen::Vector2d(0, u_max) / z_factor +
       bias_expr / z_factor;
@@ -305,7 +226,7 @@ void SearchWImplicitTrigDynamics() {
   symbolic::Variables xz_set{x};
   xz_set.insert(symbolic::Variables(z));
   const Vector4<symbolic::Expression> qdot_expr =
-      CalcQdot<symbolic::Expression>(x.cast<symbolic::Expression>());
+      CalcAcrobotQdot<symbolic::Expression>(x.cast<symbolic::Expression>());
   Vector4<symbolic::Polynomial> qdot;
   for (int i = 0; i < 4; ++i) {
     qdot(i) = symbolic::Polynomial(qdot_expr(i));
@@ -484,7 +405,7 @@ void SearchWImplicitTrigDynamics() {
         positivity_lagrangian(i) =
             prog.NewFreePolynomial(x_set, positivity_lagrangian_degrees[i]);
       }
-      positivity_sos -= positivity_lagrangian.dot(StateEqConstraints(x));
+      positivity_sos -= positivity_lagrangian.dot(AcrobotStateEqConstraints(x));
       prog.AddSosConstraint(positivity_sos);
       // Now add the constraint on Vdot.
       Vector6<symbolic::Polynomial> p;
@@ -503,7 +424,7 @@ void SearchWImplicitTrigDynamics() {
       Eigen::Matrix<double, 6, Eigen::Dynamic> x_samples(6, x_indices.size());
       for (int i = 0; i < static_cast<int>(x_indices.size()); ++i) {
         state_samples.col(i) = state_swingup.col(x_indices[i]);
-        x_samples.col(i) = ToTrigState<double>(state_samples.col(i));
+        x_samples.col(i) = ToAcrobotTrigState<double>(state_samples.col(i));
       }
       drake::log()->info("state samples:\n{}", state_samples.transpose());
       OptimizePolynomialAtSamples(&prog, V, x, x_samples,
@@ -548,7 +469,7 @@ void SearchWImplicitTrigDynamics() {
                                        Eigen::RowVector2d(-u_max, u_max));
 
   Eigen::Vector4d state_val(M_PI * 1.08, 0, -0.3, 0.7);
-  const Vector6d x_val = ToTrigState<double>(state_val);
+  const Vector6d x_val = ToAcrobotTrigState<double>(state_val);
   symbolic::Environment env;
   env.insert(x, x_val);
   const double V_val = V_sol.Evaluate(env);
@@ -561,8 +482,8 @@ void SearchWImplicitTrigDynamics() {
   double d_val1;
   Vector6d n_val2;
   double d_val2;
-  TrigDynamics<double>(parameters, x_val, u_max, &n_val1, &d_val1);
-  TrigDynamics<double>(parameters, x_val, -u_max, &n_val2, &d_val2);
+  AcrobotTrigDynamics<double>(parameters, x_val, u_max, &n_val1, &d_val1);
+  AcrobotTrigDynamics<double>(parameters, x_val, -u_max, &n_val2, &d_val2);
   const Vector6d xdot_val1 = n_val1 / d_val1;
   const Vector6d xdot_val2 = n_val2 / d_val2;
   const Eigen::Vector2d z1_val = xdot_val1.tail<2>() / z_factor;

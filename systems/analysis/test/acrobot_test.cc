@@ -16,18 +16,18 @@ void TestAcrobotDynamics(const examples::acrobot::AcrobotPlant<double>& plant,
   const auto& p = plant.get_parameters(*context);
   context->SetContinuousState(x_orig);
   plant.get_input_port().FixValue(context.get(), Vector1d(u));
-  const Vector6d x_trig = ToTrigState<double>(x_orig);
-  const Eigen::Matrix2d M = MassMatrix<double>(p, x_trig);
+  const Vector6d x_trig = ToAcrobotTrigState<double>(x_orig);
+  const Eigen::Matrix2d M = AcrobotMassMatrix<double>(p, x_trig);
   const Eigen::Matrix2d M_expected = plant.MassMatrix(*context);
   EXPECT_TRUE(CompareMatrices(M, M_expected, 1E-12));
 
-  const Eigen::Vector2d bias = DynamicsBiasTerm<double>(p, x_trig);
+  const Eigen::Vector2d bias = AcrobotDynamicsBiasTerm<double>(p, x_trig);
   const Eigen::Vector2d bias_expected = plant.DynamicsBiasTerm(*context);
   EXPECT_TRUE(CompareMatrices(bias, bias_expected, 1E-12));
 
   Vector6d n;
   double d;
-  TrigDynamics<double>(p, x_trig, u, &n, &d);
+  AcrobotTrigDynamics<double>(p, x_trig, u, &n, &d);
   const Vector6d x_trig_dot = n / d;
   const Eigen::Vector4d xdot_orig =
       plant.EvalTimeDerivatives(*context).CopyToVector();
@@ -40,7 +40,7 @@ void TestAcrobotDynamics(const examples::acrobot::AcrobotPlant<double>& plant,
   x_trig_dot_expected(5) = xdot_orig(3);
   EXPECT_TRUE(CompareMatrices(x_trig_dot, x_trig_dot_expected, 1E-12));
 
-  const Eigen::Vector4d qdot = CalcQdot<double>(x_trig);
+  const Eigen::Vector4d qdot = CalcAcrobotQdot<double>(x_trig);
   EXPECT_TRUE(CompareMatrices(x_trig_dot.head<4>(), qdot, 1E-12));
 
   Vector6<symbolic::Polynomial> f;
@@ -62,16 +62,16 @@ void TestAcrobotDynamics(const examples::acrobot::AcrobotPlant<double>& plant,
   }
 
   const Vector2<symbolic::Polynomial> state_constraints =
-      StateEqConstraints(x_var);
+      AcrobotStateEqConstraints(x_var);
   for (int i = 0; i < 2; ++i) {
     EXPECT_NEAR(state_constraints(i).Evaluate(env), 0, 1E-12);
   }
 }
 
 GTEST_TEST(Acrobot, DynamicsTest) {
-  EXPECT_TRUE(
-      CompareMatrices(ToTrigState<double>(Eigen::Vector4d(M_PI, 0, 0, 0)),
-                      Vector6d::Zero(), 1E-12));
+  EXPECT_TRUE(CompareMatrices(
+      ToAcrobotTrigState<double>(Eigen::Vector4d(M_PI, 0, 0, 0)),
+      Vector6d::Zero(), 1E-12));
   const examples::acrobot::AcrobotPlant<double> acrobot;
   TestAcrobotDynamics(acrobot, Eigen::Vector4d(0, 0, 0, 0), 0);
   TestAcrobotDynamics(acrobot, Eigen::Vector4d(M_PI, 0, 0, 0), 2);

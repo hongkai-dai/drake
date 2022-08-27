@@ -27,71 +27,119 @@ namespace systems {
 namespace analysis {
 const double kInf = std::numeric_limits<double>::infinity();
 
-void Simulate(const Vector2<symbolic::Variable>& x, double theta_des,
-              const symbolic::Polynomial& clf, double u_bound, double deriv_eps,
-              const Eigen::Vector2d& x0, double duration) {
-  systems::DiagramBuilder<double> builder;
-  auto pendulum =
-      builder.AddSystem<examples::pendulum::PendulumPlant<double>>();
-  auto scene_graph = builder.AddSystem<geometry::SceneGraph<double>>();
-  examples::pendulum::PendulumGeometry::AddToBuilder(
-      &builder, pendulum->get_state_output_port(), scene_graph);
-  auto meshcat = std::make_shared<geometry::Meshcat>();
-  geometry::MeshcatVisualizerParams meshcat_params{};
-  meshcat_params.role = geometry::Role::kIllustration;
-  auto visualizer = &geometry::MeshcatVisualizer<double>::AddToBuilder(
-      &builder, *scene_graph, meshcat, meshcat_params);
-  unused(visualizer);
-  const Eigen::Vector2d Au(1, -1);
-  const Eigen::Vector2d bu(u_bound, u_bound);
-  const Vector1d u_star(0);
-  const Vector1d Ru(1);
+class PendulumClfController : public ClfController {
+ public:
+  PendulumClfController(const Vector3<symbolic::Variable>& x,
+                        const Vector3<symbolic::Polynomial>& f,
+                        const Vector3<symbolic::Polynomial>& G,
+                        const symbolic::Polynomial& V, double deriv_eps,
+                        double u_max)
+      : ClfController(x, f, G, std::nullopt, V, deriv_eps), u_max_{u_max} {}
 
-  Vector2<symbolic::Polynomial> f;
-  Vector2<symbolic::Polynomial> G;
-  ControlAffineDynamics(*pendulum, x, theta_des, &f, &G);
+  virtual ~PendulumClfController() {}
 
-  const double vdot_cost = 0;
-  auto clf_controller = builder.AddSystem<ClfController>(
-      x, f, G, std::nullopt /* dynamics numerator */, clf, deriv_eps, Au, bu,
-      u_star, Ru, vdot_cost);
-  auto state_logger =
-      LogVectorOutput(pendulum->get_state_output_port(), &builder);
-  auto clf_logger = LogVectorOutput(
-      clf_controller->get_output_port(clf_controller->clf_output_index()),
-      &builder);
-  // Shift the state by (-theta_des, 0) as the input to the clf controller.
-  auto state_shifter = builder.AddSystem<ConstantVectorSource<double>>(
-      Eigen::Vector2d(-theta_des, 0));
-  const int nx = pendulum->num_continuous_states();
-  auto state_adder = builder.AddSystem<Adder<double>>(2, nx);
-  builder.Connect(pendulum->get_state_output_port(),
-                  state_adder->get_input_port(0));
-  builder.Connect(state_shifter->get_output_port(),
-                  state_adder->get_input_port(1));
-  builder.Connect(
-      state_adder->get_output_port(),
-      clf_controller->get_input_port(clf_controller->x_input_index()));
-  builder.Connect(
-      clf_controller->get_output_port(clf_controller->control_output_index()),
-      pendulum->get_input_port());
-  auto diagram = builder.Build();
-  auto context = diagram->CreateDefaultContext();
+ private:
+  virtual void DoCalcControl(const Context<double>& context,
+                             BasicVector<double>* output) const override {
+    const Eigen::VectorXd x_val =
+        this->get_input_port(this->x_input_index()).Eval(context);
+    symbolic::Environment env;
+    env.insert(x(), x_val);
 
-  Simulator<double> simulator(*diagram);
-  simulator.get_mutable_context().SetContinuousState(x0);
+    solvers::MathematicalProgram prog;
+    const int nu = 1;
+    auto u = prog.NewContinuousVariables(1, "u");
+    prog.AddBoundingBoxConstraint(-u_max_, u_max_, u(0));
+    prog.AddQuadraticCost(Eigen::Matrix<double, 1, 1>::Ones(), Vector1d(0), 0,
+                          u);
 
-  simulator.AdvanceTo(duration);
-  std::cout << "finish simulation\n";
+    const double dVdx_times_f_val = dVdx_times_f().Evaluate(env);
+    Eigen::RowVectorXd dVdx_times_G_val(nu);
+    for (int i = 0; i < nu; ++i) {
+      dVdx_times_G_val(i) = dVdx_times_G()(i).Evaluate(env);
+    }
+    const double V_val = V().Evaluate(env);
+    // dVdx * G * u + dVdx * f <= -eps * V * n(x)
+    prog.AddLinearConstraint(dVdx_times_G_val, -kInf,
+                             -deriv_eps() * V_val - dVdx_times_f_val, u);
+    const double vdot_cost = 0;
+    prog.AddLinearCost(dVdx_times_G_val * vdot_cost,
+                       dVdx_times_f_val * vdot_cost, u);
+    const auto result = solvers::Solve(prog);
+    if (!result.is_success()) {
+      drake::log()->info("dVdx*f+eps*V={}, dVdx*G={}",
+                         dVdx_times_f_val + deriv_eps() * V_val,
+                         dVdx_times_G_val);
+      drake::log()->error("ClfController fails at t={} with x={}, V={}",
+                          context.get_time(), x_val.transpose(), V_val);
+      DRAKE_DEMAND(result.is_success());
+    }
+    const Eigen::VectorXd u_val = result.GetSolution(u);
+    output->get_mutable_value() = u_val;
+  }
 
-  std::cout << fmt::format(
-      "final state: {}, final V: {}\n",
-      state_logger->FindLog(simulator.get_context())
-          .data()
-          .rightCols<1>()
-          .transpose(),
-      clf_logger->FindLog(simulator.get_context()).data().rightCols<1>());
-}
+  double u_max_;
+};
+
+// void Simulate(const Vector2<symbolic::Variable>& x, double theta_des,
+//              const symbolic::Polynomial& clf, double u_bound, double
+//              deriv_eps, const Eigen::Vector2d& x0, double duration) {
+//  systems::DiagramBuilder<double> builder;
+//  auto pendulum =
+//      builder.AddSystem<examples::pendulum::PendulumPlant<double>>();
+//  auto scene_graph = builder.AddSystem<geometry::SceneGraph<double>>();
+//  examples::pendulum::PendulumGeometry::AddToBuilder(
+//      &builder, pendulum->get_state_output_port(), scene_graph);
+//  auto meshcat = std::make_shared<geometry::Meshcat>();
+//  geometry::MeshcatVisualizerParams meshcat_params{};
+//  meshcat_params.role = geometry::Role::kIllustration;
+//  auto visualizer = &geometry::MeshcatVisualizer<double>::AddToBuilder(
+//      &builder, *scene_graph, meshcat, meshcat_params);
+//  unused(visualizer);
+//
+//  Vector2<symbolic::Polynomial> f;
+//  Vector2<symbolic::Polynomial> G;
+//  ControlAffineDynamics(*pendulum, x, theta_des, &f, &G);
+//
+//  auto clf_controller = builder.AddSystem<PendulumClfController>(
+//      x, f, G, clf, deriv_eps, u_bound);
+//  auto state_logger =
+//      LogVectorOutput(pendulum->get_state_output_port(), &builder);
+//  auto clf_logger = LogVectorOutput(
+//      clf_controller->get_output_port(clf_controller->clf_output_index()),
+//      &builder);
+//  // Shift the state by (-theta_des, 0) as the input to the clf controller.
+//  auto state_shifter = builder.AddSystem<ConstantVectorSource<double>>(
+//      Eigen::Vector2d(-theta_des, 0));
+//  const int nx = pendulum->num_continuous_states();
+//  auto state_adder = builder.AddSystem<Adder<double>>(2, nx);
+//  builder.Connect(pendulum->get_state_output_port(),
+//                  state_adder->get_input_port(0));
+//  builder.Connect(state_shifter->get_output_port(),
+//                  state_adder->get_input_port(1));
+//  builder.Connect(
+//      state_adder->get_output_port(),
+//      clf_controller->get_input_port(clf_controller->x_input_index()));
+//  builder.Connect(
+//      clf_controller->get_output_port(clf_controller->control_output_index()),
+//      pendulum->get_input_port());
+//  auto diagram = builder.Build();
+//  auto context = diagram->CreateDefaultContext();
+//
+//  Simulator<double> simulator(*diagram);
+//  simulator.get_mutable_context().SetContinuousState(x0);
+//
+//  simulator.AdvanceTo(duration);
+//  std::cout << "finish simulation\n";
+//
+//  std::cout << fmt::format(
+//      "final state: {}, final V: {}\n",
+//      state_logger->FindLog(simulator.get_context())
+//          .data()
+//          .rightCols<1>()
+//          .transpose(),
+//      clf_logger->FindLog(simulator.get_context()).data().rightCols<1>());
+//}
 
 void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
                      const symbolic::Polynomial& clf, double u_bound,
@@ -113,12 +161,8 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
   Vector3<symbolic::Polynomial> f;
   Vector3<symbolic::Polynomial> G;
   TrigPolyDynamics(*pendulum, x, theta_des, &f, &G);
-  Vector1d u_star(0);
-  const double vdot_cost = 0;
-  auto clf_controller = builder.AddSystem<ClfController>(
-      x, f, G, std::nullopt /* dynamics numerator */, clf, deriv_eps,
-      Eigen::Vector2d(1, -1), Eigen::Vector2d(u_bound, u_bound), u_star,
-      Vector1d::Ones(), vdot_cost);
+  auto clf_controller = builder.AddSystem<PendulumClfController>(
+      x, f, G, clf, deriv_eps, u_bound);
 
   auto state_converter = builder.AddSystem<TrigStateConverter>(theta_des);
 
@@ -364,8 +408,8 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
                    positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
                    ellipsoid_eq_lagrangian_degrees, deriv_eps, x_star, S,
                    V_degree - 2, search_options, ellipsoid_bisection_option);
-    Simulate(x, theta_des, search_result.V, u_bound, deriv_eps,
-             Eigen::Vector2d(M_PI + 0.6 * M_PI, 0), 10);
+    // Simulate(x, theta_des, search_result.V, u_bound, deriv_eps,
+    //         Eigen::Vector2d(M_PI + 0.6 * M_PI, 0), 10);
   }
 }
 

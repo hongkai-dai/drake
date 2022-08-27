@@ -826,9 +826,11 @@ VdotCalculator::VdotCalculator(
     const symbolic::Polynomial& V,
     const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
     const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
-    const std::optional<symbolic::Polynomial>& dynamics_numerator,
+    const std::optional<symbolic::Polynomial>& dynamics_denominator,
     const Eigen::Ref<const Eigen::MatrixXd>& u_vertices)
-    : x_{x}, dynamics_numerator_{dynamics_numerator}, u_vertices_{u_vertices} {
+    : x_{x},
+      dynamics_denominator_{dynamics_denominator},
+      u_vertices_{u_vertices} {
   DRAKE_DEMAND(u_vertices_.rows() == G.cols());
   const RowVectorX<symbolic::Polynomial> dVdx = V.Jacobian(x);
   dVdx_times_f_ = (dVdx * f)(0);
@@ -850,10 +852,10 @@ Eigen::VectorXd VdotCalculator::CalcMin(
         dVdx_times_G_(i).EvaluateIndeterminates(x_, x_vals);
   }
   ret += (dVdx_times_G_val * u_vertices_).rowwise().minCoeff();
-  if (dynamics_numerator_.has_value()) {
-    const Eigen::VectorXd numerator_val =
-        dynamics_numerator_->EvaluateIndeterminates(x_, x_vals);
-    ret = (ret.array() / numerator_val.array()).matrix();
+  if (dynamics_denominator_.has_value()) {
+    const Eigen::VectorXd denominator_val =
+        dynamics_denominator_->EvaluateIndeterminates(x_, x_vals);
+    ret = (ret.array() / denominator_val.array()).matrix();
   }
   return ret;
 }
@@ -1560,33 +1562,18 @@ ClfController::ClfController(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
     const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
     const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
-    const std::optional<symbolic::Polynomial>& dynamics_numerator,
-    symbolic::Polynomial V, double deriv_eps,
-    const Eigen::Ref<const Eigen::MatrixXd>& Au,
-    const Eigen::Ref<const Eigen::VectorXd>& bu,
-    const std::optional<Eigen::VectorXd>& u_star,
-    const Eigen::Ref<const Eigen::MatrixXd>& Ru, double vdot_cost)
+    const std::optional<symbolic::Polynomial>& dynamics_denominator,
+    symbolic::Polynomial V, double deriv_eps)
     : LeafSystem<double>(),
       x_{x},
       f_{f},
       G_{G},
-      dynamics_numerator_{dynamics_numerator},
+      dynamics_denominator_{dynamics_denominator},
       V_{std::move(V)},
-      deriv_eps_{deriv_eps},
-      Au_{Au},
-      bu_{bu},
-      u_star_{u_star},
-      Ru_{Ru},
-      vdot_cost_{vdot_cost} {
+      deriv_eps_{deriv_eps} {
   const int nx = f_.rows();
   const int nu = G_.cols();
   DRAKE_DEMAND(x_.rows() == nx);
-  DRAKE_DEMAND(Au_.cols() == nu);
-  DRAKE_DEMAND(Au_.rows() == bu_.rows());
-  if (u_star_.has_value()) {
-    DRAKE_DEMAND(u_star_->rows() == nu);
-  }
-  DRAKE_DEMAND(Ru_.rows() == nu && Ru_.cols() == nu);
   const RowVectorX<symbolic::Polynomial> dVdx = V_.Jacobian(x_);
   dVdx_times_f_ = dVdx.dot(f_);
   dVdx_times_G_ = dVdx * G_;
@@ -1612,46 +1599,31 @@ void ClfController::CalcClf(const Context<double>& context,
   clf_vec(0) = V_.Evaluate(env);
 }
 
-void ClfController::CalcControl(const Context<double>& context,
-                                BasicVector<double>* output) const {
-  const Eigen::VectorXd x_val =
-      this->get_input_port(x_input_index_).Eval(context);
-  symbolic::Environment env;
-  env.insert(x_, x_val);
-
-  solvers::MathematicalProgram prog;
+void ClfController::CalcVdot(const symbolic::Environment& env,
+                             double* dVdx_times_f_val,
+                             Eigen::RowVectorXd* dVdx_times_G_val,
+                             double* dynamics_denominator_val) const {
+  *dVdx_times_f_val = dVdx_times_f_.Evaluate(env);
   const int nu = G_.cols();
-  auto u = prog.NewContinuousVariables(nu, "u");
-  prog.AddLinearConstraint(Au_, Eigen::VectorXd::Constant(bu_.rows(), -kInf),
-                           bu_, u);
-  prog.AddQuadraticErrorCost(Ru_, *u_star_, u);
-
-  const double dVdx_times_f_val = dVdx_times_f_.Evaluate(env);
-  Eigen::RowVectorXd dVdx_times_G_val(nu);
+  dVdx_times_G_val->resize(nu);
   for (int i = 0; i < nu; ++i) {
-    dVdx_times_G_val(i) = dVdx_times_G_(i).Evaluate(env);
+    (*dVdx_times_G_val)(i) = dVdx_times_G_(i).Evaluate(env);
   }
-  const double V_val = V_.Evaluate(env);
   // dVdx * G * u + dVdx * f <= -eps * V * n(x)
-  const double dynamics_numerator_val =
-      dynamics_numerator_.has_value() ? dynamics_numerator_->Evaluate(env) : 1;
-  prog.AddLinearConstraint(
+  *dynamics_denominator_val = dynamics_denominator_.has_value()
+                                  ? dynamics_denominator_->Evaluate(env)
+                                  : 1;
+}
+
+void ClfController::AddClfConstraint(
+    solvers::MathematicalProgram* prog, double dVdx_times_f_val,
+    const Eigen::RowVectorXd& dVdx_times_G_val, double dynamics_denominator_val,
+    double V_val,
+    const Eigen::Ref<const VectorX<symbolic::Variable>>& u) const {
+  // dVdx * G * u + dVdx * f <= -eps * V * n(x)
+  prog->AddLinearConstraint(
       dVdx_times_G_val, -kInf,
-      -deriv_eps_ * V_val * dynamics_numerator_val - dVdx_times_f_val, u);
-  prog.AddLinearCost(dVdx_times_G_val / dynamics_numerator_val * vdot_cost_,
-                     dVdx_times_f_val / dynamics_numerator_val * vdot_cost_, u);
-  const auto result = solvers::Solve(prog);
-  if (!result.is_success()) {
-    drake::log()->info(
-        "dVdx*f+eps*V={}, dVdx*G={}",
-        dVdx_times_f_val / dynamics_numerator_val + deriv_eps_ * V_val,
-        dVdx_times_G_val / dynamics_numerator_val);
-    drake::log()->error("ClfController fails at t={} with x={}, V={}",
-                        context.get_time(), x_val.transpose(), V_val);
-    DRAKE_DEMAND(result.is_success());
-  }
-  const Eigen::VectorXd u_val = result.GetSolution(u);
-  output->get_mutable_value() = u_val;
+      -deriv_eps_ * V_val * dynamics_denominator_val - dVdx_times_f_val, u);
 }
 
 ControlLyapunovNoInputBound::ControlLyapunovNoInputBound(

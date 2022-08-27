@@ -20,9 +20,10 @@
 #include "drake/systems/analysis/simulator_config_functions.h"
 #include "drake/systems/analysis/simulator_print_stats.h"
 #include "drake/systems/analysis/simulator_python_internal.h"
+#include "drake/systems/analysis/test/acrobot.h"
+#include "drake/systems/analysis/test/cart_pole.h"
 #include "drake/systems/analysis/test/quadrotor.h"
 #include "drake/systems/analysis/test/quadrotor2d.h"
-#include "drake/systems/analysis/test/cart_pole.h"
 
 using std::unique_ptr;
 
@@ -240,6 +241,11 @@ PYBIND11_MODULE(analysis, m) {
         LeafSystem<T>>(m, "CartpoleTrigStateConverter", GetPyParam<T>(),
         doc.analysis.CartpoleTrigStateConverter.doc)
         .def(py::init<>(), doc.analysis.CartpoleTrigStateConverter.ctor.doc);
+
+    DefineTemplateClassWithDefault<analysis::AcrobotTrigStateConverter<T>,
+        LeafSystem<T>>(m, "AcrobotTrigStateConverter", GetPyParam<T>(),
+        doc.analysis.AcrobotTrigStateConverter.doc)
+        .def(py::init<>(), doc.analysis.AcrobotTrigStateConverter.ctor.doc);
 
     DefineTemplateClassWithDefault<analysis::Quadrotor2dTrigStateConverter<T>,
         LeafSystem<T>>(m, "Quadrotor2dTrigStateConverter", GetPyParam<T>(),
@@ -756,6 +762,26 @@ Parameter ``interruptible``:
   }
 
   {
+    // ClfController
+    py::class_<analysis::ClfController, LeafSystem<double>>(m, "ClfController")
+        //.def(py::init<const Eigen::Ref<const VectorX<symbolic::Variable>>&,
+        //         const Eigen::Ref<const VectorX<symbolic::Polynomial>>&,
+        //         const Eigen::Ref<const VectorX<symbolic::Polynomial>>&,
+        //         const std::optional<symbolic::Polynomial>&,
+        //         symbolic::Polynomial, double>(),
+        //    py::arg("x"), py::arg("f"), py::arg("G"),
+        //    py::arg("dynamics_denominator"), py::arg("V"),
+        //    py::arg("deriv_eps"))
+        .def("control_output_port",
+            &analysis::ClfController::control_output_port,
+            py_rvp::reference_internal)
+        .def("clf_output_port", &analysis::ClfController::clf_output_port,
+            py_rvp::reference_internal)
+        .def("x_input_port", &analysis::ClfController::x_input_port,
+            py_rvp::reference_internal);
+  }
+
+  {
     // ControlBarrier
     constexpr auto& cls_doc = pydrake_doc.drake.systems.analysis.ControlBarrier;
     using Class = analysis::ControlBarrier;
@@ -1235,7 +1261,9 @@ Parameter ``interruptible``:
     AddTemplateFunction(
         m, "CartpoleTrigDynamics",
         [](const analysis::CartPoleParams& params,
-            const Eigen::Ref<const Eigen::Matrix<symbolic::Expression, 5, 1>>& x, const symbolic::Expression& u) {
+            const Eigen::Ref<const Eigen::Matrix<symbolic::Expression, 5, 1>>&
+                x,
+            const symbolic::Expression& u) {
           Eigen::Matrix<symbolic::Expression, 5, 1> n;
           symbolic::Expression d;
           analysis::CartpoleTrigDynamics(params, x, u, &n, &d);
@@ -1267,6 +1295,84 @@ Parameter ``interruptible``:
           return std::make_tuple(result.K, result.S);
         },
         py::arg("params"), py::arg("Q"), py::arg("R"));
+
+    py::class_<analysis::CartpoleClfController, analysis::ClfController>(
+        m, "CartpoleClfController")
+        .def(py::init<const Eigen::Ref<
+                          const Eigen::Matrix<symbolic::Variable, 5, 1>>&,
+                 const Eigen::Ref<
+                     const Eigen::Matrix<symbolic::Polynomial, 5, 1>>&,
+                 const Eigen::Ref<
+                     const Eigen::Matrix<symbolic::Polynomial, 5, 1>>&,
+                 const symbolic::Polynomial&, symbolic::Polynomial, double,
+                 double>(),
+            py::arg("x"), py::arg("f"), py::arg("G"),
+            py::arg("dynamics_denominator"), py::arg("V"), py::arg("deriv_eps"),
+            py::arg("u_max"));
+  }
+
+  py::module::import("pydrake.examples.acrobot");
+  py::module::import("pydrake.autodiffutils");
+  {
+    // Acrobot
+    AddTemplateFunction(m, "ToAcrobotTrigState",
+        &analysis::ToAcrobotTrigState<double>, GetPyParam<double>());
+
+    AddTemplateFunction(m, "AcrobotMassMatrix",
+        &analysis::AcrobotMassMatrix<double>, GetPyParam<double>());
+
+    AddTemplateFunction(m, "AcrobotDynamicsBiasTerm",
+        &analysis::AcrobotDynamicsBiasTerm<double>, GetPyParam<double>());
+
+    AddTemplateFunction(
+        m, "AcrobotTrigDynamics",
+        [](const examples::acrobot::AcrobotParams<double>& p,
+            const Eigen::Ref<const Vector6<double>>& x, const double& u) {
+          Vector6<double> n;
+          double d;
+          analysis::AcrobotTrigDynamics(p, x, u, &n, &d);
+          return std::make_pair(n, d);
+        },
+        GetPyParam<double>());
+    AddTemplateFunction(
+        m, "AcrobotTrigDynamics",
+        [](const examples::acrobot::AcrobotParams<double>& p,
+            const Eigen::Ref<const Vector6<AutoDiffXd>>& x,
+            const AutoDiffXd& u) {
+          Vector6<AutoDiffXd> n;
+          AutoDiffXd d;
+          analysis::AcrobotTrigDynamics(p, x, u, &n, &d);
+          return std::make_pair(n, d);
+        },
+        GetPyParam<AutoDiffXd>());
+    AddTemplateFunction(
+        m, "AcrobotTrigDynamics",
+        [](const examples::acrobot::AcrobotParams<double>& p,
+            const Eigen::Ref<const Vector6<symbolic::Expression>>& x,
+            const symbolic::Expression& u) {
+          Vector6<symbolic::Expression> n;
+          symbolic::Expression d;
+          analysis::AcrobotTrigDynamics(p, x, u, &n, &d);
+          return std::make_pair(n, d);
+        },
+        GetPyParam<symbolic::Expression>());
+
+    AddTemplateFunction(m, "CalcAcrobotQdot",
+        &analysis::CalcAcrobotQdot<double>, GetPyParam<double>());
+
+    m.def(
+         "TrigPolyDynamics",
+         [](const examples::acrobot::AcrobotParams<double>& p,
+             const Eigen::Ref<const Vector6<symbolic::Variable>>& x) {
+           Vector6<symbolic::Polynomial> f;
+           Vector6<symbolic::Polynomial> G;
+           symbolic::Polynomial d;
+           analysis::TrigPolyDynamics(p, x, &f, &G, &d);
+           return std::make_tuple(f, G, d);
+         },
+         py::arg("p"), py::arg("x"))
+        .def("AcrobotStateEqConstraints", &analysis::AcrobotStateEqConstraints,
+            py::arg("x"));
   }
 
   {
@@ -1293,8 +1399,7 @@ Parameter ``interruptible``:
           analysis::TrigPolyDynamics(quadrotor, x, &f, &G);
           return std::make_tuple(f, G);
         },
-        py::arg("quadrotor"), py::arg("x"),
-        pydrake_doc.drake.systems.analysis.TrigPolyDynamics.doc);
+        py::arg("quadrotor"), py::arg("x"));
 
     m.def(
         "TrigPolyDynamicsTwinQuadrotor",

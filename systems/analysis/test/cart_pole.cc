@@ -2,6 +2,7 @@
 
 #include <iomanip>
 #include <iostream>
+#include <limits>
 
 #include "drake/common/find_resource.h"
 #include "drake/geometry/meshcat_visualizer.h"
@@ -21,6 +22,8 @@
 namespace drake {
 namespace systems {
 namespace analysis {
+const double kInf = std::numeric_limits<double>::infinity();
+
 void TrigPolyDynamics(
     const CartPoleParams& params,
     const Eigen::Ref<const Eigen::Matrix<symbolic::Variable, 5, 1>>& x,
@@ -91,6 +94,54 @@ void CartpoleTrigStateConverter<T>::CalcTrigState(const Context<T>& context,
   x_trig->get_mutable_value() = ToCartpoleTrigState<T>(x_orig);
 }
 
+CartpoleClfController::CartpoleClfController(
+    const Eigen::Ref<const Eigen::Matrix<symbolic::Variable, 5, 1>>& x,
+    const Eigen::Ref<const Eigen::Matrix<symbolic::Polynomial, 5, 1>>& f,
+    const Eigen::Ref<const Eigen::Matrix<symbolic::Polynomial, 5, 1>>& G,
+    const symbolic::Polynomial& dynamics_denominator, symbolic::Polynomial V,
+    double deriv_eps, double u_max)
+    : ClfController(x, f, G, dynamics_denominator, V, deriv_eps),
+      u_max_{u_max} {}
+
+void CartpoleClfController::DoCalcControl(const Context<double>& context,
+                                          BasicVector<double>* output) const {
+  const Eigen::VectorXd x_val =
+      this->get_input_port(this->x_input_index()).Eval(context);
+  symbolic::Environment env;
+  env.insert(x(), x_val);
+
+  solvers::MathematicalProgram prog;
+  auto u = prog.NewContinuousVariables(1, "u");
+  prog.AddBoundingBoxConstraint(-u_max_, u_max_, u(0));
+  prog.AddQuadraticCost(Eigen::Matrix<double, 1, 1>::Ones(), Vector1d(0), 0, u);
+
+  double dVdx_times_f_val;
+  Eigen::RowVectorXd dVdx_times_G_val;
+  double dynamics_denominator_val;
+  CalcVdot(env, &dVdx_times_f_val, &dVdx_times_G_val,
+           &dynamics_denominator_val);
+  const double V_val = V().Evaluate(env);
+  // dVdx * G * u + dVdx * f <= -eps * V * n(x)
+  AddClfConstraint(&prog, dVdx_times_f_val, dVdx_times_G_val,
+                   dynamics_denominator_val, V_val, u);
+  const double vdot_cost = 10;
+  prog.AddLinearCost(dVdx_times_G_val / dynamics_denominator_val * vdot_cost,
+                     dVdx_times_f_val / dynamics_denominator_val * vdot_cost,
+                     u);
+  const auto result = solvers::Solve(prog);
+  if (!result.is_success()) {
+    drake::log()->info(
+        "dVdx*f+eps*V={}, dVdx*G={}",
+        dVdx_times_f_val / dynamics_denominator_val + deriv_eps() * V_val,
+        dVdx_times_G_val / dynamics_denominator_val);
+    drake::log()->error("ClfController fails at t={} with x={}, V={}",
+                        context.get_time(), x_val.transpose(), V_val);
+    DRAKE_DEMAND(result.is_success());
+  }
+  const Eigen::VectorXd u_val = result.GetSolution(u);
+  output->get_mutable_value() = u_val;
+}
+
 void Simulate(const CartPoleParams& parameters,
               const Eigen::Matrix<symbolic::Variable, 5, 1>& x,
               const symbolic::Polynomial& clf, double u_bound, double deriv_eps,
@@ -113,19 +164,13 @@ void Simulate(const CartPoleParams& parameters,
       &builder, *scene_graph, meshcat, meshcat_params);
   unused(visualizer);
 
-  const Eigen::Vector2d Au(1, -1);
-  const Eigen::Vector2d bu(u_bound, u_bound);
-  const Vector1d u_star(0);
-  const Vector1d Ru(1);
   Eigen::Matrix<symbolic::Polynomial, 5, 1> f;
   Eigen::Matrix<symbolic::Polynomial, 5, 1> G;
-  symbolic::Polynomial dynamics_numerator;
-  TrigPolyDynamics(parameters, x, &f, &G, &dynamics_numerator);
+  symbolic::Polynomial dynamics_denominator;
+  TrigPolyDynamics(parameters, x, &f, &G, &dynamics_denominator);
 
-  const double vdot_cost = 100;
-  auto clf_controller = builder.AddSystem<ClfController>(
-      x, f, G, dynamics_numerator, clf, deriv_eps, Au, bu, u_star, Ru,
-      vdot_cost);
+  auto clf_controller = builder.AddSystem<CartpoleClfController>(
+      x, f, G, dynamics_denominator, clf, deriv_eps, u_bound);
   auto state_logger =
       LogVectorOutput(cart_pole->get_state_output_port(), &builder);
   auto clf_logger = LogVectorOutput(

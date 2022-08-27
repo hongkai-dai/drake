@@ -407,18 +407,19 @@ class ControlLyapunov {
 };
 
 /**
- * Compute V̇(x, u) = ∂V/∂x * (f(x)/n(x)+G(x)/n(x)*u)
- * @param dynamics_numerator n(x) in the documentation above. If
- * dynamics_numerator=std::nullopt, then n(x) = 1.
+ * Compute V̇(x, u) = ∂V/∂x * (f(x)/d(x)+G(x)/d(x)*u)
+ * @param dynamics_denominator d(x) in the documentation above. If
+ * dynamics_denominator=std::nullopt, then d(x) = 1.
  */
 class VdotCalculator {
  public:
-  VdotCalculator(const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
-                 const symbolic::Polynomial& V,
-                 const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
-                 const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
-                 const std::optional<symbolic::Polynomial>& dynamics_numerator,
-                 const Eigen::Ref<const Eigen::MatrixXd>& u_vertices);
+  VdotCalculator(
+      const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+      const symbolic::Polynomial& V,
+      const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
+      const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
+      const std::optional<symbolic::Polynomial>& dynamics_denominator,
+      const Eigen::Ref<const Eigen::MatrixXd>& u_vertices);
 
   symbolic::Polynomial Calc(const Eigen::Ref<const Eigen::VectorXd>& u) const;
 
@@ -434,7 +435,7 @@ class VdotCalculator {
 
  private:
   VectorX<symbolic::Variable> x_;
-  std::optional<symbolic::Polynomial> dynamics_numerator_;
+  std::optional<symbolic::Polynomial> dynamics_denominator_;
   Eigen::MatrixXd u_vertices_;
   symbolic::Polynomial dVdx_times_f_;
   RowVectorX<symbolic::Polynomial> dVdx_times_G_;
@@ -861,45 +862,49 @@ class ControlLyapunovBoxInputBound {
   int nu_;
 };
 
-/**
- * Computes the control action through the QP
- * min (u−u*)ᵀRᵤ(u−u*) + k*∂V/∂x*(f(x)/n(x)+G(x)/n(x)*u)
- * s.t ∂V/∂x*(f(x)/n(x)+G(x)/n(x)*u)≤ −εV
- *     Aᵤ*u ≤ bᵤ
- */
 class ClfController : public LeafSystem<double> {
  public:
   DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(ClfController)
 
   /**
-   * @param dynamics_numerator. n(x) in the documentation above. If
-   * dynamics_numerator = std::nullopt, then n(x)=1.
+   * @param dynamics_denominator. d(x) in the documentation above. If
+   * dynamics_denominator = std::nullopt, then d(x)=1.
    * @param u_star If u_star=nullptr, then we use u in the previous step as u*
    * @param vdot_cost k in the documentation above.
    */
   ClfController(const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
                 const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
                 const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
-                const std::optional<symbolic::Polynomial>& dynamics_numerator,
+                const std::optional<symbolic::Polynomial>& dynamics_denominator,
 
-                symbolic::Polynomial V, double deriv_eps,
-                const Eigen::Ref<const Eigen::MatrixXd>& Au,
-                const Eigen::Ref<const Eigen::VectorXd>& bu,
-                const std::optional<Eigen::VectorXd>& u_star,
-                const Eigen::Ref<const Eigen::MatrixXd>& Ru, double Vdot_cost);
+                symbolic::Polynomial V, double deriv_eps);
 
-  ~ClfController() {}
+  virtual ~ClfController() {}
+
+  const OutputPort<double>& control_output_port() const {
+    return this->get_output_port(control_output_index_);
+  }
 
   const OutputPortIndex& control_output_index() const {
     return control_output_index_;
   }
 
+  const OutputPort<double>& clf_output_port() const {
+    return this->get_output_port(clf_output_index_);
+  }
+
   const OutputPortIndex& clf_output_index() const { return clf_output_index_; }
+
+  const InputPort<double>& x_input_port() const {
+    return this->get_input_port(x_input_index_);
+  }
 
   const InputPortIndex& x_input_index() const { return x_input_index_; }
 
   void CalcControl(const Context<double>& context,
-                   BasicVector<double>* output) const;
+                   BasicVector<double>* output) const {
+    DoCalcControl(context, output);
+  }
 
   /**
    * Compute CLF V(x).
@@ -907,18 +912,46 @@ class ClfController : public LeafSystem<double> {
   void CalcClf(const Context<double>& context,
                BasicVector<double>* output) const;
 
+  const VectorX<symbolic::Variable>& x() const { return x_; }
+
+  const VectorX<symbolic::Polynomial>& f() const { return f_; }
+
+  const MatrixX<symbolic::Polynomial>& G() const { return G_; }
+
+  const std::optional<symbolic::Polynomial>& dynamics_denominator() const {
+    return dynamics_denominator_;
+  }
+
+  const symbolic::Polynomial& V() const { return V_; }
+
+  double deriv_eps() const { return deriv_eps_; }
+
+ protected:
+  const symbolic::Polynomial& dVdx_times_f() const { return dVdx_times_f_; }
+
+  const RowVectorX<symbolic::Polynomial>& dVdx_times_G() const {
+    return dVdx_times_G_;
+  }
+
+  void CalcVdot(const symbolic::Environment& env, double* dVdx_times_f_val,
+                Eigen::RowVectorXd* dVdX_times_G_val,
+                double* dynamics_denominator_val) const;
+
+  void AddClfConstraint(
+      solvers::MathematicalProgram* prog, double dVdx_times_f_val,
+      const Eigen::RowVectorXd& dVdx_times_G_val,
+      double dynamics_denominator_val, double V_val,
+      const Eigen::Ref<const VectorX<symbolic::Variable>>& u) const;
+
  private:
+  virtual void DoCalcControl(const Context<double>& context,
+                             BasicVector<double>* output) const = 0;
   VectorX<symbolic::Variable> x_;
   VectorX<symbolic::Polynomial> f_;
   MatrixX<symbolic::Polynomial> G_;
-  std::optional<symbolic::Polynomial> dynamics_numerator_;
+  std::optional<symbolic::Polynomial> dynamics_denominator_;
   symbolic::Polynomial V_;
   double deriv_eps_;
-  Eigen::MatrixXd Au_;
-  Eigen::VectorXd bu_;
-  mutable std::optional<Eigen::VectorXd> u_star_;
-  Eigen::MatrixXd Ru_;
-  double vdot_cost_;
   symbolic::Polynomial dVdx_times_f_;
   RowVectorX<symbolic::Polynomial> dVdx_times_G_;
   OutputPortIndex control_output_index_;

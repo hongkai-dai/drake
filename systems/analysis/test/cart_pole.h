@@ -10,6 +10,7 @@
 #include "drake/common/eigen_types.h"
 #include "drake/common/symbolic/expression.h"
 #include "drake/common/symbolic/polynomial.h"
+#include "drake/systems/analysis/control_lyapunov.h"
 #include "drake/systems/controllers/linear_quadratic_regulator.h"
 
 namespace drake {
@@ -115,6 +116,22 @@ class CartpoleTrigStateConverter : public LeafSystem<T> {
 
  private:
   void CalcTrigState(const Context<T>& context, BasicVector<T>* x_trig) const;
+};
+
+class CartpoleClfController : public ClfController {
+ public:
+  CartpoleClfController(
+      const Eigen::Ref<const Eigen::Matrix<symbolic::Variable, 5, 1>>& x,
+      const Eigen::Ref<const Eigen::Matrix<symbolic::Polynomial, 5, 1>>& f,
+      const Eigen::Ref<const Eigen::Matrix<symbolic::Polynomial, 5, 1>>& G,
+      const symbolic::Polynomial& dynamics_denominator, symbolic::Polynomial V,
+      double deriv_eps, double u_max);
+
+ private:
+  virtual void DoCalcControl(const Context<double>& context,
+                             BasicVector<double>* output) const override;
+
+  double u_max_;
 };
 
 void Simulate(const CartPoleParams& parameters,

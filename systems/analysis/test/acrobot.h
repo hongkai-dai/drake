@@ -13,7 +13,7 @@ namespace systems {
 namespace analysis {
 
 template <typename T>
-Vector6<T> ToTrigState(const Eigen::Ref<const Vector4<T>>& x_orig) {
+Vector6<T> ToAcrobotTrigState(const Eigen::Ref<const Vector4<T>>& x_orig) {
   Vector6<T> x_trig;
   using std::cos;
   using std::sin;
@@ -26,8 +26,8 @@ Vector6<T> ToTrigState(const Eigen::Ref<const Vector4<T>>& x_orig) {
 }
 
 template <typename T>
-Matrix2<T> MassMatrix(const examples::acrobot::AcrobotParams<double>& p,
-                      const Eigen::Ref<const Vector6<T>>& x) {
+Matrix2<T> AcrobotMassMatrix(const examples::acrobot::AcrobotParams<double>& p,
+                             const Eigen::Ref<const Vector6<T>>& x) {
   const T c2 = x(3) + 1;
   const T I1 = p.Ic1() + p.m1() * p.lc1() * p.lc1();
   const T I2 = p.Ic2() + p.m2() * p.lc2() * p.lc2();
@@ -39,8 +39,9 @@ Matrix2<T> MassMatrix(const examples::acrobot::AcrobotParams<double>& p,
 }
 
 template <typename T>
-Vector2<T> DynamicsBiasTerm(const examples::acrobot::AcrobotParams<double>& p,
-                            const Eigen::Ref<const Vector6<T>>& x) {
+Vector2<T> AcrobotDynamicsBiasTerm(
+    const examples::acrobot::AcrobotParams<double>& p,
+    const Eigen::Ref<const Vector6<T>>& x) {
   const T& s1 = x(0);
   const T& s2 = x(2);
   const T c1 = x(1) - 1;
@@ -74,11 +75,11 @@ Vector2<T> DynamicsBiasTerm(const examples::acrobot::AcrobotParams<double>& p,
  * (sinθ₁, cosθ₁+1, sinθ₂, cosθ₂−1, θ₁_dot, θ₂_dot)
  */
 template <typename T>
-void TrigDynamics(const examples::acrobot::AcrobotParams<double>& p,
-                  const Eigen::Ref<const Vector6<T>>& x, const T& u,
-                  Vector6<T>* n, T* d) {
-  const Matrix2<T> M = MassMatrix<T>(p, x);
-  const Vector2<T> bias = DynamicsBiasTerm<T>(p, x);
+void AcrobotTrigDynamics(const examples::acrobot::AcrobotParams<double>& p,
+                         const Eigen::Ref<const Vector6<T>>& x, const T& u,
+                         Vector6<T>* n, T* d) {
+  const Matrix2<T> M = AcrobotMassMatrix<T>(p, x);
+  const Vector2<T> bias = AcrobotDynamicsBiasTerm<T>(p, x);
   const T det_M = M(0, 0) * M(1, 1) - M(1, 0) * M(0, 1);
   const T& s1 = x(0);
   const T& s2 = x(2);
@@ -98,7 +99,7 @@ void TrigDynamics(const examples::acrobot::AcrobotParams<double>& p,
 }
 
 template <typename T>
-Vector4<T> CalcQdot(const Eigen::Ref<const Vector6<T>>& x) {
+Vector4<T> CalcAcrobotQdot(const Eigen::Ref<const Vector6<T>>& x) {
   Vector4<T> qdot;
   const T& s1 = x(0);
   const T& s2 = x(2);
@@ -123,19 +124,19 @@ void TrigPolyDynamics(const examples::acrobot::AcrobotParams<double>& p,
                       Vector6<symbolic::Polynomial>* G,
                       symbolic::Polynomial* d);
 
-Vector2<symbolic::Polynomial> StateEqConstraints(
+Vector2<symbolic::Polynomial> AcrobotStateEqConstraints(
     const Eigen::Ref<const Vector6<symbolic::Variable>>& x);
 
 template <typename T>
-class ToTrigStateConverter : public LeafSystem<T> {
+class AcrobotTrigStateConverter : public LeafSystem<T> {
  public:
-  ToTrigStateConverter();
+  AcrobotTrigStateConverter();
 
   template <typename U>
-  explicit ToTrigStateConverter(const ToTrigStateConverter<U>&)
-      : ToTrigStateConverter<T>() {}
+  explicit AcrobotTrigStateConverter(const AcrobotTrigStateConverter<U>&)
+      : AcrobotTrigStateConverter<T>() {}
 
-  ~ToTrigStateConverter(){};
+  ~AcrobotTrigStateConverter(){};
 
  private:
   void CalcTrigState(const Context<T>& context, BasicVector<T>* x_trig) const;
@@ -145,4 +146,4 @@ class ToTrigStateConverter : public LeafSystem<T> {
 }  // namespace drake
 
 DRAKE_DEFINE_CLASS_TEMPLATE_INSTANTIATIONS_ON_DEFAULT_SCALARS(
-    class ::drake::systems::analysis::ToTrigStateConverter)
+    class ::drake::systems::analysis::AcrobotTrigStateConverter)

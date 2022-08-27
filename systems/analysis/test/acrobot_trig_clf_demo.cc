@@ -50,7 +50,7 @@ controllers::LinearQuadraticRegulatorResult SynthesizeTrigLqr(
   const auto xu_des_ad = math::InitializeAutoDiff(xu_des);
   Vector6<AutoDiffXd> n;
   AutoDiffXd d;
-  TrigDynamics<AutoDiffXd>(p, xu_des_ad.head<6>(), xu_des_ad(6), &n, &d);
+  AcrobotTrigDynamics<AutoDiffXd>(p, xu_des_ad.head<6>(), xu_des_ad(6), &n, &d);
   const Vector6<AutoDiffXd> xdot_des_ad = n / d;
   const auto xdot_des_grad = math::ExtractGradient(xdot_des_ad);
   // The constraints are x(0) * x(0) + (x(1) + 1) * (x(1) + 1) = 1
@@ -87,7 +87,8 @@ controllers::LinearQuadraticRegulatorResult SynthesizeTrigLqr(
   vdot_sos -= l * (rho - V_init) * dynamics_denominator;
 
   const std::vector<int> p_degrees{{6, 6}};
-  const Vector2<symbolic::Polynomial> state_constraints = StateEqConstraints(x);
+  const Vector2<symbolic::Polynomial> state_constraints =
+      AcrobotStateEqConstraints(x);
   Vector2<symbolic::Polynomial> p;
   for (int i = 0; i < 2; ++i) {
     p(i) = prog.NewFreePolynomial(x_set, p_degrees[i]);
@@ -129,7 +130,7 @@ controllers::LinearQuadraticRegulatorResult SynthesizeTrigLqr(
     p(i) = prog.NewFreePolynomial(x_set, p_degrees[i]);
   }
   const Vector2<symbolic::Polynomial> state_eq_constraints =
-      StateEqConstraints(x);
+      AcrobotStateEqConstraints(x);
   vdot_sos -= p.dot(state_eq_constraints);
   prog.AddSosConstraint(vdot_sos);
   prog.AddLinearCost(Vector1d(-1), 0, Vector1<symbolic::Variable>(rho));
@@ -147,8 +148,8 @@ symbolic::Polynomial FindClfInit(
   const symbolic::Expression u_lqr = -lqr_result.K.row(0).dot(x);
   Vector6<symbolic::Expression> n_expr;
   symbolic::Expression d_expr;
-  TrigDynamics<symbolic::Expression>(p, x.cast<symbolic::Expression>(), u_lqr,
-                                     &n_expr, &d_expr);
+  AcrobotTrigDynamics<symbolic::Expression>(p, x.cast<symbolic::Expression>(),
+                                            u_lqr, &n_expr, &d_expr);
   Vector6<symbolic::Polynomial> dynamics_numerator;
   for (int i = 0; i < 6; ++i) {
     dynamics_numerator(i) = symbolic::Polynomial(n_expr(i));
@@ -160,7 +161,7 @@ symbolic::Polynomial FindClfInit(
   const int d = V_degree / 2;
   const double deriv_eps = 0.01;
   const Vector2<symbolic::Polynomial> state_eq_constraints =
-      StateEqConstraints(x);
+      AcrobotStateEqConstraints(x);
   const std::vector<int> positivity_ceq_lagrangian_degrees{
       {V_degree - 2, V_degree - 2}};
   const std::vector<int> derivative_ceq_lagrangian_degrees{{4, 4}};
@@ -202,7 +203,8 @@ void SearchWTrigDynamics(double u_max,
   Vector6<symbolic::Polynomial> G;
   symbolic::Polynomial dynamics_denominator;
   TrigPolyDynamics(parameters, x, &f, &G, &dynamics_denominator);
-  const Vector2<symbolic::Polynomial> state_constraints = StateEqConstraints(x);
+  const Vector2<symbolic::Polynomial> state_constraints =
+      AcrobotStateEqConstraints(x);
 
   // Arbitrary maximal joint torque.
   const Eigen::RowVector2d u_vertices(-u_max, u_max);
@@ -291,7 +293,7 @@ void SearchWTrigDynamics(double u_max,
     SwingUpTrajectoryOptimization(&state_swingup, &control_swingup);
     Eigen::Matrix<double, 6, Eigen::Dynamic> x_swingup(6, state_swingup.cols());
     for (int i = 0; i < x_swingup.cols(); ++i) {
-      x_swingup.col(i) = ToTrigState<double>(state_swingup.col(i));
+      x_swingup.col(i) = ToAcrobotTrigState<double>(state_swingup.col(i));
     }
     std::cout << "V_init at x_swingup "
               << V_init.EvaluateIndeterminates(x, x_swingup).transpose()
@@ -304,7 +306,7 @@ void SearchWTrigDynamics(double u_max,
     std::cout << "state samples:\n" << state_samples.transpose() << "\n";
     Eigen::MatrixXd x_samples(6, state_samples.cols());
     for (int i = 0; i < state_samples.cols(); ++i) {
-      x_samples.col(i) = ToTrigState<double>(state_samples.col(i));
+      x_samples.col(i) = ToAcrobotTrigState<double>(state_samples.col(i));
     }
 
     const double positivity_eps = 0.0001;

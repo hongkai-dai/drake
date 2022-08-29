@@ -8,17 +8,18 @@ from pydrake.solvers import mathematicalprogram as mp
 from pydrake.solvers.mosek import MosekSolver
 import pydrake.symbolic as sym
 import pydrake.common
+from pydrake.common import RandomGenerator
 from pydrake.systems.framework import (
     DiagramBuilder,
     LeafSystem,
 )
+import pydrake.math
 from pydrake.systems.primitives import LogVectorOutput
 from pydrake.examples import (
     QuadrotorGeometry,
     QuadrotorPlant,
 )
-
-from pydrake.geometry import(
+from pydrake.geometry import (
     MeshcatVisualizer,
     MeshcatVisualizerParams,
     Role,
@@ -27,6 +28,7 @@ from pydrake.geometry import(
 )
 
 meshcat = StartMeshcat()
+
 
 class QuadrotorCbfController(LeafSystem):
     def __init__(self, x, f, G, cbf, deriv_eps, thrust_max, beta_minus, beta_plus):
@@ -47,8 +49,10 @@ class QuadrotorCbfController(LeafSystem):
         self.dhdx_times_G = dhdx @ self.G
 
         self.x_input_index = self.DeclareVectorInputPort("x", 13).get_index()
-        self.control_output_index = self.DeclareVectorOutputPort("control", 4, self.CalcControl).get_index()
-        self.cbf_output_index = self.DeclareVectorOutputPort("cbf", 1, self.CalcCbf).get_index()
+        self.control_output_index = self.DeclareVectorOutputPort(
+            "control", 4, self.CalcControl).get_index()
+        self.cbf_output_index = self.DeclareVectorOutputPort(
+            "cbf", 1, self.CalcCbf).get_index()
 
     def x_input_port(self):
         return self.get_input_port(self.x_input_index)
@@ -85,8 +89,9 @@ class QuadrotorCbfController(LeafSystem):
 
     def CalcCbf(self, context, output):
         x_val = self.x_input_port().Eval(context)
-        env = {self.x[i] : x_val[i] for i in range(13)}
+        env = {self.x[i]: x_val[i] for i in range(13)}
         output.SetFromVector(np.array([self.cbf.Evaluate(env)]))
+
 
 def simulate(x, f, G, cbf, thrust_max, deriv_eps, beta_minus, beta_plus, initial_state, duration):
     builder = DiagramBuilder()
@@ -104,16 +109,21 @@ def simulate(x, f, G, cbf, thrust_max, deriv_eps, beta_minus, beta_plus, initial
 
     state_converter = builder.AddSystem(analysis.QuadrotorTrigStateConverter())
 
-    builder.Connect(quadrotor.get_output_port(0), state_converter.get_input_port())
+    builder.Connect(quadrotor.get_output_port(
+        0), state_converter.get_input_port())
 
-    cbf_controller = builder.AddSystem(QuadrotorCbfController(x,f, G, cbf, deriv_eps, thrust_max, beta_minus, beta_plus))
+    cbf_controller = builder.AddSystem(QuadrotorCbfController(
+        x, f, G, cbf, deriv_eps, thrust_max, beta_minus, beta_plus))
 
-    builder.Connect(cbf_controller.control_output_port(), quadrotor.get_input_port())
-    builder.Connect(state_converter.get_output_port(), cbf_controller.x_input_port())
+    builder.Connect(cbf_controller.control_output_port(),
+                    quadrotor.get_input_port())
+    builder.Connect(state_converter.get_output_port(),
+                    cbf_controller.x_input_port())
 
     state_logger = LogVectorOutput(quadrotor.get_output_port(), builder)
     cbf_logger = LogVectorOutput(cbf_controller.cbf_output_port(), builder)
-    control_logger = LogVectorOutput(cbf_controller.control_output_port(), builder)
+    control_logger = LogVectorOutput(
+        cbf_controller.control_output_port(), builder)
 
     diagram = builder.Build()
 
@@ -128,6 +138,7 @@ def simulate(x, f, G, cbf, thrust_max, deriv_eps, beta_minus, beta_plus, initial
     cbf_data = cbf_logger.FindLog(simulator.get_context()).data()
     control_data = control_logger.FindLog(simulator.get_context()).data()
     pass
+
 
 def get_u_vertices(thrust_max):
     return np.array([
@@ -148,12 +159,78 @@ def get_u_vertices(thrust_max):
         [1, 0, 1, 1],
         [1, 0, 1, 0]]).T * thrust_max
 
-def search_sphere_obstacle_cbf(x, f, G, beta_minus, beta_plus, thrust_max, kappa, x_safe, h_init):
+
+def search_cbf_init(x, f, G, kappa: float, h_degree: int, unsafe_region: sym.Polynomial, x_safe):
+    """
+    Find a CBF with the condition
+    maxᵤ ∂h/∂x*(f(x)+G(x)u)− r * uᵀu ≥ −κ h(x)
+    h(x) <= 0 ∀ x ∈ unsafe_regions
+    The first condition is that the matrix
+    [∂h/∂x*f(x)+κh(x)  ∂h/∂x*G(x)] is psd
+    [(∂h/∂x*G(x))ᵀ             4r]
+    This is a matrix-sos constraint. We impose it on some sample x.
+    """
+    prog = mp.MathematicalProgram()
+    prog.AddIndeterminates(x)
+    x_set = sym.Variables(x)
+    h = prog.NewFreePolynomial(x_set, h_degree)
+    dhdx = h.Jacobian(x)
+    dhdx_times_f = dhdx.dot(f)
+    dhdx_times_G = dhdx @ G
+    state_eq_constraint = analysis.QuadrotorStateEqConstraint(x)
+    state_eq_lagrangian = prog.NewFreePolynomial(x_set, h_degree)
+    g = RandomGenerator()
+    x_samples = np.empty((10000, 13))
+    for i in range(x_samples.shape[0]):
+        x_samples[i, :4] = pydrake.math.UniformlyRandomQuaternion(g).wxyz()
+    x_samples[:, 4] = np.random.rand(x_samples.shape[0])
+    x_samples[:, 5:] = np.random.rand(x_samples.shape[0], 8) * 2 - 1
+
+    psd_top_left = (dhdx_times_f + kappa * h -
+                    state_eq_lagrangian * state_eq_constraint).ToExpression()
+    r = 0.01
+    for i in range(x_samples.shape[0]):
+        env = {x[j]: x_samples[i, j] for j in range(13)}
+        psd_sample = np.empty((5, 5), dtype=object)
+        psd_sample[0, 0] = psd_top_left.EvaluatePartial(env)
+        for j in range(4):
+            psd_sample[0, j +
+                       1] = dhdx_times_G[j].ToExpression().EvaluatePartial(env)
+            psd_sample[j+1, 0] = psd_sample[0, j+1]
+        psd_sample[1:, 1:] = 4 * r * np.eye(4)
+        prog.AddPositiveSemidefiniteConstraint(psd_sample)
+
+    # Add the constraint that h(x) <= 0 in the unsafe region.
+    unsafe_eq_lagrangian = prog.NewFreePolynomial(x_set, h_degree - 2)
+    unsafe_lagrangian, _ = prog.NewSosPolynomial(x_set, h_degree - 2)
+    prog.AddSosConstraint(-h + unsafe_lagrangian * unsafe_region -
+                          unsafe_eq_lagrangian * state_eq_constraint)
+
+    # Add the constraint h(x_safe) >= 0
+    A_h_safe, var_h_safe, b_h_safe = h.EvaluateWithAffineCoefficients(
+        x, x_safe)
+    prog.AddLinearConstraint(
+        A_h_safe, -b_h_safe, np.full_like(b_h_safe, np.inf), var_h_safe)
+
+    solver_options = mp.SolverOptions()
+    solver_options.SetOption(mp.CommonSolverOption.kPrintToConsole, 1)
+    result = mp.Solve(prog, None, solver_options)
+    assert (result.is_success())
+    return result.GetSolution(h)
+
+
+def search_sphere_obstacle_cbf(x, f, G, beta_minus, beta_plus, thrust_max, kappa, x_safe):
     """
     Given h_init that already satisfies hdot >= -kappa*h, try to minimize h(sphere_center) while keeping h(x_safe) >= 0
     """
+    x_set = sym.Variables(x)
+    with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_cbf/quadrotor3d_trig_cbf17.pickle", "rb") as input_file:
+        h_init = clf_cbf_utils.deserialize_polynomial(
+            x_set, pickle.load(input_file)["h"])
+    u_vertices = get_u_vertices(thrust_max)
     state_constraints = np.array([analysis.QuadrotorStateEqConstraint(x)])
-    dut = analysis.ControlBarrier(f, G, None, x, beta_minus, beta_plus, [], u_vertices, state_constraints)
+    dut = analysis.ControlBarrier(
+        f, G, None, x, beta_minus, beta_plus, [], u_vertices, state_constraints)
 
     assert (np.all(h_init.EvaluateIndeterminates(x, x_safe) >= 0))
     iter_count = 0
@@ -165,11 +242,10 @@ def search_sphere_obstacle_cbf(x, f, G, beta_minus, beta_plus, thrust_max, kappa
     l_degrees = [2] * 16
     hdot_eq_lagrangian_degrees = [h_degree + lambda0_degree - 2]
     t_degrees = []
-    s_degrees = [[]]
-    unsafe_state_constraints_lagrangian_degrees = [[]]
+    s_degrees = []
+    unsafe_state_constraints_lagrangian_degrees = []
     unsafe_a_info = [None]
-    search_options = analysis.ControlBarrier.SearchWithSlackAOptions(
-        hdot_a_zero_tol, unsafe_a_zero_tol, use_zero_a=True)
+    search_options = analysis.ControlBarrier.SearchOptions()
     search_options.bilinear_iterations = 20
     search_options.lagrangian_step_solver_options = mp.SolverOptions()
     search_options.lagrangian_step_solver_options.SetOption(
@@ -192,17 +268,19 @@ def search_sphere_obstacle_cbf(x, f, G, beta_minus, beta_plus, thrust_max, kappa
         barrier_ret = dut.ConstructBarrierProgram(
             search_lagrangian_ret.lambda0, search_lagrangian_ret.lambda1,
             search_lagrangian_ret.l, hdot_eq_lagrangian_degrees, None, [],
-            [[]], h_degree, kappa, s_degrees, [[]])
+            [[]], h_degree, kappa, s_degrees, [])
         # Add constraint h(x_safe) >= 0
-        A_h_safe, var_h_safe, b_h_safe = barrier_ret.h.EvaluateWithAffineCoefficients(x, x_safe)
+        A_h_safe, var_h_safe, b_h_safe = barrier_ret.h.EvaluateWithAffineCoefficients(
+            x, x_safe)
         barrier_ret.prog().AddLinearConstraint(
             A_h_safe, -b_h_safe, np.full_like(b_h_safe, np.inf), var_h_safe)
         # Add cost to minimize h(sphere_center)
-        A_sphere_center, var_sphere_center, b_sphere_center = barrier_ret.h.EvaluateWithAffineCoefficients(x, sphere_center)
+        A_sphere_center, var_sphere_center, b_sphere_center = barrier_ret.h.EvaluateWithAffineCoefficients(
+            x, sphere_center)
         barrier_ret.prog().AddLinearCost(
             A_sphere_center[0, :], b_sphere_center[0], var_sphere_center)
         result = analysis.SearchWithBackoff(
-            barrier_ret.prog(), search_options.barrier_step_solver_id,
+            barrier_ret.prog(), search_options.barrier_step_solver,
             search_options.barrier_step_solver_options,
             search_options.barrier_step_backoff_scale)
         assert (result.is_success())
@@ -210,12 +288,6 @@ def search_sphere_obstacle_cbf(x, f, G, beta_minus, beta_plus, thrust_max, kappa
         iter_count += 1
 
     return h_sol
-
-
-
-
-
-
 
 
 def search(
@@ -238,11 +310,11 @@ def search(
     h_degree = 2
     x_set = sym.Variables(x)
 
-    #h_init = sym.Polynomial((x[4] - 0.5) ** 2 + x[5] **
+    # h_init = sym.Polynomial((x[4] - 0.5) ** 2 + x[5] **
     #                        2 + x[6] ** 2 + 0.01 * x[7:].dot(x[7:]) - 0.2)
     with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_cbf/quadrotor3d_trig_cbf17.pickle", "rb") as input_file:
-       h_init = clf_cbf_utils.deserialize_polynomial(
-           x_set, pickle.load(input_file)["h"])
+        h_init = clf_cbf_utils.deserialize_polynomial(
+            x_set, pickle.load(input_file)["h"])
 
     h_init_x_safe = h_init.EvaluateIndeterminates(x, x_safe)
     print(f"h_init(x_safe): {h_init_x_safe.squeeze()}")
@@ -267,10 +339,10 @@ def search(
     s_degrees = [[h_degree - 2]]
     unsafe_eq_lagrangian_degrees = [[h_degree - 2]]
     if with_slack_a:
-        unsafe_a_info = [analysis.SlackPolynomialInfo(
-            degree=h_degree, poly_type=analysis.SlackPolynomialType.kSos,
-            cost_weight=1.)]
-        #unsafe_a_info = [None]
+        # unsafe_a_info = [analysis.SlackPolynomialInfo(
+        #    degree=h_degree, poly_type=analysis.SlackPolynomialType.kSos,
+        #    cost_weight=1.)]
+        unsafe_a_info = [None]
     h_x_safe_min = np.array([0.01] * x_safe.shape[1])
 
     if with_slack_a:
@@ -320,11 +392,11 @@ def search(
             ellipsoid_options = [
                 analysis.ControlBarrier.EllipsoidMaximizeOption(
                     t=sym.Polynomial(), s_degree=0, backoff_scale=0.04)]
-            search_options.lsol_tiny_coeff_tol = 0#1E-6
-            search_options.hsol_tiny_coeff_tol = 0#1E-6
+            search_options.lsol_tiny_coeff_tol = 0  # 1E-6
+            search_options.hsol_tiny_coeff_tol = 0  # 1E-6
             search_options.barrier_step_backoff_scale = 0.01
             x_anchor = x_safe[:, 0]
-            h_x_anchor_max = h_init.EvaluateIndeterminates(x, x_anchor)[0] * 10 
+            h_x_anchor_max = h_init.EvaluateIndeterminates(x, x_anchor)[0] * 10
             search_result = dut.Search(
                 h_init, h_degree, deriv_eps, lambda0_degree, lambda1_degree,
                 l_degrees, hdot_eq_lagrangian_degrees, t_degrees, s_degrees,
@@ -354,7 +426,7 @@ def search(
             "unsafe_region0": clf_cbf_utils.serialize_polynomial(unsafe_regions[0][0])}, handle)
     return search_result.h
 
-#def reexecute_if_unbuffered():
+# def reexecute_if_unbuffered():
 #    """Ensures that output is immediately flushed (e.g. for segfaults).
 #    ONLY use this at your entrypoint. Otherwise, you may have code be
 #    re-executed that will clutter your console."""
@@ -371,7 +443,7 @@ def search(
 #        os.execv(argv[0], argv)
 #
 #
-#def traced(func, ignoredirs=None):
+# def traced(func, ignoredirs=None):
 #    """Decorates func such that its execution is traced, but filters out any
 #     Python code outside of the system prefix."""
 #    import functools
@@ -387,7 +459,9 @@ def search(
 #
 #    return wrapped
 #
-#@traced
+# @traced
+
+
 def main():
     pydrake.common.configure_logging()
     quadrotor = analysis.QuadrotorTrigPlant()
@@ -396,15 +470,17 @@ def main():
     thrust_equilibrium = analysis.EquilibriumThrust(quadrotor)
     thrust_max = 3 * thrust_equilibrium
     deriv_eps = 0.1
-    unsafe_regions = [np.array([#sym.Polynomial(x[6] + 0.15)])]
-        sym.Polynomial((x[4] - 0.5) ** 2 + x[5] ** 2 + x[6] ** 2- (0.8*quadrotor.length()) ** 2)])]
+    unsafe_regions = [np.array([  # sym.Polynomial(x[6] + 0.15)])]
+        sym.Polynomial((x[4] - 0.5) ** 2 + x[5] ** 2 + x[6] ** 2 - (0.8*quadrotor.length()) ** 2)])]
     x_safe = np.empty((13, 2))
     x_safe[:, 0] = np.zeros(13)
     x_safe[:, 1] = np.zeros(13)
     x_safe[4, 1] = 1
-    h_sol = search(x, f, G, thrust_max, deriv_eps, unsafe_regions, x_safe)
+    #h_sol = search(x, f, G, thrust_max, deriv_eps, unsafe_regions, x_safe)
+    h_sol = search_sphere_obstacle_cbf(
+        x, f, G, -0.01, 0.01, thrust_max, deriv_eps, x_safe)
 
-    #with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_cbf/quadrotor3d_trig_cbf15.pickle", "rb") as input_file:
+    # with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_cbf/quadrotor3d_trig_cbf15.pickle", "rb") as input_file:
     #    input_data = pickle.load(input_file)
     #x_set = sym.Variables(x)
     #cbf = clf_cbf_utils.deserialize_polynomial(x_set, input_data["h"])

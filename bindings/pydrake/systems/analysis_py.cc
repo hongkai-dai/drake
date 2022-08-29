@@ -779,8 +779,8 @@ Parameter ``interruptible``:
         control_lyapunov, "SearchLagrangianResult")
         .def_readonly("success", &Class::SearchLagrangianResult::success)
         .def_readonly("lambda0", &Class::SearchLagrangianResult::lambda0)
-        .def_readonly("l", &Class::SearchLagrangianResult::l)
-        .def_readonly("p", &Class::SearchLagrangianResult::p)
+        .def_readonly("l", &Class::SearchLagrangianResult::l, py_rvp::copy)
+        .def_readonly("p", &Class::SearchLagrangianResult::p, py_rvp::copy)
         .def_readonly("a", &Class::SearchLagrangianResult::a)
         .def_readonly("a_gram", &Class::SearchLagrangianResult::a_gram);
 
@@ -1108,14 +1108,14 @@ Parameter ``interruptible``:
         .def_readonly("success", &Class::SearchLagrangianResult::success)
         .def_readonly("lambda0", &Class::SearchLagrangianResult::lambda0)
         .def_readonly("lambda1", &Class::SearchLagrangianResult::lambda1)
-        .def_readonly("l", &Class::SearchLagrangianResult::l)
+        .def_readonly("l", &Class::SearchLagrangianResult::l, py_rvp::copy)
         .def_readonly("hdot_state_constraints_lagrangian",
             &Class::SearchLagrangianResult::hdot_state_constraints_lagrangian)
         .def_readonly("hdot_a", &Class::SearchLagrangianResult::hdot_a)
         .def_readonly(
             "hdot_a_gram", &Class::SearchLagrangianResult::hdot_a_gram)
-        .def_readonly("t", &Class::SearchLagrangianResult::t)
-        .def_readonly("s", &Class::SearchLagrangianResult::s)
+        .def_readonly("t", &Class::SearchLagrangianResult::t, py_rvp::copy)
+        .def_readonly("s", &Class::SearchLagrangianResult::s, py_rvp::copy)
         .def_readonly("unsafe_state_constraints_lagrangian",
             &Class::SearchLagrangianResult::unsafe_state_constraints_lagrangian)
         .def_readonly("unsafe_a", &Class::SearchLagrangianResult::unsafe_a)

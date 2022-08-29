@@ -1265,6 +1265,10 @@ Parameter ``interruptible``:
         py::arg("state_ineq_constraints"),
         py::arg("positivity_cin_lagrangian_degrees"),
         py::arg("derivative_cin_lagrangian_degrees"));
+
+    m.def("SearchWithBackoff", analysis::SearchWithBackoff, py::arg("prog"),
+        py::arg("solver_id"), py::arg("solver_options"),
+        py::arg("backoff_scale"));
   }
 
   {

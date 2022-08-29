@@ -129,11 +129,8 @@ def simulate(x, f, G, cbf, thrust_max, deriv_eps, beta_minus, beta_plus, initial
     control_data = control_logger.FindLog(simulator.get_context()).data()
     pass
 
-
-def search(
-    x: np.ndarray, f, G, thrust_max: float,
-        deriv_eps: float, unsafe_regions: list, x_safe: np.ndarray) -> sym.Polynomial:
-    u_vertices = np.array([
+def get_u_vertices(thrust_max):
+    return np.array([
         [0, 0, 0, 0],
         [0, 0, 0, 1],
         [0, 0, 1, 1],
@@ -151,13 +148,88 @@ def search(
         [1, 0, 1, 1],
         [1, 0, 1, 0]]).T * thrust_max
 
+def search_sphere_obstacle_cbf(x, f, G, beta_minus, beta_plus, thrust_max, kappa, x_safe, h_init):
+    """
+    Given h_init that already satisfies hdot >= -kappa*h, try to minimize h(sphere_center) while keeping h(x_safe) >= 0
+    """
+    state_constraints = np.array([analysis.QuadrotorStateEqConstraint(x)])
+    dut = analysis.ControlBarrier(f, G, None, x, beta_minus, beta_plus, [], u_vertices, state_constraints)
+
+    assert (np.all(h_init.EvaluateIndeterminates(x, x_safe) >= 0))
+    iter_count = 0
+    h_sol = h_init
+
+    h_degree = 2
+    lambda0_degree = 4
+    lambda1_degree = 4
+    l_degrees = [2] * 16
+    hdot_eq_lagrangian_degrees = [h_degree + lambda0_degree - 2]
+    t_degrees = []
+    s_degrees = [[]]
+    unsafe_state_constraints_lagrangian_degrees = [[]]
+    unsafe_a_info = [None]
+    search_options = analysis.ControlBarrier.SearchWithSlackAOptions(
+        hdot_a_zero_tol, unsafe_a_zero_tol, use_zero_a=True)
+    search_options.bilinear_iterations = 20
+    search_options.lagrangian_step_solver_options = mp.SolverOptions()
+    search_options.lagrangian_step_solver_options.SetOption(
+        mp.CommonSolverOption.kPrintToConsole, 1)
+    search_options.barrier_step_solver_options = mp.SolverOptions()
+    search_options.barrier_step_solver_options.SetOption(
+        mp.CommonSolverOption.kPrintToConsole, 1)
+    search_options.barrier_step_backoff_scale = 0.02
+    sphere_center = np.zeros((13,))
+    sphere_center[4] = 0.5
+    while iter_count <= search_options.bilinear_iterations:
+        search_lagrangian_ret = dut.SearchLagrangian(
+            h_sol, kappa, lambda0_degree, lambda1_degree, l_degrees,
+            hdot_eq_lagrangian_degrees, None, t_degrees, s_degrees,
+            unsafe_state_constraints_lagrangian_degrees, unsafe_a_info,
+            search_options, backoff_scale=None)
+        assert (search_lagrangian_ret.success)
+
+        # Now construct the barrier program.
+        barrier_ret = dut.ConstructBarrierProgram(
+            search_lagrangian_ret.lambda0, search_lagrangian_ret.lambda1,
+            search_lagrangian_ret.l, hdot_eq_lagrangian_degrees, None, [],
+            [[]], h_degree, kappa, s_degrees, [[]])
+        # Add constraint h(x_safe) >= 0
+        A_h_safe, var_h_safe, b_h_safe = barrier_ret.h.EvaluateWithAffineCoefficients(x, x_safe)
+        barrier_ret.prog().AddLinearConstraint(
+            A_h_safe, -b_h_safe, np.full_like(b_h_safe, np.inf), var_h_safe)
+        # Add cost to minimize h(sphere_center)
+        A_sphere_center, var_sphere_center, b_sphere_center = barrier_ret.h.EvaluateWithAffineCoefficients(x, sphere_center)
+        barrier_ret.prog().AddLinearCost(
+            A_sphere_center[0, :], b_sphere_center[0], var_sphere_center)
+        result = analysis.SearchWithBackoff(
+            barrier_ret.prog(), search_options.barrier_step_solver_id,
+            search_options.barrier_step_solver_options,
+            search_options.barrier_step_backoff_scale)
+        assert (result.is_success())
+        h_sol = result.GetSolution(barrier_ret.h)
+        iter_count += 1
+
+    return h_sol
+
+
+
+
+
+
+
+
+def search(
+    x: np.ndarray, f, G, thrust_max: float,
+        deriv_eps: float, unsafe_regions: list, x_safe: np.ndarray) -> sym.Polynomial:
+    u_vertices = get_u_vertices(thrust_max)
+
     state_constraints = np.array([analysis.QuadrotorStateEqConstraint(x)])
 
     dynamics_denominator = None
 
-    beta_minus = 0.00
+    beta_minus = -0.01
 
-    beta_plus = 0.005
+    beta_plus = 0.01
 
     dut = analysis.ControlBarrier(
         f, G, dynamics_denominator, x, beta_minus, beta_plus, unsafe_regions,
@@ -166,11 +238,11 @@ def search(
     h_degree = 2
     x_set = sym.Variables(x)
 
-    h_init = sym.Polynomial((x[4] - 0.5) ** 2 + x[5] **
-                            2 + x[6] ** 2 + 0.01 * x[7:].dot(x[7:]) - 0.2)
-    #with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_cbf/quadrotor3d_trig_cbf13.pickle", "rb") as input_file:
-    #   h_init = clf_cbf_utils.deserialize_polynomial(
-    #       x_set, pickle.load(input_file)["h"])
+    #h_init = sym.Polynomial((x[4] - 0.5) ** 2 + x[5] **
+    #                        2 + x[6] ** 2 + 0.01 * x[7:].dot(x[7:]) - 0.2)
+    with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_cbf/quadrotor3d_trig_cbf17.pickle", "rb") as input_file:
+       h_init = clf_cbf_utils.deserialize_polynomial(
+           x_set, pickle.load(input_file)["h"])
 
     h_init_x_safe = h_init.EvaluateIndeterminates(x, x_safe)
     print(f"h_init(x_safe): {h_init_x_safe.squeeze()}")
@@ -180,8 +252,8 @@ def search(
 
     with_slack_a = True
 
-    lambda0_degree = 2
-    lambda1_degree = 2
+    lambda0_degree = 4
+    lambda1_degree = 4
     l_degrees = [2] * 16
     hdot_eq_lagrangian_degrees = [h_degree + lambda0_degree - 2]
 
@@ -206,7 +278,7 @@ def search(
         unsafe_a_zero_tol = 1E-8
         search_options = analysis.ControlBarrier.SearchWithSlackAOptions(
             hdot_a_zero_tol, unsafe_a_zero_tol, use_zero_a=True)
-        search_options.bilinear_iterations = 200
+        search_options.bilinear_iterations = 20
         search_options.lagrangian_step_solver_options = mp.SolverOptions()
         search_options.lagrangian_step_solver_options.SetOption(
             mp.CommonSolverOption.kPrintToConsole, 1)
@@ -238,7 +310,7 @@ def search(
         search_options.barrier_step_solver_options = mp.SolverOptions()
         search_options.barrier_step_solver_options.SetOption(
             mp.CommonSolverOption.kPrintToConsole, 1)
-        search_options.bilinear_iterations = 5
+        search_options.bilinear_iterations = 15
 
         search_with_ellipsoid = False
         if search_with_ellipsoid:
@@ -263,9 +335,9 @@ def search(
             x_anchor = np.zeros((13,))
             h_x_anchor_max = h_init.EvaluateIndeterminates(
                 x, x_anchor.reshape((-1, 1)))[0] * 10
-            x_samples = np.array(
-                    [[0, 0, 0, 0, 1, 0, 0, 0., 0, 0, 0, 0, 0],
-                     [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]).T
+            x_samples = np.zeros((13, 3))
+            x_samples[4, 1] = 1
+            x_samples[4, 2] = 0.5
             maximize_minimal = True
             search_result = dut.Search(
                 h_init, h_degree, deriv_eps, lambda0_degree, lambda1_degree,
@@ -273,7 +345,7 @@ def search(
                 unsafe_eq_lagrangian_degrees, x_anchor, h_x_anchor_max, x_safe,
                 x_samples, maximize_minimal, search_options)
 
-    with open("quadrotor3d_trig_cbf16.pickle", "wb") as handle:
+    with open("quadrotor3d_trig_cbf18.pickle", "wb") as handle:
         pickle.dump({
             "h": clf_cbf_utils.serialize_polynomial(search_result.h),
             "beta_plus": beta_plus, "beta_minus": beta_minus,
@@ -323,20 +395,20 @@ def main():
     f, G = analysis.TrigPolyDynamics(quadrotor, x)
     thrust_equilibrium = analysis.EquilibriumThrust(quadrotor)
     thrust_max = 3 * thrust_equilibrium
-    deriv_eps = 1
+    deriv_eps = 0.1
     unsafe_regions = [np.array([#sym.Polynomial(x[6] + 0.15)])]
         sym.Polynomial((x[4] - 0.5) ** 2 + x[5] ** 2 + x[6] ** 2- (0.8*quadrotor.length()) ** 2)])]
-    x_safe = np.empty((13, 1))
+    x_safe = np.empty((13, 2))
     x_safe[:, 0] = np.zeros(13)
-    #x_safe[:, 1] = np.zeros(13)
-    #x_safe[4, 1] = 1
-    #h_sol = search(x, f, G, thrust_max, deriv_eps, unsafe_regions, x_safe)
+    x_safe[:, 1] = np.zeros(13)
+    x_safe[4, 1] = 1
+    h_sol = search(x, f, G, thrust_max, deriv_eps, unsafe_regions, x_safe)
 
-    with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_cbf/quadrotor3d_trig_cbf15.pickle", "rb") as input_file:
-        input_data = pickle.load(input_file)
-    x_set = sym.Variables(x)
-    cbf = clf_cbf_utils.deserialize_polynomial(x_set, input_data["h"])
-    simulate(x, f, G, cbf, thrust_max, input_data["deriv_eps"], input_data["beta_minus"], input_data["beta_plus"], np.zeros((12,)), 1)
+    #with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_cbf/quadrotor3d_trig_cbf15.pickle", "rb") as input_file:
+    #    input_data = pickle.load(input_file)
+    #x_set = sym.Variables(x)
+    #cbf = clf_cbf_utils.deserialize_polynomial(x_set, input_data["h"])
+    #simulate(x, f, G, cbf, thrust_max, input_data["deriv_eps"], input_data["beta_minus"], input_data["beta_plus"], np.zeros((12,)), 1)
 
 
 if __name__ == "__main__":

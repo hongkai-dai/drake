@@ -88,7 +88,7 @@ def FindClfInit(params: acrobot.AcrobotParams, V_degree, x):
 
     positivity_eps = 0.001
     d = int(V_degree / 2)
-    deriv_eps = 0.01
+    kappa = 0.01
     state_eq_constraints = analysis.AcrobotStateEqConstraints(x)
     positivity_ceq_lagrangian_degrees = [V_degree - 2, V_degree - 2]
     derivative_ceq_lagrangian_degrees = [4, 4]
@@ -98,7 +98,7 @@ def FindClfInit(params: acrobot.AcrobotParams, V_degree, x):
 
     ret = analysis.FindCandidateRegionalLyapunov(
         x, dynamics_numerator, dynamics_denominator, V_degree, positivity_eps,
-        d, deriv_eps, state_eq_constraints, positivity_ceq_lagrangian_degrees,
+        d, kappa, state_eq_constraints, positivity_ceq_lagrangian_degrees,
         derivative_ceq_lagrangian_degrees, state_ineq_constraints,
         positivity_cin_lagrangian_degrees, derivative_cin_lagrangian_degrees)
 
@@ -109,7 +109,7 @@ def FindClfInit(params: acrobot.AcrobotParams, V_degree, x):
     V_sol = result.GetSolution(ret.V).RemoveTermsWithSmallCoefficients(1E-8)
     return V_sol
 
-def SearchWTrigDynamics(params, x, u_max, deriv_eps):
+def SearchWTrigDynamics(params, x, u_max, kappa):
     f, G, dynamics_denominator = analysis.TrigPolyDynamics(params, x)
     state_constraints = analysis.AcrobotStateEqConstraints(x)
     u_vertices = np.array([[-u_max, u_max]])
@@ -132,7 +132,7 @@ def SearchWTrigDynamics(params, x, u_max, deriv_eps):
     else:
         V_init = FindClfInit(params, V_degree, x)
         d_degree = int(lambda0_degree / 2) + 1
-        lagrangian_ret = dut.ConstructLagrangianProgram(V_init, sym.Polynomial(), d_degree, l_degrees, p_degrees, deriv_eps)
+        lagrangian_ret = dut.ConstructLagrangianProgram(V_init, sym.Polynomial(), d_degree, l_degrees, p_degrees, kappa)
         solver_options = mp.SolverOptions()
         solver_options.SetOption(mp.CommonSolverOption.kPrintToConsole, 1)
         result = mp.Solve(lagrangian_ret.prog(), None, solver_options)
@@ -151,7 +151,7 @@ def SearchWTrigDynamics(params, x, u_max, deriv_eps):
     if verify_V_init:
         dut.SearchLagrangian(
             V_init, search_options.rho, lambda0_degree, l_degrees, p_degrees,
-            deriv_eps, search_options, None, None, None)
+            kappa, search_options, None, None, None)
 
     state_swingup, control_swingup = SwingUpTrajectoryOptimization()
     x_swingup = np.empty((6, state_swingup.shape[1]))
@@ -188,13 +188,13 @@ def SearchWTrigDynamics(params, x, u_max, deriv_eps):
     search_result = dut.Search(
         V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
         positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
-        ellipsoid_eq_lagrangian_degrees, deriv_eps, x_star, S, r_degree,
+        ellipsoid_eq_lagrangian_degrees, kappa, x_star, S, r_degree,
         search_options, ellipsoid_maximize_option)
 
     with open("/home/hongkaidai/sos_clf_cbf_data/acrobot/acrobot_trig_clf3.pickle", "wb") as handle:
         pickle.dump({
             "V": clf_cbf_utils.serialize_polynomial(search_result.V),
-            "deriv_eps": deriv_eps, "u_max": u_max, "rho": search_options.rho,
+            "kappa": kappa, "u_max": u_max, "rho": search_options.rho,
             "x_swingup": x_swingup,
             "V_swingup": search_result.V.EvaluateIndeterminates(x, x_swingup)},
             handle)
@@ -207,8 +207,8 @@ def main():
     params = plant.get_parameters(context)
     x = sym.MakeVectorContinuousVariable(6, "x")
     u_max = 50
-    deriv_eps = 0.01
-    SearchWTrigDynamics(params, x, u_max, deriv_eps)
+    kappa = 0.01
+    SearchWTrigDynamics(params, x, u_max, kappa)
 
 if __name__ == "__main__":
     with MosekSolver.AcquireLicense():

@@ -28,11 +28,10 @@ from pydrake.geometry import (
     SceneGraph,
 )
 
-meshcat = StartMeshcat()
 
 
 class QuadrotorClfController(LeafSystem):
-    def __init__(self, x, f, G, clf, kappa, thrust_max):
+    def __init__(self, x, f, G, clf, kappa, thrust_max, Vdot_cost_weight):
         LeafSystem.__init__(self)
         assert (x.shape == (13,))
         self.x = x
@@ -43,6 +42,7 @@ class QuadrotorClfController(LeafSystem):
         self.clf = clf
         self.kappa = kappa
         self.thrust_max = thrust_max
+        self.Vdot_cost_weight = Vdot_cost_weight
         dVdx = self.clf.Jacobian(self.x)
         self.dVdx_times_f = dVdx.dot(self.f)
         self.dVdx_times_G = dVdx @ self.G
@@ -78,6 +78,10 @@ class QuadrotorClfController(LeafSystem):
         prog.AddLinearConstraint(
             dVdx_times_G_val.reshape((1, -1)), np.array([-np.inf]),
             np.array([-self.kappa * V_val - dVdx_times_f_val]), u)
+
+        
+        # Add the cost of Vdot = dVdx*G*u + dVdx * f
+        prog.AddLinearCost(self.Vdot_cost_weight * dVdx_times_G_val, self.Vdot_cost_weight * dVdx_times_f_val, u)
         gurobi_solver = GurobiSolver()
         result = gurobi_solver.Solve(prog)
         if not result.is_success():
@@ -91,7 +95,7 @@ class QuadrotorClfController(LeafSystem):
         output.SetFromVector(np.array([self.clf.Evaluate(env)]))
 
 
-def simulate(x, f, G, clf, thrust_max, kappa, initial_state, duration):
+def simulate(x, f, G, clf, thrust_max, kappa, initial_state, duration, meshcat, controller="clf"):
     builder = DiagramBuilder()
 
     quadrotor = builder.AddSystem(QuadrotorPlant())
@@ -110,16 +114,35 @@ def simulate(x, f, G, clf, thrust_max, kappa, initial_state, duration):
     builder.Connect(quadrotor.get_output_port(
         0), state_converter.get_input_port())
 
-    clf_controller = builder.AddSystem(
-        QuadrotorClfController(x, f, G, clf, kappa, thrust_max))
+    if controller == "lqr":
+        K, _ = SynthesizeTrigLqr()
+        lqr_gain = builder.AddSystem(controller.Gain(-K))
+        adder = builder.AddSystem(primitives.Adder(2, 4))
+        thrust_equilibrium = quadrotor.m() * quadrotor.g() / 4
+        lqr_constant = builder.AddSystem(
+            primitives.ConstantValueSource(np.full((4,), thrust_equilibrium)))
+        builder.Connect(state_converter.get_output_port(),
+                        lqr_gain.get_input_port())
+        builder.Connect(lqr_gain.get_output_port(), adder.get_input_port(0))
+        builder.Connect(lqr_constant.get_output_port(),
+                        adder.get_input_port(1))
+        u_saturation = builder.AddSystem(primitives.Saturation(
+            np.zeros((4,)), np.full((4,), thrust_max)))
+        builder.Connect(adder.get_output_port(), u_saturation.get_input_port())
+        builder.Connect(u_saturation.get_output_port(),
+                        quadrotor.get_input_port())
+    elif controller == "clf":
+        clf_controller = builder.AddSystem(
+            QuadrotorClfController(x, f, G, clf, kappa, thrust_max, Vdot_cost_weight=1000))
 
-    builder.Connect(clf_controller.control_output_port(),
-                    quadrotor.get_input_port())
-    builder.Connect(state_converter.get_output_port(),
-                    clf_controller.x_input_port())
+        builder.Connect(clf_controller.control_output_port(),
+                        quadrotor.get_input_port())
+        builder.Connect(state_converter.get_output_port(),
+                        clf_controller.x_input_port())
 
     state_logger = LogVectorOutput(quadrotor.get_output_port(), builder)
-    clf_logger = LogVectorOutput(clf_controller.clf_output_port(), builder)
+    if controller == "clf":
+        clf_logger = LogVectorOutput(clf_controller.clf_output_port(), builder)
     control_logger = LogVectorOutput(
         clf_controller.control_output_port(), builder)
 
@@ -127,31 +150,35 @@ def simulate(x, f, G, clf, thrust_max, kappa, initial_state, duration):
 
     simulator = analysis.Simulator(diagram)
 
-    #analysis.ResetIntegratorFromFlags(simulator, "implicit_euler", 0.001)
+    analysis.ResetIntegratorFromFlags(simulator, "radau3", 0.001)
 
     simulator.get_mutable_context().SetContinuousState(initial_state)
     simulator.AdvanceTo(duration)
 
     state_data = state_logger.FindLog(simulator.get_context()).data()
-    clf_data = clf_logger.FindLog(simulator.get_context()).data()
+    if controller == "clf":
+        clf_data = clf_logger.FindLog(simulator.get_context()).data()
+    else:
+        clf_data = None
     control_data = control_logger.FindLog(simulator.get_context()).data()
-    pass
+    return state_data, control_data, clf_data
 
 
-def simulate_demo():
+def simulate_demo(meshcat):
     x = sym.MakeVectorContinuousVariable(13, "x")
     x_set = sym.Variables(x)
-    with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_clf/quadrotor3d_trig_clf_sol.pickle", "rb") as input_file:
+    with open("quadrotor3d_trig_clf_sol.pickle", "rb") as input_file:
         load_data = pickle.load(input_file)
         clf = clf_cbf_utils.deserialize_polynomial(
             x_set, load_data["V"])
-        kappa = load_data["deriv_eps"]
+        kappa = load_data["kappa"]
         thrust_max = load_data["thrust_max"]
     quadrotor = analysis.QuadrotorTrigPlant()
     f, G = analysis.TrigPolyDynamics(quadrotor, x)
     initial_state = np.zeros((12,))
     initial_state[0] = 1
-    simulate(x, f, G, clf, thrust_max, kappa, initial_state, 10)
+    state_data, control_data, clf_data = simulate(
+        x, f, G, clf, thrust_max, kappa, initial_state, 10, meshcat, controller="clf")
 
 
 def SynthesizeTrigLqr():
@@ -191,7 +218,7 @@ def FindClfInit(V_degree, x) -> sym.Polynomial:
 
     positivity_eps = 0.0001
     d = int(V_degree / 2)
-    deriv_eps = 0.1
+    kappa = 0.1
     state_eq_constraints = np.array([analysis.QuadrotorStateEqConstraint(x)])
     positivity_ceq_lagrangian_degrees = [V_degree - 2]
     derivative_ceq_lagrangian_degrees = [
@@ -201,7 +228,7 @@ def FindClfInit(V_degree, x) -> sym.Polynomial:
     derivative_cin_lagrangian_degrees = derivative_ceq_lagrangian_degrees
 
     ret = analysis.FindCandidateRegionalLyapunov(
-        x, dynamics, None, V_degree, positivity_eps, d, deriv_eps,
+        x, dynamics, None, V_degree, positivity_eps, d, kappa,
         state_eq_constraints, positivity_ceq_lagrangian_degrees,
         derivative_ceq_lagrangian_degrees, state_ineq_constraints,
         positivity_cin_lagrangian_degrees, derivative_cin_lagrangian_degrees)
@@ -250,7 +277,7 @@ def SearchWTrigDynamics():
             pickle.dump({"V": clf_cbf_utils.serialize_polynomial(
                 V_init)}, handle)
     else:
-        with open("quadrotor3d_trig_clf_init.pickle", "rb") as input_file:
+        with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_clf/quadrotor3d_trig_clf_init.pickle", "rb") as input_file:
             V_init = clf_cbf_utils.deserialize_polynomial(
                 x_set, pickle.load(input_file)["V"])
 
@@ -260,13 +287,13 @@ def SearchWTrigDynamics():
     l_degrees = [2] * 16
     p_degrees = [4]
 
-    deriv_eps = 0.1
-    maximize_init_rho = True
+    kappa = 0.1
+    maximize_init_rho = False
     if maximize_init_rho:
         # Maximize rho such that V(x) <= rho defines a valid ROA.
         d_degree = int(lambda0_degree / 2) + 1
         lagrangian_ret = dut.ConstructLagrangianProgram(
-            V_init, sym.Polynomial(), d_degree, l_degrees, p_degrees, deriv_eps)
+            V_init, sym.Polynomial(), d_degree, l_degrees, p_degrees, kappa)
         solver_options = mp.SolverOptions()
         solver_options.SetOption(mp.CommonSolverOption.kPrintToConsole, 1)
         result = mp.Solve(lagrangian_ret.prog(), None, solver_options)
@@ -276,16 +303,16 @@ def SearchWTrigDynamics():
         V_init = V_init / rho_sol
         with open("quadrotor3d_trig_clf_max_rho.pickle", "wb") as handle:
             pickle.dump({"V": clf_cbf_utils.serialize_polynomial(
-                V_init), "deriv_eps": deriv_eps, "thrust_max": thrust_max},
+                V_init), "kappa": kappa, "thrust_max": thrust_max},
                 handle)
     else:
-        with open("quadrotor3d_trig_clf_max_rho.pickle", "rb") as input_file:
+        with open("quadrotor3d_trig_clf_sol1.pickle", "rb") as input_file:
             V_init = clf_cbf_utils.deserialize_polynomial(
                 x_set, pickle.load(input_file)["V"])
 
     search_options = analysis.ControlLyapunov.SearchOptions()
     search_options.d_converge_tol = 0.
-    search_options.bilinear_iterations = 15
+    search_options.bilinear_iterations = 10
     search_options.lyap_step_backoff_scale = 0.015
     search_options.lsol_tiny_coeff_tol = 1E-8
     search_options.lyap_tiny_coeff_tol = 1E-8
@@ -312,19 +339,20 @@ def SearchWTrigDynamics():
     minimize_max = True
     search_result = dut.Search(
         V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
-        positivity_d, positivity_eq_lagrangian_degrees, p_degrees, deriv_eps,
+        positivity_d, positivity_eq_lagrangian_degrees, p_degrees, kappa,
         x_samples, None, minimize_max, search_options)
     print(
         f"V(x_samples): {search_result.V.EvaluateIndeterminates(x, x_samples).T}")
-    with open("quadrotor3d_trig_clf_sol.pickle", "wb") as handle:
+    with open("quadrotor3d_trig_clf_sol2.pickle", "wb") as handle:
         pickle.dump({"V": clf_cbf_utils.serialize_polynomial(
-            search_result.V), "deriv_eps": deriv_eps, "thrust_max": thrust_max}, handle)
+            search_result.V), "kappa": kappa, "thrust_max": thrust_max}, handle)
 
 
 def main():
     pydrake.common.configure_logging()
-    #SearchWTrigDynamics()
-    simulate_demo()
+    SearchWTrigDynamics()
+    #meshcat = StartMeshcat()
+    #simulate_demo(meshcat)
 
 
 if __name__ == "__main__":

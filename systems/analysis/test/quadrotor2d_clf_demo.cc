@@ -27,7 +27,7 @@ const double kInf = std::numeric_limits<double>::infinity();
 //    const Vector6<symbolic::Variable>& x,
 //    const Vector6<symbolic::Polynomial>& f,
 //    const Eigen::Matrix<symbolic::Polynomial, 6, 2>& G, double thrust_max,
-//    const symbolic::Polynomial& clf, double deriv_eps, const Vector6d& x0,
+//    const symbolic::Polynomial& clf, double kappa, const Vector6d& x0,
 //    double duration) {
 //  systems::DiagramBuilder<double> builder;
 //  auto quadrotor = builder.AddSystem<Quadrotor2dTrigPlant<double>>();
@@ -39,7 +39,7 @@ const double kInf = std::numeric_limits<double>::infinity();
 //  const Eigen::Matrix2d Ru = Eigen::Matrix2d::Identity();
 //  const double vdot_cost = 0;
 //  auto clf_controller = builder.AddSystem<ClfController>(
-//      x, f, G, std::nullopt /* dynamics numerator */, clf, deriv_eps, Au, bu,
+//      x, f, G, std::nullopt /* dynamics numerator */, clf, kappa, Au, bu,
 //      u_star, Ru, vdot_cost);
 //
 //  auto state_logger =
@@ -112,7 +112,7 @@ const double kInf = std::numeric_limits<double>::infinity();
   std::cout << "V_init: " << V_init << "\n";
 
   symbolic::Polynomial V_sol;
-  const double deriv_eps = 0.2;
+  const double kappa = 0.2;
   const double thrust_max = 3 * thrust_equilibrium;
   {
     Eigen::Matrix<double, 2, 4> u_vertices;
@@ -129,7 +129,7 @@ const double kInf = std::numeric_limits<double>::infinity();
       const std::vector<int> l_degrees = {2, 2, 2, 2};
       const std::vector<int> p_degrees = {};
       auto lagrangian_ret = dut.ConstructLagrangianProgram(
-          V_init, lambda0, d_degree, l_degrees, p_degrees, deriv_eps);
+          V_init, lambda0, d_degree, l_degrees, p_degrees, kappa);
       const auto result = solvers::Solve(*(lagrangian_ret.prog));
       DRAKE_DEMAND(result.is_success());
       std::cout << V_init << " <= " << result.GetSolution(lagrangian_ret.rho)
@@ -161,7 +161,7 @@ const double kInf = std::numeric_limits<double>::infinity();
 
       dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
                  positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
-                 ellipsoid_eq_lagrangian_degrees, deriv_eps, x_star, S,
+                 ellipsoid_eq_lagrangian_degrees, kappa, x_star, S,
                  V_degree - 2, search_options, ellipsoid_bisection_option);
     }
   }

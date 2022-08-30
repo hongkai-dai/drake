@@ -125,7 +125,7 @@ class CartpoleClfController : public ClfController {
       const Eigen::Ref<const Eigen::Matrix<symbolic::Polynomial, 5, 1>>& f,
       const Eigen::Ref<const Eigen::Matrix<symbolic::Polynomial, 5, 1>>& G,
       const symbolic::Polynomial& dynamics_denominator, symbolic::Polynomial V,
-      double deriv_eps, double u_max);
+      double kappa, double u_max);
 
  private:
   virtual void DoCalcControl(const Context<double>& context,
@@ -136,7 +136,7 @@ class CartpoleClfController : public ClfController {
 
 void Simulate(const CartPoleParams& parameters,
               const Eigen::Matrix<symbolic::Variable, 5, 1>& x,
-              const symbolic::Polynomial& clf, double u_bound, double deriv_eps,
+              const symbolic::Polynomial& clf, double u_bound, double kappa,
               const Eigen::Vector4d& initial_state, double duration);
 }  // namespace analysis
 }  // namespace systems

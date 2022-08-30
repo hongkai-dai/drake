@@ -79,7 +79,7 @@ int DoMain() {
   const symbolic::Polynomial h_init(
       0.1 - x.cast<symbolic::Expression>().dot(lqr_result.S * x));
   const int h_degree = 2;
-  const double deriv_eps = 0.1;
+  const double kappa = 0.1;
   const int lambda0_degree = 4;
   const std::optional<int> lambda1_degree = std::nullopt;
   const std::vector<int> l_degrees = {2, 2, 2, 2};
@@ -113,7 +113,7 @@ int DoMain() {
   std::vector<VectorX<symbolic::Polynomial>>
       unsafe_state_constraints_lagrangian_sol;
   const auto search_ret = dut.Search(
-      h_init, h_degree, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
+      h_init, h_degree, kappa, lambda0_degree, lambda1_degree, l_degrees,
       hdot_state_constraints_lagrangian_degrees, t_degree, s_degrees,
       unsafe_state_constraints_lagrangian_degrees, x_anchor, h_x_anchor_max,
       search_options, &ellipsoids, &ellipsoid_options);

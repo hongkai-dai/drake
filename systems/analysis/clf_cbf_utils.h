@@ -196,7 +196,7 @@ struct FindCandidateRegionalLyapunovReturn {
  *     p1(x) is sos, q1(x) is sos.
  * </pre>
  * @param positivity_eps ε1 in the documentation above.
- * @param deriv_eps ε2 in the documentation above.
+ * @param kappa ε2 in the documentation above.
  * @param[out] positivity_sos_condition The sos condition (1)
  * @param[out] derivative_sos_condition The sos condition (2)
  */
@@ -204,7 +204,7 @@ FindCandidateRegionalLyapunovReturn FindCandidateRegionalLyapunov(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
     const VectorX<symbolic::Polynomial>& dynamics,
     const std::optional<symbolic::Polynomial>& dynamics_denominator,
-    int V_degree, double positivity_eps, int d, double deriv_eps,
+    int V_degree, double positivity_eps, int d, double kappa,
     const VectorX<symbolic::Polynomial>& state_eq_constraints,
     const std::vector<int>& positivity_ceq_lagrangian_degrees,
     const std::vector<int>& derivative_ceq_lagrangian_degrees,

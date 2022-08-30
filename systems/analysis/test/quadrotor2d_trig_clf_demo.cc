@@ -128,7 +128,7 @@ const double kInf = std::numeric_limits<double>::infinity();
 
   const double positivity_eps = 0.01;
   const int d = V_degree / 2;
-  const double deriv_eps = 0.0001;
+  const double kappa = 0.0001;
   const Vector1<symbolic::Polynomial> state_eq_constraints(
       Quadrotor2dStateEqConstraint(x));
   const std::vector<int> positivity_ceq_lagrangian_degrees{{V_degree - 2}};
@@ -142,7 +142,7 @@ const double kInf = std::numeric_limits<double>::infinity();
 
   auto ret = FindCandidateRegionalLyapunov(
       x, dynamics, std::nullopt /* dynamics_denominator*/, V_degree,
-      positivity_eps, d, deriv_eps, state_eq_constraints,
+      positivity_eps, d, kappa, state_eq_constraints,
       positivity_ceq_lagrangian_degrees, derivative_ceq_lagrangian_degrees,
       state_ineq_constraints, positivity_cin_lagrangian_degrees,
       derivative_cin_lagrangian_degrees);
@@ -329,13 +329,12 @@ void ValidateTrigClfInit(
   const int lambda0_degree = 0;
   const std::vector<int> l_degrees{{2, 2, 2, 2}};
   const std::vector<int> p_degrees{{4}};
-  const double deriv_eps = 0.2;
+  const double kappa = 0.2;
   {
     // Maximize rho such that V(x) <= rho defines a valid ROA.
     const int d_degree = lambda0_degree / 2 + 1;
-    auto lagrangian_ret =
-        dut.ConstructLagrangianProgram(V_init, symbolic::Polynomial(), d_degree,
-                                       l_degrees, p_degrees, deriv_eps);
+    auto lagrangian_ret = dut.ConstructLagrangianProgram(
+        V_init, symbolic::Polynomial(), d_degree, l_degrees, p_degrees, kappa);
     solvers::SolverOptions solver_options;
     // solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole,
     // 1);
@@ -379,7 +378,7 @@ void ValidateTrigClfInit(
     const auto search_result =
         dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
                    positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
-                   deriv_eps, x_samples, std::nullopt /* in_roa_samples */,
+                   kappa, x_samples, std::nullopt /* in_roa_samples */,
                    minimize_max, search_options);
     std::cout
         << "V(x_samples): "

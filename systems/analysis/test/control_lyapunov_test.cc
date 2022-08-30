@@ -183,18 +183,18 @@ void CheckSearchLagrangianAndBResult(
     const std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>& l,
     const std::vector<std::vector<std::array<MatrixX<symbolic::Variable>, 3>>>&
         lagrangian_grams,
-    const symbolic::Variable& deriv_eps, const VectorX<symbolic::Polynomial>& b,
+    const symbolic::Variable& kappa, const VectorX<symbolic::Polynomial>& b,
     const VdotSosConstraintReturn& vdot_sos_constraint, double tol) {
   ASSERT_TRUE(result.is_success());
   const RowVectorX<symbolic::Polynomial> dVdx = V.Jacobian(x);
-  const double deriv_eps_val = result.GetSolution(deriv_eps);
+  const double kappa_val = result.GetSolution(kappa);
   const int nu = G.cols();
   VectorX<symbolic::Polynomial> b_result(nu);
   for (int i = 0; i < nu; ++i) {
     b_result(i) = result.GetSolution(b(i));
   }
 
-  EXPECT_TRUE(symbolic::test::PolynomialEqual((dVdx * f)(0) + deriv_eps_val * V,
+  EXPECT_TRUE(symbolic::test::PolynomialEqual((dVdx * f)(0) + kappa_val * V,
                                               b_result.sum(), tol));
   std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>
       lagrangians_result(nu);
@@ -274,13 +274,13 @@ void CheckSearchLagrangianResult(const SearchLagrangianGivenVBoxInputBound& dut,
 }
 
 // Sample many points inside the level set V(x) <= 1, and verify that min_u
-// Vdot(x, u) (-1 <= u <= 1) is less than -deriv_eps * V.
+// Vdot(x, u) (-1 <= u <= 1) is less than -kappa * V.
 void ValidateRegionOfAttractionBySample(const VectorX<symbolic::Polynomial>& f,
                                         const MatrixX<symbolic::Polynomial>& G,
                                         const symbolic::Polynomial& V,
                                         const VectorX<symbolic::Variable>& x,
                                         const Eigen::MatrixXd& u_vertices,
-                                        double deriv_eps, int num_samples,
+                                        double kappa, int num_samples,
                                         double abs_tol, double rel_tol) {
   int sample_count = 0;
   const int nx = f.rows();
@@ -306,8 +306,8 @@ void ValidateRegionOfAttractionBySample(const VectorX<symbolic::Polynomial>& f,
            dVdx_times_G_val * u_vertices)
               .array()
               .minCoeff();
-      EXPECT_TRUE(-Vdot / V_val > deriv_eps - rel_tol ||
-                  -Vdot > V_val * deriv_eps - abs_tol);
+      EXPECT_TRUE(-Vdot / V_val > kappa - rel_tol ||
+                  -Vdot > V_val * kappa - abs_tol);
 
       sample_count++;
     }
@@ -335,14 +335,14 @@ TEST_F(SimpleLinearSystemTest, SearchLagrangianAndBGivenVBoxInputBound) {
     std::vector<std::vector<std::array<symbolic::Polynomial, 3>>> l;
     std::vector<std::vector<std::array<MatrixX<symbolic::Variable>, 3>>>
         lagrangian_grams;
-    symbolic::Variable deriv_eps;
+    symbolic::Variable kappa;
     VectorX<symbolic::Polynomial> b;
     VdotSosConstraintReturn vdot_sos_constraint(G.cols(), symmetric_dynamics);
     auto prog_l_and_b = dut.ConstructLagrangianAndBProgram(
         V, l_given, lagrangian_degrees, b_degrees, symmetric_dynamics, &l,
-        &lagrangian_grams, &deriv_eps, &b, &vdot_sos_constraint);
+        &lagrangian_grams, &kappa, &b, &vdot_sos_constraint);
 
-    prog_l_and_b->AddBoundingBoxConstraint(3, kInf, deriv_eps);
+    prog_l_and_b->AddBoundingBoxConstraint(3, kInf, kappa);
 
     solvers::MosekSolver mosek_solver;
     solvers::SolverOptions solver_options;
@@ -351,13 +351,13 @@ TEST_F(SimpleLinearSystemTest, SearchLagrangianAndBGivenVBoxInputBound) {
         mosek_solver.Solve(*prog_l_and_b, std::nullopt, solver_options);
     EXPECT_TRUE(result.is_success());
     CheckSearchLagrangianAndBResult(result, V, f, G, x_, l, lagrangian_grams,
-                                    deriv_eps, b, vdot_sos_constraint, 5.3E-5);
+                                    kappa, b, vdot_sos_constraint, 5.3E-5);
 
-    const double deriv_eps_sol = result.GetSolution(deriv_eps);
+    const double kappa_sol = result.GetSolution(kappa);
     Eigen::Matrix<double, 2, 4> u_vertices;
     u_vertices << 1, 1, -1, -1, 1, -1, 1, -1;
-    ValidateRegionOfAttractionBySample(f, G, V, x_, u_vertices, deriv_eps_sol,
-                                       100, 1E-5, 1E-3);
+    ValidateRegionOfAttractionBySample(f, G, V, x_, u_vertices, kappa_sol, 100,
+                                       1E-5, 1E-3);
 
     std::vector<std::vector<std::array<symbolic::Polynomial, 3>>> l_result(nu);
     const int num_vdot_sos = symmetric_dynamics ? 1 : 2;
@@ -403,16 +403,16 @@ TEST_F(SimpleLinearSystemTest, SearchLagrangianAndBGivenVBoxInputBound) {
     VectorX<symbolic::Monomial> positivity_constraint_monomial;
     VectorX<symbolic::Polynomial> b_new;
     auto prog_V = dut.ConstructLyapunovProgram(
-        l_result, symmetric_dynamics, deriv_eps_sol, V_degree, b_degrees,
-        &V_new, &positivity_constraint_gram, &positivity_constraint_monomial,
-        &b_new, &vdot_sos_constraint);
+        l_result, symmetric_dynamics, kappa_sol, V_degree, b_degrees, &V_new,
+        &positivity_constraint_gram, &positivity_constraint_monomial, &b_new,
+        &vdot_sos_constraint);
 
     const auto result_search_V =
         mosek_solver.Solve(*prog_V, std::nullopt, solver_options);
     ASSERT_TRUE(result_search_V.is_success());
     const symbolic::Polynomial V_sol = result_search_V.GetSolution(V_new);
-    ValidateRegionOfAttractionBySample(f, G, V_sol, x_, u_vertices,
-                                       deriv_eps_sol, 100, 1E-5, 1E-3);
+    ValidateRegionOfAttractionBySample(f, G, V_sol, x_, u_vertices, kappa_sol,
+                                       100, 1E-5, 1E-3);
     // Check if the V(0) = 0 and V(x) doesn't have a constant term.
     for (const auto& [V_sol_monomial, V_sol_coeff] :
          V_sol.monomial_to_coefficient_map()) {
@@ -461,12 +461,12 @@ TEST_F(SimpleLinearSystemTest, MaximizeEllipsoid) {
     std::vector<std::vector<std::array<symbolic::Polynomial, 3>>> l;
     std::vector<std::vector<std::array<MatrixX<symbolic::Variable>, 3>>>
         lagrangian_grams;
-    symbolic::Variable deriv_eps;
+    symbolic::Variable kappa;
     VectorX<symbolic::Polynomial> b;
     VdotSosConstraintReturn vdot_sos_constraint(G.cols(), symmetric_dynamics);
     auto prog_l_and_b = dut.ConstructLagrangianAndBProgram(
         V, l_given, lagrangian_degrees, b_degrees, symmetric_dynamics, &l,
-        &lagrangian_grams, &deriv_eps, &b, &vdot_sos_constraint);
+        &lagrangian_grams, &kappa, &b, &vdot_sos_constraint);
     const Eigen::Vector2d x_star(0.001, 0.0002);
     // First make sure that x_star satisfies V(x*)<=1
     const symbolic::Environment env_xstar(
@@ -478,7 +478,7 @@ TEST_F(SimpleLinearSystemTest, MaximizeEllipsoid) {
     const symbolic::Polynomial t(x_.cast<symbolic::Expression>().dot(x_),
                                  x_set);
     // Set the rate-of-convergence epsilon to >= 0.1
-    prog_l_and_b->AddBoundingBoxConstraint(0.1, kInf, deriv_eps);
+    prog_l_and_b->AddBoundingBoxConstraint(0.1, kInf, kappa);
     solvers::MosekSolver mosek_solver;
     solvers::SolverOptions solver_options;
     solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 0);
@@ -486,7 +486,7 @@ TEST_F(SimpleLinearSystemTest, MaximizeEllipsoid) {
         mosek_solver.Solve(*prog_l_and_b, std::nullopt, solver_options);
     EXPECT_TRUE(result.is_success());
     CheckSearchLagrangianAndBResult(result, V, f, G, x_, l, lagrangian_grams,
-                                    deriv_eps, b, vdot_sos_constraint, 1.7E-5);
+                                    kappa, b, vdot_sos_constraint, 1.7E-5);
     // Retrieve solution of Lagrangian multipliers.
     std::vector<std::vector<std::array<symbolic::Polynomial, 3>>> l_sol(nu);
     const int num_vdot_sos = symmetric_dynamics ? 1 : 2;
@@ -499,7 +499,7 @@ TEST_F(SimpleLinearSystemTest, MaximizeEllipsoid) {
         }
       }
     }
-    const double deriv_eps_sol = result.GetSolution(deriv_eps);
+    const double kappa_sol = result.GetSolution(kappa);
 
     double d_sol;
     symbolic::Polynomial s_sol;
@@ -516,7 +516,7 @@ TEST_F(SimpleLinearSystemTest, MaximizeEllipsoid) {
     VectorX<symbolic::Monomial> positivity_constraint_monomial;
     VectorX<symbolic::Polynomial> b_new;
     auto prog_V = dut.ConstructLyapunovProgram(
-        l_sol, symmetric_dynamics, deriv_eps_sol, V_degree, b_degrees, &V_new,
+        l_sol, symmetric_dynamics, kappa_sol, V_degree, b_degrees, &V_new,
         &positivity_constraint_gram, &positivity_constraint_monomial, &b_new,
         &vdot_sos_constraint);
     const auto result_search_V = mosek_solver.Solve(*prog_V);
@@ -550,12 +550,12 @@ TEST_F(SimpleLinearSystemTest, SearchLagrangianGivenVBoxInputBound) {
     std::vector<std::vector<std::array<symbolic::Polynomial, 3>>> l;
     std::vector<std::vector<std::array<MatrixX<symbolic::Variable>, 3>>>
         lagrangian_grams;
-    symbolic::Variable deriv_eps;
+    symbolic::Variable kappa;
     VectorX<symbolic::Polynomial> b;
     VdotSosConstraintReturn vdot_sos_constraint(G.cols(), symmetric_dynamics);
     auto prog_l_and_b = dut.ConstructLagrangianAndBProgram(
         V, l_given, lagrangian_degrees, b_degrees, symmetric_dynamics, &l,
-        &lagrangian_grams, &deriv_eps, &b, &vdot_sos_constraint);
+        &lagrangian_grams, &kappa, &b, &vdot_sos_constraint);
     const Eigen::Vector2d x_star(0.001, 0.0002);
     // First make sure that x_star satisfies V(x*)<=1
     const symbolic::Environment env_xstar(
@@ -568,7 +568,7 @@ TEST_F(SimpleLinearSystemTest, SearchLagrangianGivenVBoxInputBound) {
                                  x_set);
 
     // Set the rate-of-convergence epsilon to >= 0.1
-    prog_l_and_b->AddBoundingBoxConstraint(0.1, kInf, deriv_eps);
+    prog_l_and_b->AddBoundingBoxConstraint(0.1, kInf, kappa);
     solvers::MosekSolver mosek_solver;
     solvers::SolverOptions solver_options;
     solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 0);
@@ -619,8 +619,8 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound) {
   const symbolic::Polynomial t_given(x_.cast<symbolic::Expression>().dot(x_),
                                      x_set_);
   const int V_degree = 2;
-  const double deriv_eps_lower{0.01};
-  const double deriv_eps_upper{kInf};
+  const double kappa_lower{0.01};
+  const double kappa_upper{kInf};
   // Search without backoff.
   search_options.backoff_scale = 0.;
   search_options.bilinear_iterations = 5;
@@ -630,26 +630,26 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound) {
   search_options.lagrangian_step_solver_options = solvers::SolverOptions();
   search_options.lagrangian_step_solver_options->SetOption(
       solvers::CommonSolverOption::kPrintToConsole, 0);
-  const auto search_result = dut.Search(
-      V, l_given, lagrangian_degrees, b_degrees, x_star, S, s_degree, t_given,
-      V_degree, deriv_eps_lower, deriv_eps_upper, search_options);
+  const auto search_result =
+      dut.Search(V, l_given, lagrangian_degrees, b_degrees, x_star, S, s_degree,
+                 t_given, V_degree, kappa_lower, kappa_upper, search_options);
   Eigen::Matrix<double, 2, 4> u_vertices;
   u_vertices << 1, 1, -1, -1, 1, -1, 1, -1;
-  EXPECT_GE(search_result.deriv_eps, deriv_eps_lower);
-  EXPECT_LE(search_result.deriv_eps, deriv_eps_upper);
+  EXPECT_GE(search_result.kappa, kappa_lower);
+  EXPECT_LE(search_result.kappa, kappa_upper);
   ValidateRegionOfAttractionBySample(f, G, search_result.V, x_, u_vertices,
-                                     search_result.deriv_eps, 1000, 1E-5, 1E-3);
+                                     search_result.kappa, 1000, 1E-5, 1E-3);
 
   // Search with backoff.
   search_options.backoff_scale = 0.05;
   search_options.lyap_step_solver = solvers::MosekSolver::id();
   search_options.bilinear_iterations = 5;
-  const auto search_result_backoff = dut.Search(
-      V, l_given, lagrangian_degrees, b_degrees, x_star, S, s_degree, t_given,
-      V_degree, deriv_eps_lower, deriv_eps_upper, search_options);
-  ValidateRegionOfAttractionBySample(
-      f, G, search_result_backoff.V, x_, u_vertices,
-      search_result_backoff.deriv_eps, 1000, 1E-5, 1E-3);
+  const auto search_result_backoff =
+      dut.Search(V, l_given, lagrangian_degrees, b_degrees, x_star, S, s_degree,
+                 t_given, V_degree, kappa_lower, kappa_upper, search_options);
+  ValidateRegionOfAttractionBySample(f, G, search_result_backoff.V, x_,
+                                     u_vertices, search_result_backoff.kappa,
+                                     1000, 1E-5, 1E-3);
 
   // Search with algorithm 1
   const double rho_min = 0.001;
@@ -658,13 +658,12 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound) {
   const int r_degree = V_degree - 2;
   const ControlLyapunovBoxInputBound::EllipsoidBisectionOption
       ellipsoid_bisection_option(rho_min, rho_max, rho_bisection_tol);
-  const auto search_result_algo1 =
-      dut.Search(V, l_given, lagrangian_degrees, b_degrees, x_star, S, r_degree,
-                 V_degree, deriv_eps_lower, deriv_eps_upper, search_options,
-                 ellipsoid_bisection_option);
-  ValidateRegionOfAttractionBySample(
-      f, G, search_result_algo1.V, x_, u_vertices,
-      search_result_backoff.deriv_eps, 1000, 1E-5, 1E-3);
+  const auto search_result_algo1 = dut.Search(
+      V, l_given, lagrangian_degrees, b_degrees, x_star, S, r_degree, V_degree,
+      kappa_lower, kappa_upper, search_options, ellipsoid_bisection_option);
+  ValidateRegionOfAttractionBySample(f, G, search_result_algo1.V, x_,
+                                     u_vertices, search_result_backoff.kappa,
+                                     1000, 1E-5, 1E-3);
 }
 
 void CheckEllipsoidInRoa(const Eigen::Ref<const VectorX<symbolic::Variable>> x,
@@ -715,16 +714,15 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound_SearchLyapunov) {
   const double positivity_eps{0.};
   ControlLyapunovBoxInputBound dut(f, G, x_, positivity_eps);
 
-  const double deriv_eps_lower = 0.01;
-  const double deriv_eps_upper = kInf;
+  const double kappa_lower = 0.01;
+  const double kappa_upper = kInf;
   // First find b and Lagrangian multiplier.
-  double deriv_eps;
+  double kappa;
   VectorX<symbolic::Polynomial> b;
   std::vector<std::vector<std::array<symbolic::Polynomial, 3>>> l;
   dut.SearchLagrangianAndB(V, l_given, lagrangian_degrees, b_degrees,
-                           deriv_eps_lower, deriv_eps_upper,
-                           solvers::MosekSolver::id(), std::nullopt, 0.,
-                           &deriv_eps, &b, &l);
+                           kappa_lower, kappa_upper, solvers::MosekSolver::id(),
+                           std::nullopt, 0., &kappa, &b, &l);
   // Find the maximal inscribed ellipsoid.
   const Eigen::Vector2d x_star(0.001, 0.002);
   const Eigen::Matrix2d S = Eigen::Vector2d(1, 2).asDiagonal();
@@ -744,14 +742,14 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovBoxInputBound_SearchLyapunov) {
   symbolic::Polynomial V_sol;
   VectorX<symbolic::Polynomial> b_sol;
   double rho_sol;
-  dut.SearchLyapunov(l, b_degrees, V.TotalDegree(), deriv_eps, x_star, S, d_sol,
+  dut.SearchLyapunov(l, b_degrees, V.TotalDegree(), kappa, x_star, S, d_sol,
                      r_degree, solvers::MosekSolver::id(), std::nullopt,
                      backoff_scale, 0., 0., &V_sol, &b_sol, &r_sol, &rho_sol);
   // First validate that V is a valid CLF.
   Eigen::Matrix<double, 2, 4> u_vertices;
   u_vertices << 1, 1, -1, -1, 1, -1, 1, -1;
-  ValidateRegionOfAttractionBySample(f, G, V_sol, x_, u_vertices, deriv_eps,
-                                     100, 1E-5, 1E-3);
+  ValidateRegionOfAttractionBySample(f, G, V_sol, x_, u_vertices, kappa, 100,
+                                     1E-5, 1E-3);
   ASSERT_GT(rho_sol, 0);
   EXPECT_LE(rho_sol, 1);
   // Now check if the ellipsoid is in the sub-level set {x | V(x) <= rho}.
@@ -842,11 +840,11 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunov) {
   const int lambda0_degree = 0;
   const std::vector<int> l_degrees = {2, 2, 2, 2};
   const std::vector<int> p_degrees = {};
-  const double deriv_eps = 0.01;
+  const double kappa = 0.01;
   const double rho = 1;
-  auto lagrangian_ret = dut.ConstructLagrangianProgram(
-      V, rho, deriv_eps, lambda0_degree, l_degrees, p_degrees,
-      std::nullopt /* a_info */);
+  auto lagrangian_ret =
+      dut.ConstructLagrangianProgram(V, rho, kappa, lambda0_degree, l_degrees,
+                                     p_degrees, std::nullopt /* a_info */);
   solvers::SolverOptions solver_options;
   // solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
   const auto result_lagrangian =
@@ -877,7 +875,7 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunov) {
   VectorX<symbolic::Polynomial> l_sol(num_u_vertices);
   for (int i = 0; i < num_u_vertices; ++i) {
     l_sol(i) = result_lagrangian.GetSolution(lagrangian_ret.l(i));
-    vdot_sos_expected -= l_sol(i) * (dVdx_times_f + deriv_eps * V +
+    vdot_sos_expected -= l_sol(i) * (dVdx_times_f + kappa * V +
                                      dVdx.dot(G * u_vertices_.col(i)));
   }
   VectorX<symbolic::Polynomial> p_sol;
@@ -902,7 +900,7 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunov) {
   const int V_degree = V.TotalDegree();
   auto lyapunov_ret = dut.ConstructLyapunovProgram(
       lambda0_sol, l_sol, V_degree, rho, positivity_eps, positivity_d,
-      positivity_eq_lagrangian_degrees, p_degrees, deriv_eps,
+      positivity_eq_lagrangian_degrees, p_degrees, kappa,
       std::nullopt /* a_info */);
   for (const auto& binding : lyapunov_ret.prog->linear_equality_constraints()) {
     binding.evaluator()->RemoveTinyCoefficient(1E-12);
@@ -936,7 +934,7 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunov) {
   const auto search_result =
       dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
                  positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
-                 ellipsoid_eq_lagrangian_degrees, deriv_eps, x_star, S, r_degree,
+                 ellipsoid_eq_lagrangian_degrees, kappa, x_star, S, r_degree,
                  search_options, ellipsoid_bisection_option);
 }
 
@@ -955,9 +953,9 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovConstructLagrangianProgram) {
   const int d_degree = 1;
   const std::vector<int> l_degrees{2, 2, 2, 2};
   const std::vector<int> p_degrees{};
-  const double deriv_eps = 0.01;
+  const double kappa = 0.01;
   auto lagrangian_ret = dut.ConstructLagrangianProgram(
-      V, lambda0, d_degree, l_degrees, p_degrees, deriv_eps);
+      V, lambda0, d_degree, l_degrees, p_degrees, kappa);
   const auto result = solvers::Solve(*(lagrangian_ret.prog));
   ASSERT_TRUE(result.is_success());
   const auto vdot_gram_sol = result.GetSolution(lagrangian_ret.vdot_gram);
@@ -975,7 +973,7 @@ TEST_F(SimpleLinearSystemTest, ControlLyapunovConstructLagrangianProgram) {
     const symbolic::Polynomial l_sol = result.GetSolution(lagrangian_ret.l(i));
     EXPECT_TRUE(math::IsPositiveDefinite(
         result.GetSolution(lagrangian_ret.l_grams[i])));
-    vdot_sos_expected -= l_sol * (dVdx.dot(f) + deriv_eps * V +
+    vdot_sos_expected -= l_sol * (dVdx.dot(f) + kappa * V +
                                   dVdx_times_G.dot(u_vertices_.col(i)));
   }
   VectorX<symbolic::Polynomial> p_sol;

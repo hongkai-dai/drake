@@ -100,7 +100,7 @@ void ControlBarrier::AddControlBarrierConstraint(
     const std::optional<symbolic::Polynomial>& lambda1,
     const VectorX<symbolic::Polynomial>& l,
     const VectorX<symbolic::Polynomial>& state_constraints_lagrangian,
-    const symbolic::Polynomial& h, double deriv_eps,
+    const symbolic::Polynomial& h, double kappa,
     const std::optional<symbolic::Polynomial>& a,
     symbolic::Polynomial* hdot_poly, VectorX<symbolic::Monomial>* monomials,
     MatrixX<symbolic::Variable>* gram) const {
@@ -110,7 +110,7 @@ void ControlBarrier::AddControlBarrierConstraint(
   *hdot_poly -=
       l.sum() *
       (-dhdx_times_f -
-       deriv_eps * h * dynamics_denominator_.value_or(symbolic::Polynomial(1)));
+       kappa * h * dynamics_denominator_.value_or(symbolic::Polynomial(1)));
   *hdot_poly += (dhdx * G_ * u_vertices_).dot(l);
   if (beta_plus_.has_value()) {
     *hdot_poly -= *lambda1 * (*beta_plus_ - h);
@@ -127,9 +127,8 @@ void ControlBarrier::AddControlBarrierConstraint(
 }
 
 ControlBarrier::LagrangianReturn ControlBarrier::ConstructLagrangianProgram(
-    const symbolic::Polynomial& h, const double deriv_eps,
-    const int lambda0_degree, const std::optional<int> lambda1_degree,
-    const std::vector<int>& l_degrees,
+    const symbolic::Polynomial& h, const double kappa, const int lambda0_degree,
+    const std::optional<int> lambda1_degree, const std::vector<int>& l_degrees,
     const std::vector<int>& state_constraints_lagrangian_degrees,
     const std::optional<SlackPolynomialInfo> a_info) const {
   DRAKE_DEMAND(static_cast<int>(l_degrees.size()) == u_vertices_.cols());
@@ -169,7 +168,7 @@ ControlBarrier::LagrangianReturn ControlBarrier::ConstructLagrangianProgram(
   }
   this->AddControlBarrierConstraint(ret.prog.get(), ret.lambda0, ret.lambda1,
                                     ret.l, ret.state_constraints_lagrangian, h,
-                                    deriv_eps, ret.a, &(ret.hdot_sos),
+                                    kappa, ret.a, &(ret.hdot_sos),
                                     &(ret.hdot_monomials), &(ret.hdot_gram));
   return ret;
 }
@@ -225,7 +224,7 @@ ControlBarrier::BarrierReturn ControlBarrier::ConstructBarrierProgram(
     const std::vector<symbolic::Polynomial>& t,
     const std::vector<std::vector<int>>&
         unsafe_state_constraints_lagrangian_degrees,
-    const int h_degree, const double deriv_eps,
+    const int h_degree, const double kappa,
     const std::vector<std::vector<int>>& s_degrees,
     const std::vector<std::optional<SlackPolynomialInfo>>& unsafe_a_info)
     const {
@@ -246,10 +245,10 @@ ControlBarrier::BarrierReturn ControlBarrier::ConstructBarrierProgram(
                               &(ret.hdot_a_gram.value()));
   }
   // Add the constraint on hdot.
-  this->AddControlBarrierConstraint(
-      ret.prog.get(), lambda0, lambda1, l,
-      ret.hdot_state_constraints_lagrangian, ret.h, deriv_eps, ret.hdot_a,
-      &(ret.hdot_sos), &hdot_monomials, &(ret.hdot_sos_gram));
+  this->AddControlBarrierConstraint(ret.prog.get(), lambda0, lambda1, l,
+                                    ret.hdot_state_constraints_lagrangian,
+                                    ret.h, kappa, ret.hdot_a, &(ret.hdot_sos),
+                                    &hdot_monomials, &(ret.hdot_sos_gram));
   // Add the constraint that the unsafe region has h <= 0
   const int num_unsafe_regions = static_cast<int>(unsafe_regions_.size());
   DRAKE_DEMAND(static_cast<int>(t.size()) == num_unsafe_regions);
@@ -375,9 +374,9 @@ void ControlBarrier::AddBarrierProgramCost(
 }
 
 ControlBarrier::SearchResult ControlBarrier::Search(
-    const symbolic::Polynomial& h_init, const int h_degree,
-    const double deriv_eps, const int lambda0_degree,
-    const std::optional<int> lambda1_degree, const std::vector<int>& l_degrees,
+    const symbolic::Polynomial& h_init, const int h_degree, const double kappa,
+    const int lambda0_degree, const std::optional<int> lambda1_degree,
+    const std::vector<int>& l_degrees,
     const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
     const std::vector<int>& t_degrees,
     const std::vector<std::vector<int>>& s_degrees,
@@ -404,7 +403,7 @@ ControlBarrier::SearchResult ControlBarrier::Search(
   while (iter_count < search_options.bilinear_iterations) {
     drake::log()->info("iter {}", iter_count);
     const auto search_lagrangian_ret = SearchLagrangian(
-        ret.h, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
+        ret.h, kappa, lambda0_degree, lambda1_degree, l_degrees,
         hdot_state_constraints_lagrangian_degrees, hdot_a_info, t_degrees,
         s_degrees, unsafe_state_constraints_lagrangian_degrees, unsafe_a_info,
         search_options, std::nullopt /* backoff_scale */);
@@ -470,7 +469,7 @@ ControlBarrier::SearchResult ControlBarrier::Search(
       auto barrier_ret = this->ConstructBarrierProgram(
           ret.lambda0, ret.lambda1, ret.l,
           hdot_state_constraints_lagrangian_degrees, hdot_a_info, ret.t,
-          unsafe_state_constraints_lagrangian_degrees, h_degree, deriv_eps,
+          unsafe_state_constraints_lagrangian_degrees, h_degree, kappa,
           s_degrees, unsafe_a_info);
       std::vector<symbolic::Polynomial> r;
       VectorX<symbolic::Variable> rho;
@@ -545,7 +544,7 @@ ControlBarrier::SearchResult ControlBarrier::Search(
 }
 
 ControlBarrier::SearchResult ControlBarrier::Search(
-    const symbolic::Polynomial& h_init, int h_degree, double deriv_eps,
+    const symbolic::Polynomial& h_init, int h_degree, double kappa,
     int lambda0_degree, std::optional<int> lambda1_degree,
     const std::vector<int>& l_degrees,
     const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
@@ -569,7 +568,7 @@ ControlBarrier::SearchResult ControlBarrier::Search(
   while (iter_count < search_options.bilinear_iterations) {
     drake::log()->info("iter {}", iter_count);
     const auto search_lagrangian_ret = SearchLagrangian(
-        ret.h, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
+        ret.h, kappa, lambda0_degree, lambda1_degree, l_degrees,
         hdot_state_constraints_lagrangian_degrees, hdot_a_info, t_degrees,
         s_degrees, unsafe_state_constraints_lagrangian_degrees, unsafe_a_info,
         search_options, std::nullopt /* backoff_scale */);
@@ -588,7 +587,7 @@ ControlBarrier::SearchResult ControlBarrier::Search(
       auto barrier_ret = this->ConstructBarrierProgram(
           ret.lambda0, ret.lambda1, ret.l,
           hdot_state_constraints_lagrangian_degrees, hdot_a_info, ret.t,
-          unsafe_state_constraints_lagrangian_degrees, h_degree, deriv_eps,
+          unsafe_state_constraints_lagrangian_degrees, h_degree, kappa,
           s_degrees, unsafe_a_info);
       this->AddBarrierProgramCost(barrier_ret.prog.get(), barrier_ret.h, x_safe,
                                   x_samples, 0. /* eps*/, maximize_minimal);
@@ -652,9 +651,9 @@ ControlBarrier::SearchResult ControlBarrier::Search(
 }
 
 ControlBarrier::SearchWithSlackAResult ControlBarrier::SearchWithSlackA(
-    const symbolic::Polynomial& h_init, const int h_degree,
-    const double deriv_eps, const int lambda0_degree,
-    const std::optional<int> lambda1_degree, const std::vector<int>& l_degrees,
+    const symbolic::Polynomial& h_init, const int h_degree, const double kappa,
+    const int lambda0_degree, const std::optional<int> lambda1_degree,
+    const std::vector<int>& l_degrees,
     const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
     const std::optional<SlackPolynomialInfo> hdot_a_info,
     const std::vector<int>& t_degrees,
@@ -679,7 +678,7 @@ ControlBarrier::SearchWithSlackAResult ControlBarrier::SearchWithSlackA(
     {
       // Search for hdot Lagrangian and a(x).
       const auto search_lagrangian_result = this->SearchLagrangian(
-          search_result.h, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
+          search_result.h, kappa, lambda0_degree, lambda1_degree, l_degrees,
           hdot_state_constraints_lagrangian_degrees, hdot_a_info_search,
           t_degrees, s_degrees, unsafe_state_constraints_lagrangian_degrees,
           unsafe_a_info_search, search_options,
@@ -737,7 +736,7 @@ ControlBarrier::SearchWithSlackAResult ControlBarrier::SearchWithSlackA(
           search_result.lambda0, search_result.lambda1, search_result.l,
           hdot_state_constraints_lagrangian_degrees, hdot_a_info_search,
           search_result.t, unsafe_state_constraints_lagrangian_degrees,
-          h_degree, deriv_eps, s_degrees, unsafe_a_info_search);
+          h_degree, kappa, s_degrees, unsafe_a_info_search);
       // Add the constraint that h(x_safe) >= 0;
       {
         Eigen::MatrixXd A_x_safe;
@@ -832,9 +831,8 @@ ControlBarrier::SearchWithSlackAResult ControlBarrier::SearchWithSlackA(
 }
 
 ControlBarrier::SearchLagrangianResult ControlBarrier::SearchLagrangian(
-    const symbolic::Polynomial& h, const double deriv_eps,
-    const int lambda0_degree, const std::optional<int> lambda1_degree,
-    const std::vector<int>& l_degrees,
+    const symbolic::Polynomial& h, const double kappa, const int lambda0_degree,
+    const std::optional<int> lambda1_degree, const std::vector<int>& l_degrees,
     const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
     const std::optional<SlackPolynomialInfo> hdot_a_info,
     const std::vector<int>& t_degrees,
@@ -848,7 +846,7 @@ ControlBarrier::SearchLagrangianResult ControlBarrier::SearchLagrangian(
   search_lagrangian_ret.success = true;
   {
     auto lagrangian_ret = this->ConstructLagrangianProgram(
-        h, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
+        h, kappa, lambda0_degree, lambda1_degree, l_degrees,
         hdot_state_constraints_lagrangian_degrees, hdot_a_info);
     if (search_options.lagrangian_tiny_coeff_tol > 0) {
       RemoveTinyCoeff(lagrangian_ret.prog.get(),
@@ -999,7 +997,7 @@ ControlBarrierBoxInputBound::ConstructLagrangianAndBProgram(
     std::vector<std::vector<std::array<symbolic::Polynomial, 2>>>* lagrangians,
     std::vector<std::vector<std::array<MatrixX<symbolic::Variable>, 2>>>*
         lagrangian_grams,
-    VectorX<symbolic::Polynomial>* b, symbolic::Variable* deriv_eps,
+    VectorX<symbolic::Polynomial>* b, symbolic::Variable* kappa,
     HdotSosConstraintReturn* hdot_sos_constraint) const {
   auto prog = std::make_unique<solvers::MathematicalProgram>();
   prog->AddIndeterminates(x_);
@@ -1020,7 +1018,7 @@ ControlBarrierBoxInputBound::ConstructLagrangianAndBProgram(
     }
   }
 
-  *deriv_eps = prog->NewContinuousVariables<1>("eps")(0);
+  *kappa = prog->NewContinuousVariables<1>("eps")(0);
 
   const RowVectorX<symbolic::Polynomial> dhdx = h.Jacobian(x_);
   // Since we will add the constraint -∂h/∂x*f(x) - εh = ∑ᵢ bᵢ(x), we know
@@ -1036,8 +1034,8 @@ ControlBarrierBoxInputBound::ConstructLagrangianAndBProgram(
         prog->NewFreePolynomial(x_set_, b_degrees[i], "b" + std::to_string(i));
   }
   // Add the constraint -∂h/∂x*f(x) - εh = ∑ᵢ bᵢ(x)
-  prog->AddEqualityConstraintBetweenPolynomials(
-      b->sum(), -dhdx_times_f - (*deriv_eps) * h);
+  prog->AddEqualityConstraintBetweenPolynomials(b->sum(),
+                                                -dhdx_times_f - (*kappa) * h);
   // Add the constraint
   // (1+lᵢ₀₀(x))(∂h/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₀₁(x)∂h/∂xGᵢ(x) is sos
   // (1+lᵢ₁₀(x))(−∂h/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₁₁(x)∂h/∂xGᵢ(x) is sos
@@ -1051,14 +1049,14 @@ CbfController::CbfController(
     const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
     const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
     std::optional<symbolic::Polynomial> dynamics_denominator,
-    symbolic::Polynomial cbf, double deriv_eps)
+    symbolic::Polynomial cbf, double kappa)
     : LeafSystem<double>(),
       x_{x},
       f_{f},
       G_{G},
       dynamics_denominator_{std::move(dynamics_denominator)},
       cbf_{std::move(cbf)},
-      deriv_eps_{deriv_eps} {
+      kappa_{kappa} {
   const int nx = f_.rows();
   const int nu = G_.cols();
   DRAKE_DEMAND(x_.rows() == nx);

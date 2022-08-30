@@ -32,9 +32,9 @@ class PendulumClfController : public ClfController {
   PendulumClfController(const Vector3<symbolic::Variable>& x,
                         const Vector3<symbolic::Polynomial>& f,
                         const Vector3<symbolic::Polynomial>& G,
-                        const symbolic::Polynomial& V, double deriv_eps,
+                        const symbolic::Polynomial& V, double kappa,
                         double u_max)
-      : ClfController(x, f, G, std::nullopt, V, deriv_eps), u_max_{u_max} {}
+      : ClfController(x, f, G, std::nullopt, V, kappa), u_max_{u_max} {}
 
   virtual ~PendulumClfController() {}
 
@@ -61,15 +61,14 @@ class PendulumClfController : public ClfController {
     const double V_val = V().Evaluate(env);
     // dVdx * G * u + dVdx * f <= -eps * V * n(x)
     prog.AddLinearConstraint(dVdx_times_G_val, -kInf,
-                             -deriv_eps() * V_val - dVdx_times_f_val, u);
+                             -kappa() * V_val - dVdx_times_f_val, u);
     const double vdot_cost = 0;
     prog.AddLinearCost(dVdx_times_G_val * vdot_cost,
                        dVdx_times_f_val * vdot_cost, u);
     const auto result = solvers::Solve(prog);
     if (!result.is_success()) {
       drake::log()->info("dVdx*f+eps*V={}, dVdx*G={}",
-                         dVdx_times_f_val + deriv_eps() * V_val,
-                         dVdx_times_G_val);
+                         dVdx_times_f_val + kappa() * V_val, dVdx_times_G_val);
       drake::log()->error("ClfController fails at t={} with x={}, V={}",
                           context.get_time(), x_val.transpose(), V_val);
       DRAKE_DEMAND(result.is_success());
@@ -83,7 +82,7 @@ class PendulumClfController : public ClfController {
 
 // void Simulate(const Vector2<symbolic::Variable>& x, double theta_des,
 //              const symbolic::Polynomial& clf, double u_bound, double
-//              deriv_eps, const Eigen::Vector2d& x0, double duration) {
+//              kappa, const Eigen::Vector2d& x0, double duration) {
 //  systems::DiagramBuilder<double> builder;
 //  auto pendulum =
 //      builder.AddSystem<examples::pendulum::PendulumPlant<double>>();
@@ -102,7 +101,7 @@ class PendulumClfController : public ClfController {
 //  ControlAffineDynamics(*pendulum, x, theta_des, &f, &G);
 //
 //  auto clf_controller = builder.AddSystem<PendulumClfController>(
-//      x, f, G, clf, deriv_eps, u_bound);
+//      x, f, G, clf, kappa, u_bound);
 //  auto state_logger =
 //      LogVectorOutput(pendulum->get_state_output_port(), &builder);
 //  auto clf_logger = LogVectorOutput(
@@ -143,7 +142,7 @@ class PendulumClfController : public ClfController {
 
 void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
                      const symbolic::Polynomial& clf, double u_bound,
-                     double deriv_eps, double theta0, double thetadot0,
+                     double kappa, double theta0, double thetadot0,
                      double duration) {
   systems::DiagramBuilder<double> builder;
   auto pendulum =
@@ -161,8 +160,8 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
   Vector3<symbolic::Polynomial> f;
   Vector3<symbolic::Polynomial> G;
   TrigPolyDynamics(*pendulum, x, theta_des, &f, &G);
-  auto clf_controller = builder.AddSystem<PendulumClfController>(
-      x, f, G, clf, deriv_eps, u_bound);
+  auto clf_controller =
+      builder.AddSystem<PendulumClfController>(x, f, G, clf, kappa, u_bound);
 
   auto state_converter = builder.AddSystem<TrigStateConverter>(theta_des);
 
@@ -267,13 +266,13 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
   symbolic::Polynomial lambda0;
   VectorX<symbolic::Polynomial> l;
   VectorX<symbolic::Polynomial> p;
-  const double deriv_eps = 0.25;
+  const double kappa = 0.25;
 
   V_init = V_init.RemoveTermsWithSmallCoefficients(1e-6);
   // First maximize rho such that V(x)<=rho defines a valid ROA.
   {
     auto lagrangian_ret = dut.ConstructLagrangianProgram(
-        V_init, symbolic::Polynomial(), 2, l_degrees, p_degrees, deriv_eps);
+        V_init, symbolic::Polynomial(), 2, l_degrees, p_degrees, kappa);
     const auto result = solvers::Solve(*(lagrangian_ret.prog));
     DRAKE_DEMAND(result.is_success());
     std::cout << fmt::format("V_init(x) <= {}\n",
@@ -308,7 +307,7 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
     const auto search_result =
         dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
                    positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
-                   ellipsoid_eq_lagrangian_degrees, deriv_eps, x_star, S,
+                   ellipsoid_eq_lagrangian_degrees, kappa, x_star, S,
                    V_degree - 2, search_options, ellipsoid_bisection_option);
     V_sol = search_result.V;
   } else {
@@ -328,7 +327,7 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
 
     const auto search_result = dut.Search(
         V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
-        positivity_d, positivity_eq_lagrangian_degrees, p_degrees, deriv_eps,
+        positivity_d, positivity_eq_lagrangian_degrees, p_degrees, kappa,
         x_samples, std::nullopt /* in_roa_samples */, true, search_options);
     V_sol = search_result.V;
   }
@@ -339,8 +338,7 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
       V_sol.EvaluateIndeterminates(
           x, ToTrigState<double>(theta0, thetadot0, theta_des))(0));
 
-  SimulateTrigClf(x, theta_des, V_sol, u_bound, deriv_eps, theta0, thetadot0,
-                  30);
+  SimulateTrigClf(x, theta_des, V_sol, u_bound, kappa, theta0, thetadot0, 30);
 }
 
 [[maybe_unused]] void SearchWTaylorDynamics() {
@@ -369,14 +367,14 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
       x.cast<symbolic::Expression>().dot(lqr_result.S * x));
   V_init = V_init.RemoveTermsWithSmallCoefficients(1E-8);
   std::cout << "V_init: " << V_init << "\n";
-  const double deriv_eps = 0.5;
+  const double kappa = 0.5;
   {
     const symbolic::Polynomial lambda0{};
     const int d_degree = 2;
     const std::vector<int> l_degrees{2, 2};
     const std::vector<int> p_degrees{};
     auto lagrangian_ret = dut.ConstructLagrangianProgram(
-        V_init, lambda0, d_degree, l_degrees, p_degrees, deriv_eps);
+        V_init, lambda0, d_degree, l_degrees, p_degrees, kappa);
     const auto result = solvers::Solve(*(lagrangian_ret.prog));
     DRAKE_DEMAND(result.is_success());
     std::cout << V_init << " <= " << result.GetSolution(lagrangian_ret.rho)
@@ -406,9 +404,9 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
     const auto search_result =
         dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
                    positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
-                   ellipsoid_eq_lagrangian_degrees, deriv_eps, x_star, S,
+                   ellipsoid_eq_lagrangian_degrees, kappa, x_star, S,
                    V_degree - 2, search_options, ellipsoid_bisection_option);
-    // Simulate(x, theta_des, search_result.V, u_bound, deriv_eps,
+    // Simulate(x, theta_des, search_result.V, u_bound, kappa,
     //         Eigen::Vector2d(M_PI + 0.6 * M_PI, 0), 10);
   }
 }
@@ -418,7 +416,7 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
                                        const Vector2<symbolic::Polynomial>& f,
                                        const Vector2<symbolic::Polynomial>& G,
                                        symbolic::Polynomial* V_sol,
-                                       double* deriv_eps_sol) {
+                                       double* kappa_sol) {
   const bool symmetric_dynamics = internal::IsDynamicsSymmetric(f, G);
   const int num_vdot_sos = symmetric_dynamics ? 1 : 2;
   std::vector<std::vector<symbolic::Polynomial>> l_given(1);
@@ -441,8 +439,8 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
   // int s_degree = 0;
   // symbolic::Polynomial t_given{0};
   const int V_degree = 2;
-  const double deriv_eps_lower = 0.5;
-  const double deriv_eps_upper = deriv_eps_lower;
+  const double kappa_lower = 0.5;
+  const double kappa_upper = kappa_lower;
   ControlLyapunovBoxInputBound::SearchOptions search_options;
   search_options.bilinear_iterations = 15;
   search_options.backoff_scale = 0.02;
@@ -461,10 +459,10 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
       ellipsoid_bisection_option(size_min, size_max, size_bisection_tol);
   auto clf_result =
       searcher.Search(V_init, l_given, lagrangian_degrees, b_degrees, x_star, S,
-                      r_degree, V_degree, deriv_eps_lower, deriv_eps_upper,
+                      r_degree, V_degree, kappa_lower, kappa_upper,
                       search_options, ellipsoid_bisection_option);
   *V_sol = clf_result.V;
-  *deriv_eps_sol = clf_result.deriv_eps;
+  *kappa_sol = clf_result.kappa;
 }
 
 int DoMain() {

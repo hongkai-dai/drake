@@ -469,7 +469,7 @@ FindCandidateRegionalLyapunovReturn FindCandidateRegionalLyapunov(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
     const VectorX<symbolic::Polynomial>& dynamics,
     const std::optional<symbolic::Polynomial>& dynamics_denominator,
-    int V_degree, double positivity_eps, int d, double deriv_eps,
+    int V_degree, double positivity_eps, int d, double kappa,
     const VectorX<symbolic::Polynomial>& state_eq_constraints,
     const std::vector<int>& positivity_ceq_lagrangian_degrees,
     const std::vector<int>& derivative_ceq_lagrangian_degrees,
@@ -517,7 +517,7 @@ FindCandidateRegionalLyapunovReturn FindCandidateRegionalLyapunov(
   const symbolic::Polynomial dynamics_denominator_val =
       dynamics_denominator.value_or(symbolic::Polynomial(1));
   ret.derivative_sos_condition =
-      -Vdot - deriv_eps * ret.V * dynamics_denominator_val;
+      -Vdot - kappa * ret.V * dynamics_denominator_val;
   ret.derivative_cin_lagrangian.resize(state_ineq_constraints.rows());
   for (int i = 0; i < state_ineq_constraints.rows(); ++i) {
     std::tie(ret.derivative_cin_lagrangian(i), std::ignore) =

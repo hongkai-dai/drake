@@ -68,7 +68,7 @@ class ControlBarrier {
       const std::optional<symbolic::Polynomial>& lambda1,
       const VectorX<symbolic::Polynomial>& l,
       const VectorX<symbolic::Polynomial>& state_constraints_lagrangian,
-      const symbolic::Polynomial& h, double deriv_eps,
+      const symbolic::Polynomial& h, double kappa,
       const std::optional<symbolic::Polynomial>& a,
       symbolic::Polynomial* hdot_poly, VectorX<symbolic::Monomial>* monomials,
       MatrixX<symbolic::Variable>* gram) const;
@@ -111,7 +111,7 @@ class ControlBarrier {
    * a_degree=std::nullopt, then we use a(x)=0.
    */
   LagrangianReturn ConstructLagrangianProgram(
-      const symbolic::Polynomial& h, double deriv_eps, int lambda0_degree,
+      const symbolic::Polynomial& h, double kappa, int lambda0_degree,
       std::optional<int> lambda1_degree, const std::vector<int>& l_degrees,
       const std::vector<int>& state_constraints_lagrangian_degrees,
       std::optional<SlackPolynomialInfo> a_info) const;
@@ -200,7 +200,7 @@ class ControlBarrier {
       const std::vector<symbolic::Polynomial>& t,
       const std::vector<std::vector<int>>&
           unsafe_state_constraints_lagrangian_degrees,
-      int h_degree, double deriv_eps,
+      int h_degree, double kappa,
       const std::vector<std::vector<int>>& s_degrees,
       const std::vector<std::optional<SlackPolynomialInfo>>& unsafe_a_info)
       const;
@@ -349,7 +349,7 @@ class ControlBarrier {
    * @param[in/out] ellipsoids The ellipsoids contained inside the safe region.
    */
   SearchResult Search(
-      const symbolic::Polynomial& h_init, int h_degree, double deriv_eps,
+      const symbolic::Polynomial& h_init, int h_degree, double kappa,
       int lambda0_degree, std::optional<int> lambda1_degree,
       const std::vector<int>& l_degrees,
       const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
@@ -373,7 +373,7 @@ class ControlBarrier {
    * max meanᵢ h(x_samples.col(i))
    */
   SearchResult Search(
-      const symbolic::Polynomial& h_init, int h_degree, double deriv_eps,
+      const symbolic::Polynomial& h_init, int h_degree, double kappa,
       int lambda0_degree, std::optional<int> lambda1_degree,
       const std::vector<int>& l_degrees,
       const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
@@ -429,7 +429,7 @@ class ControlBarrier {
    * h_x_safe_min
    */
   SearchWithSlackAResult SearchWithSlackA(
-      const symbolic::Polynomial& h_init, int h_degree, double deriv_eps,
+      const symbolic::Polynomial& h_init, int h_degree, double kappa,
       int lambda0_degree, std::optional<int> lambda1_degree,
       const std::vector<int>& l_degrees,
       const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
@@ -465,7 +465,7 @@ class ControlBarrier {
    * @return success Returns true if the Lagrangian multipliers are found.
    */
   SearchLagrangianResult SearchLagrangian(
-      const symbolic::Polynomial& h, double deriv_eps, int lambda0_degree,
+      const symbolic::Polynomial& h, double kappa, int lambda0_degree,
       std::optional<int> lambda1_degree, const std::vector<int>& l_degrees,
       const std::vector<int>& hdot_state_constraints_lagrangian_degrees,
       std::optional<SlackPolynomialInfo> hdot_a_info,
@@ -531,7 +531,7 @@ class ControlBarrierBoxInputBound {
    * (1+lᵢ₀₀(x))(∂h/∂x*Gᵢ(x)−bᵢ(x)) − lᵢ₀₁(x)∂h/∂xGᵢ(x) is sos
    * (1+lᵢ₁₀(x))(−∂h/∂x*Gᵢ(x)−bᵢ(x)) + lᵢ₁₁(x)∂h/∂xGᵢ(x) is sos
    * </pre>
-   * @param deriv_eps ε in the documentation above.
+   * @param kappa ε in the documentation above.
    */
   std::unique_ptr<solvers::MathematicalProgram> ConstructLagrangianAndBProgram(
       const symbolic::Polynomial& h,
@@ -542,7 +542,7 @@ class ControlBarrierBoxInputBound {
           lagrangians,
       std::vector<std::vector<std::array<MatrixX<symbolic::Variable>, 2>>>*
           lagrangian_grams,
-      VectorX<symbolic::Polynomial>* b, symbolic::Variable* deriv_eps,
+      VectorX<symbolic::Polynomial>* b, symbolic::Variable* kappa,
       HdotSosConstraintReturn* hdot_sos_constraint) const;
 
  private:
@@ -564,7 +564,7 @@ class CbfController : public systems::LeafSystem<double> {
                 const Eigen::Ref<const VectorX<symbolic::Polynomial>>& f,
                 const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
                 std::optional<symbolic::Polynomial> dynamics_denominator,
-                symbolic::Polynomial cbf, double deriv_eps);
+                symbolic::Polynomial cbf, double kappa);
 
   virtual ~CbfController() {}
 
@@ -601,7 +601,7 @@ class CbfController : public systems::LeafSystem<double> {
 
   const symbolic::Polynomial& cbf() const { return cbf_; }
 
-  double deriv_eps() const { return deriv_eps_; }
+  double kappa() const { return kappa_; }
 
   const symbolic::Polynomial& dhdx_times_f() const { return dhdx_times_f_; }
 
@@ -618,7 +618,7 @@ class CbfController : public systems::LeafSystem<double> {
   MatrixX<symbolic::Polynomial> G_;
   std::optional<symbolic::Polynomial> dynamics_denominator_;
   symbolic::Polynomial cbf_;
-  double deriv_eps_;
+  double kappa_;
   symbolic::Polynomial dhdx_times_f_;
   RowVectorX<symbolic::Polynomial> dhdx_times_G_;
   InputPortIndex x_input_index_;

@@ -47,19 +47,19 @@ class CbfControllerPublic : public systems::analysis::CbfController {
   using Base = systems::analysis::CbfController;
   using Base::CalcCbf;
   using Base::CalcControl;
+  using Base::cbf;
   using Base::cbf_output_port;
   using Base::CbfController;
   using Base::control_output_port;
-  using Base::DoCalcControl;
-  using Base::x_input_port;
-  using Base::x;
-  using Base::f;
-  using Base::G;
-  using Base::dynamics_denominator;
-  using Base::cbf;
-  using Base::deriv_eps;
   using Base::dhdx_times_f;
   using Base::dhdx_times_G;
+  using Base::DoCalcControl;
+  using Base::dynamics_denominator;
+  using Base::f;
+  using Base::G;
+  using Base::kappa;
+  using Base::x;
+  using Base::x_input_port;
 };
 
 class PyCbfController : public CbfControllerPublic {
@@ -591,14 +591,13 @@ Parameter ``interruptible``:
     control_lyapunov.def(
         "ConstructLagrangianProgram",
         [](const Class& self, const symbolic::Polynomial& V, double rho,
-            double deriv_eps, int lambda0_degree,
-            const std::vector<int>& l_degrees,
+            double kappa, int lambda0_degree, const std::vector<int>& l_degrees,
             const std::vector<int>& p_degrees,
             std::optional<analysis::SlackPolynomialInfo> a_info) {
           return self.ConstructLagrangianProgram(
-              V, rho, deriv_eps, lambda0_degree, l_degrees, p_degrees, a_info);
+              V, rho, kappa, lambda0_degree, l_degrees, p_degrees, a_info);
         },
-        py::arg("V"), py::arg("rho"), py::arg("deriv_eps"),
+        py::arg("V"), py::arg("rho"), py::arg("kappa"),
         py::arg("lambda0_degree"), py::arg("l_degrees"), py::arg("p_degrees"),
         py::arg("a_info"), cls_doc.ConstructLagrangianProgram.doc);
 
@@ -625,7 +624,7 @@ Parameter ``interruptible``:
             const std::vector<int>&, double>(
             &Class::ConstructLagrangianProgram, py::const_),
         py::arg("V"), py::arg("lambda0"), py::arg("d_degree"),
-        py::arg("l_degrees"), py::arg("p_degrees"), py::arg("deriv_eps"));
+        py::arg("l_degrees"), py::arg("p_degrees"), py::arg("kappa"));
 
     py::class_<analysis::ControlLyapunov::LyapunovReturn>(
         control_lyapunov, "LyapunovReturn")
@@ -642,7 +641,7 @@ Parameter ``interruptible``:
         &Class::ConstructLyapunovProgram, py::arg("lambda0"), py::arg("l"),
         py::arg("V_degree"), py::arg("rho"), py::arg("positivity_eps"),
         py::arg("positivity_d"), py::arg("positivity_eq_lagrangian_degrees"),
-        py::arg("p_degrees"), py::arg("deriv_eps"), py::arg("a_info"),
+        py::arg("p_degrees"), py::arg("kappa"), py::arg("a_info"),
         cls_doc.ConstructLyapunovProgram.doc);
 
     py::class_<Class::SearchOptions>(control_lyapunov, "SearchOptions")
@@ -728,7 +727,7 @@ Parameter ``interruptible``:
             py::arg("V_degree"), py::arg("positivity_eps"),
             py::arg("positivity_d"),
             py::arg("positivity_eq_lagrangian_degrees"), py::arg("p_degrees"),
-            py::arg("ellipsoid_eq_lagrangian_degrees"), py::arg("deriv_eps"),
+            py::arg("ellipsoid_eq_lagrangian_degrees"), py::arg("kappa"),
             py::arg("x_star"), py::arg("S"), py::arg("r_degree"),
             py::arg("search_options"), py::arg("ellipsoid_option"))
         .def(
@@ -737,22 +736,21 @@ Parameter ``interruptible``:
                 int lambda0_degree, const std::vector<int>& l_degrees,
                 int V_degree, double positivity_eps, int positivity_d,
                 const std::vector<int>& positivity_eq_lagrangian_degrees,
-                const std::vector<int>& p_degrees, double deriv_eps,
+                const std::vector<int>& p_degrees, double kappa,
                 const Eigen::Ref<const Eigen::MatrixXd>& x_samples,
                 const std::optional<Eigen::MatrixXd>& in_roa_samples,
                 bool minimize_max, const Class::SearchOptions& search_options) {
               return self.Search(V_init, lambda0_degree, l_degrees, V_degree,
                   positivity_eps, positivity_d,
-                  positivity_eq_lagrangian_degrees, p_degrees, deriv_eps,
-                  x_samples, in_roa_samples, minimize_max, search_options);
+                  positivity_eq_lagrangian_degrees, p_degrees, kappa, x_samples,
+                  in_roa_samples, minimize_max, search_options);
             },
             py::arg("V_init"), py::arg("lambda0_degree"), py::arg("l_degrees"),
             py::arg("V_degree"), py::arg("positivity_eps"),
             py::arg("positivity_d"),
             py::arg("positivity_eq_lagrangian_degrees"), py::arg("p_degrees"),
-            py::arg("deriv_eps"), py::arg("x_samples"),
-            py::arg("in_roa_samples"), py::arg("minimize_max"),
-            py::arg("search_options"));
+            py::arg("kappa"), py::arg("x_samples"), py::arg("in_roa_samples"),
+            py::arg("minimize_max"), py::arg("search_options"));
 
     py::class_<Class::SearchWithSlackAResult, Class::SearchResult>(
         control_lyapunov, "SearchWithSlackAResult")
@@ -772,7 +770,7 @@ Parameter ``interruptible``:
         py::arg("V_init"), py::arg("lambda0_degree"), py::arg("l_degrees"),
         py::arg("V_degree"), py::arg("positivity_eps"), py::arg("positivity_d"),
         py::arg("positivity_eq_lagrangian_degrees"), py::arg("p_degrees"),
-        py::arg("deriv_eps"), py::arg("in_roa_samples"), py::arg("a_info"),
+        py::arg("kappa"), py::arg("in_roa_samples"), py::arg("a_info"),
         py::arg("search_options"));
 
     py::class_<Class::SearchLagrangianResult>(
@@ -786,7 +784,7 @@ Parameter ``interruptible``:
 
     control_lyapunov.def("SearchLagrangian", &Class::SearchLagrangian,
         py::arg("V"), py::arg("rho"), py::arg("lambda0_degree"),
-        py::arg("l_degrees"), py::arg("p_degrees"), py::arg("deriv_eps"),
+        py::arg("l_degrees"), py::arg("p_degrees"), py::arg("kappa"),
         py::arg("search_options"), py::arg("always_write_sol"),
         py::arg("a_info"), py::arg("backoff_scale"));
   }
@@ -801,7 +799,7 @@ Parameter ``interruptible``:
         //         symbolic::Polynomial, double>(),
         //    py::arg("x"), py::arg("f"), py::arg("G"),
         //    py::arg("dynamics_denominator"), py::arg("V"),
-        //    py::arg("deriv_eps"))
+        //    py::arg("kappa"))
         .def("control_output_port",
             &analysis::ClfController::control_output_port,
             py_rvp::reference_internal)
@@ -839,19 +837,19 @@ Parameter ``interruptible``:
                     const VectorX<symbolic::Polynomial>& l,
                     const VectorX<symbolic::Polynomial>&
                         state_constraints_lagrangian,
-                    const symbolic::Polynomial& h, double deriv_eps,
+                    const symbolic::Polynomial& h, double kappa,
                     const std::optional<symbolic::Polynomial>& a) {
                   symbolic::Polynomial hdot_poly;
                   VectorX<symbolic::Monomial> monomials;
                   MatrixX<symbolic::Variable> gram;
                   self.AddControlBarrierConstraint(prog, lambda0, lambda1, l,
-                      state_constraints_lagrangian, h, deriv_eps, a, &hdot_poly,
+                      state_constraints_lagrangian, h, kappa, a, &hdot_poly,
                       &monomials, &gram);
                   return std::make_tuple(hdot_poly, monomials, gram);
                 },
                 py::arg("prog"), py::arg("lambda0"), py::arg("lambda1"),
                 py::arg("l"), py::arg("state_constraints_lagrangian"),
-                py::arg("h"), py::arg("deriv_eps"), py::arg("a"),
+                py::arg("h"), py::arg("kappa"), py::arg("a"),
                 cls_doc.AddControlBarrierConstraint.doc);
 
     py::class_<Class::LagrangianReturn>(control_barrier, "LagrangianReturn")
@@ -871,7 +869,7 @@ Parameter ``interruptible``:
         .def_readonly("a_gram", &Class::LagrangianReturn::a_gram);
 
     control_barrier.def("ConstructLagrangianProgram",
-        &Class::ConstructLagrangianProgram, py::arg("h"), py::arg("deriv_eps"),
+        &Class::ConstructLagrangianProgram, py::arg("h"), py::arg("kappa"),
         py::arg("lambda0_degree"), py::arg("lambda1_degree"),
         py::arg("l_degrees"), py::arg("state_constraints_lagrangian_degrees"),
         py::arg("a_info"), cls_doc.ConstructLagrangianProgram.doc);
@@ -926,7 +924,7 @@ Parameter ``interruptible``:
         py::arg("l"), py::arg("hdot_state_constraints_lagrangian_degrees"),
         py::arg("hdot_a_info"), py::arg("t"),
         py::arg("unsafe_state_constraints_lagrangian_degrees"),
-        py::arg("h_degree"), py::arg("deriv_eps"), py::arg("s_degrees"),
+        py::arg("h_degree"), py::arg("kappa"), py::arg("s_degrees"),
         py::arg("unsafe_a_info"), cls_doc.ConstructBarrierProgram.doc);
 
     control_barrier
@@ -1041,7 +1039,7 @@ Parameter ``interruptible``:
                 std::vector<std::variant<Class::EllipsoidBisectionOption,
                     Class::EllipsoidMaximizeOption>>*>(
                 &Class::Search, py::const_),
-            py::arg("h_init"), py::arg("h_degree"), py::arg("deriv_eps"),
+            py::arg("h_init"), py::arg("h_degree"), py::arg("kappa"),
             py::arg("lambda0_degree"), py::arg("lambda1_degree"),
             py::arg("l_degrees"),
             py::arg("hdot_state_constraints_lagrangian_degrees"),
@@ -1060,7 +1058,7 @@ Parameter ``interruptible``:
                 const std::optional<Eigen::MatrixXd>&,
                 const Eigen::Ref<const Eigen::MatrixXd>&, bool,
                 const Class::SearchOptions&>(&Class::Search, py::const_),
-            py::arg("h_init"), py::arg("h_degree"), py::arg("deriv_eps"),
+            py::arg("h_init"), py::arg("h_degree"), py::arg("kappa"),
             py::arg("lambda0_degree"), py::arg("lambda1_degree"),
             py::arg("l_degrees"),
             py::arg("hdot_state_constraints_lagrangian_degrees"),
@@ -1095,7 +1093,7 @@ Parameter ``interruptible``:
 
     control_barrier.def("SearchWithSlackA",
         &analysis::ControlBarrier::SearchWithSlackA, py::arg("h_init"),
-        py::arg("h_degree"), py::arg("deriv_eps"), py::arg("lambda0_degree"),
+        py::arg("h_degree"), py::arg("kappa"), py::arg("lambda0_degree"),
         py::arg("lambda1_degree"), py::arg("l_degrees"),
         py::arg("hdot_state_constraints_lagrangian_degrees"),
         py::arg("hdot_a_info"), py::arg("t_degrees"), py::arg("s_degrees"),
@@ -1123,7 +1121,7 @@ Parameter ``interruptible``:
             "unsafe_a_grams", &Class::SearchLagrangianResult::unsafe_a_grams);
 
     control_barrier.def("SearchLagrangian", &Class::SearchLagrangian,
-        py::arg("h"), py::arg("deriv_eps"), py::arg("lambda0_degree"),
+        py::arg("h"), py::arg("kappa"), py::arg("lambda0_degree"),
         py::arg("lambda1_degree"), py::arg("l_degrees"),
         py::arg("hdot_state_constraints_lagrangian_degrees"),
         py::arg("hdot_a_info"), py::arg("t_degrees"), py::arg("s_degrees"),
@@ -1142,8 +1140,7 @@ Parameter ``interruptible``:
                  std::optional<symbolic::Polynomial>, symbolic::Polynomial,
                  double>(),
             py::arg("x"), py::arg("f"), py::arg("G"),
-            py::arg("dynamics_denominator"), py::arg("cbf"),
-            py::arg("deriv_eps"))
+            py::arg("dynamics_denominator"), py::arg("cbf"), py::arg("kappa"))
         .def("x_input_port", &PyCbfController::x_input_port)
         .def("cbf_output_port", &PyCbfController::cbf_output_port)
         .def("control_output_port", &PyCbfController::control_output_port)
@@ -1151,9 +1148,10 @@ Parameter ``interruptible``:
         .def("x", &PyCbfController::x, py_rvp::copy)
         .def("f", &PyCbfController::f, py_rvp::copy)
         .def("G", &PyCbfController::G, py_rvp::copy)
-        .def("dynamics_denominator", &PyCbfController::dynamics_denominator, py_rvp::reference_internal)
+        .def("dynamics_denominator", &PyCbfController::dynamics_denominator,
+            py_rvp::reference_internal)
         .def("cbf", &PyCbfController::cbf, py_rvp::reference_internal)
-        .def("deriv_eps", &PyCbfController::deriv_eps)
+        .def("kappa", &PyCbfController::kappa)
         .def("dhdx_times_f", &PyCbfController::dhdx_times_f, py_rvp::copy)
         .def("dhdx_times_G", &PyCbfController::dhdx_times_G, py_rvp::copy);
   }
@@ -1259,7 +1257,7 @@ Parameter ``interruptible``:
         &analysis::FindCandidateRegionalLyapunov, py::arg("x"),
         py::arg("dynamics"), py::arg("dynamics_denominator"),
         py::arg("V_degree"), py::arg("positivity_eps"), py::arg("d"),
-        py::arg("deriv_eps"), py::arg("state_eq_constraints"),
+        py::arg("kappa"), py::arg("state_eq_constraints"),
         py::arg("positivity_ceq_lagrangian_degrees"),
         py::arg("derivative_ceq_lagrangian_degrees"),
         py::arg("state_ineq_constraints"),
@@ -1269,6 +1267,20 @@ Parameter ``interruptible``:
     m.def("SearchWithBackoff", analysis::SearchWithBackoff, py::arg("prog"),
         py::arg("solver_id"), py::arg("solver_options"),
         py::arg("backoff_scale"));
+
+    py::enum_<analysis::OptimizePolynomialMode>(m, "OptimizePolynomialMode")
+        .value("kMinimizeMaximal",
+            analysis::OptimizePolynomialMode::kMinimizeMaximal)
+        .value("kMaximizeMinimal",
+            analysis::OptimizePolynomialMode::kMaximizeMinimal)
+        .value("kMinimizeAverage",
+            analysis::OptimizePolynomialMode::kMinimizeAverage)
+        .value("kMaximizeAverage",
+            analysis::OptimizePolynomialMode::kMaximizeAverage);
+
+    m.def("OptimizePolynomialAtSamples", &analysis::OptimizePolynomialAtSamples,
+        py::arg("prog"), py::arg("p"), py::arg("x"), py::arg("x_samples"),
+        py::arg("optimize_polynomial_mode"));
   }
 
   {
@@ -1367,7 +1379,7 @@ Parameter ``interruptible``:
                  const symbolic::Polynomial&, symbolic::Polynomial, double,
                  double>(),
             py::arg("x"), py::arg("f"), py::arg("G"),
-            py::arg("dynamics_denominator"), py::arg("V"), py::arg("deriv_eps"),
+            py::arg("dynamics_denominator"), py::arg("V"), py::arg("kappa"),
             py::arg("u_max"));
   }
 

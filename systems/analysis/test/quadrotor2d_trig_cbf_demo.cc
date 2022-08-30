@@ -42,10 +42,10 @@ class QuadrotorCbfController : public CbfController {
   QuadrotorCbfController(Eigen::Matrix<symbolic::Variable, 7, 1> x,
                          Eigen::Matrix<symbolic::Polynomial, 7, 1> f,
                          Eigen::Matrix<symbolic::Polynomial, 7, 2> G,
-                         symbolic::Polynomial cbf, double deriv_eps,
+                         symbolic::Polynomial cbf, double kappa,
                          double thrust_max)
       : CbfController(x, f, G, std::nullopt /* dynamics_denominator */, cbf,
-                      deriv_eps),
+                      kappa),
         thrust_max_{thrust_max} {}
 
   virtual ~QuadrotorCbfController() {}
@@ -71,12 +71,11 @@ class QuadrotorCbfController : public CbfController {
     const double h_val = this->cbf().Evaluate(env);
     // dhdx * G * u + dhdx * f >= -eps * h
     prog.AddLinearConstraint(dhdx_times_G_val,
-                             -deriv_eps() * h_val - dhdx_times_f_val, kInf, u);
+                             -kappa() * h_val - dhdx_times_f_val, kInf, u);
     const auto result = solvers::Solve(prog);
     if (!result.is_success()) {
       drake::log()->info("-dhdx*f - eps*h={}, dhdx*G={}",
-                         -dhdx_times_f_val - deriv_eps() * h_val,
-                         dhdx_times_G_val);
+                         -dhdx_times_f_val - kappa() * h_val, dhdx_times_G_val);
       abort();
     }
     const Eigen::Vector2d u_val = result.GetSolution(u);
@@ -88,9 +87,8 @@ class QuadrotorCbfController : public CbfController {
 };
 
 void Simulate(const Eigen::Matrix<symbolic::Variable, 7, 1>& x,
-              const symbolic::Polynomial& cbf, double thrust_max,
-              double deriv_eps, const Vector6d& initial_state,
-              double duration) {
+              const symbolic::Polynomial& cbf, double thrust_max, double kappa,
+              const Vector6d& initial_state, double duration) {
   systems::DiagramBuilder<double> builder;
 
   auto quadrotor = builder.AddSystem<Quadrotor2dTrigPlant<double>>();
@@ -103,7 +101,7 @@ void Simulate(const Eigen::Matrix<symbolic::Variable, 7, 1>& x,
   TrigPolyDynamics(*quadrotor, x, &f, &G);
 
   auto cbf_controller = builder.AddSystem<QuadrotorCbfController>(
-      x, f, G, cbf, deriv_eps, thrust_max);
+      x, f, G, cbf, kappa, thrust_max);
 
   auto state_logger =
       LogVectorOutput(quadrotor->get_state_output_port(), &builder);
@@ -168,7 +166,7 @@ symbolic::Polynomial FindCbfInit(
 
   const double positivity_eps = 0.01;
   const int d = h_degree / 2;
-  const double deriv_eps = 0.0001;
+  const double kappa = 0.0001;
   const Vector1<symbolic::Polynomial> state_eq_constraints(
       Quadrotor2dStateEqConstraint(x));
   const std::vector<int> positivity_ceq_lagrangian_degrees{{h_degree - 2}};
@@ -181,7 +179,7 @@ symbolic::Polynomial FindCbfInit(
       derivative_ceq_lagrangian_degrees;
   auto ret = FindCandidateRegionalLyapunov(
       x, dynamics, std::nullopt /* dynamics_denominator*/, h_degree,
-      positivity_eps, d, deriv_eps, state_eq_constraints,
+      positivity_eps, d, kappa, state_eq_constraints,
       positivity_ceq_lagrangian_degrees, derivative_ceq_lagrangian_degrees,
       state_ineq_constraints, positivity_cin_lagrangian_degrees,
       derivative_cin_lagrangian_degrees);
@@ -196,7 +194,7 @@ symbolic::Polynomial FindCbfInit(
 [[maybe_unused]] symbolic::Polynomial SearchWithSlackA(
     Scenario scenario, const Quadrotor2dTrigPlant<double>& quadrotor,
     const Eigen::Matrix<symbolic::Variable, 7, 1>& x, double thrust_max,
-    double deriv_eps,
+    double kappa,
     const std::vector<VectorX<symbolic::Polynomial>>& unsafe_regions,
     const Eigen::MatrixXd& x_safe,
     const std::optional<std::string>& load_cbf_file) {
@@ -285,7 +283,7 @@ symbolic::Polynomial FindCbfInit(
       hdot_a_zero_tol, unsafe_a_zero_tol, true);
   search_options.bilinear_iterations = 100;
   const auto search_result = dut.SearchWithSlackA(
-      h_init, h_degree, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
+      h_init, h_degree, kappa, lambda0_degree, lambda1_degree, l_degrees,
       hdot_eq_lagrangian_degrees, hdot_a_info, t_degrees, s_degrees,
       unsafe_eq_lagrangian_degrees, unsafe_a_info, x_safe, h_x_safe_min,
       search_options);
@@ -295,7 +293,7 @@ symbolic::Polynomial FindCbfInit(
   search_options.lagrangian_step_solver_options->SetOption(
       solvers::CommonSolverOption::kPrintToConsole, 1);
   const auto search_lagrangian_ret = dut.SearchLagrangian(
-      search_result.h, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
+      search_result.h, kappa, lambda0_degree, lambda1_degree, l_degrees,
       hdot_eq_lagrangian_degrees, std::nullopt /* hdot_a_degree */, t_degrees,
       s_degrees, unsafe_eq_lagrangian_degrees,
       std::vector<std::optional<SlackPolynomialInfo>>(
@@ -308,7 +306,7 @@ symbolic::Polynomial FindCbfInit(
 [[maybe_unused]] symbolic::Polynomial Search(
     const Quadrotor2dTrigPlant<double>& quadrotor,
     const Eigen::Matrix<symbolic::Variable, 7, 1>& x, double thrust_max,
-    double deriv_eps,
+    double kappa,
     const std::vector<VectorX<symbolic::Polynomial>>& unsafe_regions) {
   Eigen::Matrix<symbolic::Polynomial, 7, 1> f;
   Eigen::Matrix<symbolic::Polynomial, 7, 2> G;
@@ -362,7 +360,7 @@ symbolic::Polynomial FindCbfInit(
   search_options.barrier_step_solver_options->SetOption(
       solvers::CommonSolverOption::kPrintToConsole, 1);
   const auto search_ret = dut.Search(
-      h_init, h_degree, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
+      h_init, h_degree, kappa, lambda0_degree, lambda1_degree, l_degrees,
       hdot_eq_lagrangian_degrees, t_degree, s_degrees,
       unsafe_state_constraints_lagrangian_degrees, x_anchor, h_x_anchor_max,
       search_options, &ellipsoids, &ellipsoid_options);
@@ -393,7 +391,7 @@ int DoMain() {
   }
   const double thrust_equilibrium = EquilibriumThrust(plant);
   const double thrust_max = 3 * thrust_equilibrium;
-  const double deriv_eps = 0.5;
+  const double kappa = 0.5;
   // The unsafe region is the ground and the ceiling.
   std::vector<VectorX<symbolic::Polynomial>> unsafe_regions;
   Eigen::MatrixXd safe_states;
@@ -438,17 +436,17 @@ int DoMain() {
   //    "/home/hongkaidai/sos_clf_cbf_data/quadrotor2d_cbf/"
   //    "quadrotor2d_trig_cbf_box2.txt";
   const symbolic::Polynomial h_sol =
-      SearchWithSlackA(scenario, plant, x, thrust_max, deriv_eps,
-                       unsafe_regions, x_safe, load_cbf_file);
+      SearchWithSlackA(scenario, plant, x, thrust_max, kappa, unsafe_regions,
+                       x_safe, load_cbf_file);
   Save(h_sol,
        "/home/hongkaidai/sos_clf_cbf_data/quadrotor2d_cbf/"
        "quadrotor2d_trig_cbf_box3.txt");
   // Save(h_sol, "sos_data/quadrotor2d_trig_cbf5.txt");
 
-  // Simulate(x, h_sol, thrust_max, deriv_eps, Vector6d::Zero(), 10);
+  // Simulate(x, h_sol, thrust_max, kappa, Vector6d::Zero(), 10);
 
   // const symbolic::Polynomial h_sol =
-  //    Search(plant, x, thrust_max, deriv_eps, unsafe_regions);
+  //    Search(plant, x, thrust_max, kappa, unsafe_regions);
   return 0;
 }
 }  // namespace analysis

@@ -72,7 +72,7 @@ const double kInf = std::numeric_limits<double>::infinity();
 
   const double positivity_eps = 0.001;
   const int d = V_degree / 2;
-  const double deriv_eps = 0.01;
+  const double kappa = 0.01;
   const Vector1<symbolic::Polynomial> state_eq_constraints(
       CartpoleStateEqConstraint(x));
   const std::vector<int> positivity_ceq_lagrangian_degrees{{V_degree - 2}};
@@ -91,7 +91,7 @@ const double kInf = std::numeric_limits<double>::infinity();
   symbolic::Polynomial derivative_sos_condition;
   auto ret = FindCandidateRegionalLyapunov(
       x, dynamics_numerator, dynamics_denominator, V_degree, positivity_eps, d,
-      deriv_eps, state_eq_constraints, positivity_ceq_lagrangian_degrees,
+      kappa, state_eq_constraints, positivity_ceq_lagrangian_degrees,
       derivative_ceq_lagrangian_degrees, state_ineq_constraints,
       positivity_cin_lagrangian_degrees, derivative_cin_lagrangian_degrees);
   solvers::SolverOptions solver_options;
@@ -164,7 +164,7 @@ const double kInf = std::numeric_limits<double>::infinity();
 
 // symbolic::Polynomial SearchClfNoInputBound(
 //    const CartPoleParams& params,
-//    const Eigen::Matrix<symbolic::Variable, 5, 1>& x, double deriv_eps) {
+//    const Eigen::Matrix<symbolic::Variable, 5, 1>& x, double kappa) {
 //  const std::optional<std::string> load_file =
 //      "cart_pole_trig_clf_no_limit6.txt.iter5";
 //  const std::string save_file_name = "cart_pole_trig_clf_no_limit7.txt";
@@ -172,8 +172,9 @@ const double kInf = std::numeric_limits<double>::infinity();
 //  Eigen::Matrix<symbolic::Polynomial, 5, 1> G;
 //  symbolic::Polynomial dynamics_denominator;
 //  TrigPolyDynamics(params, x, &f, &G, &dynamics_denominator);
-//  const Vector1<symbolic::Polynomial> state_constraints(CartpoleStateEqConstraint(x));
-//  const ControlLyapunovNoInputBound dut(x, f, G, dynamics_denominator,
+//  const Vector1<symbolic::Polynomial>
+//  state_constraints(CartpoleStateEqConstraint(x)); const
+//  ControlLyapunovNoInputBound dut(x, f, G, dynamics_denominator,
 //                                        state_constraints);
 //  const symbolic::Variables x_set(x);
 //
@@ -234,7 +235,7 @@ const double kInf = std::numeric_limits<double>::infinity();
 //          solvers::CommonSolverOption::kPrintToConsole, 1);
 //      const double lsol_tiny_coeff_tol = 0;
 //      const bool found_lagrangian = dut.SearchLagrangian(
-//          V_sol, lambda0_degree, l_degrees, deriv_eps, eq_lagrangian_degrees,
+//          V_sol, lambda0_degree, l_degrees, kappa, eq_lagrangian_degrees,
 //          ineq_constraints, ineq_lagrangian_degrees,
 //          lagrangian_solver_options, lsol_tiny_coeff_tol, &lambda0_sol,
 //          &l_sol, &eq_lagrangian_sol, &ineq_lagrangian_sol);
@@ -279,7 +280,7 @@ const double kInf = std::numeric_limits<double>::infinity();
 //      VectorX<symbolic::Monomial> vdot_sos_monomials;
 //      MatrixX<symbolic::Variable> vdot_sos_gram;
 //      dut.AddControlLyapunovConstraint(&prog, lambda0_sol, l_sol, V,
-//      deriv_eps,
+//      kappa,
 //                                       eq_lagrangian, ineq_constraints,
 //                                       ineq_lagrangian_sol, &vdot_sos,
 //                                       &vdot_sos_monomials, &vdot_sos_gram);
@@ -344,11 +345,11 @@ const double kInf = std::numeric_limits<double>::infinity();
 // symbolic::Polynomial SearchWithSlackA(
 //    const CartPoleParams& params,
 //    const Eigen::Matrix<symbolic::Variable, 5, 1>& x, double u_max,
-//    double deriv_eps, const std::string& load_V_init,
+//    double kappa, const std::string& load_V_init,
 //    const std::string& save_V) {
-//  const Vector1<symbolic::Polynomial> state_constraints(CartpoleStateEqConstraint(x));
-//  const Eigen::RowVector2d u_vertices(-u_max, u_max);
-//  Eigen::Matrix<symbolic::Polynomial, 5, 1> f;
+//  const Vector1<symbolic::Polynomial>
+//  state_constraints(CartpoleStateEqConstraint(x)); const Eigen::RowVector2d
+//  u_vertices(-u_max, u_max); Eigen::Matrix<symbolic::Polynomial, 5, 1> f;
 //  Eigen::Matrix<symbolic::Polynomial, 5, 1> G;
 //  symbolic::Polynomial dynamics_denominator;
 //  CartpoleTrigPolyDynamics(params, x, &f, &G, &dynamics_denominator);
@@ -427,7 +428,7 @@ const double kInf = std::numeric_limits<double>::infinity();
 //    {
 //      // Construct the program to search for Lagrangian.
 //      auto construct_lagrangian_prog =
-//          [&dut, &V_sol, &u_vertices, deriv_eps, &x, &x_set, &lambda0_degree,
+//          [&dut, &V_sol, &u_vertices, kappa, &x, &x_set, &lambda0_degree,
 //           &l_degrees, &p_degrees](bool with_a, double rho_val,
 //                                   symbolic::Polynomial* lambda0,
 //                                   VectorX<symbolic::Polynomial>* l,
@@ -455,7 +456,7 @@ const double kInf = std::numeric_limits<double>::infinity();
 //            dut.AddControlLyapunovConstraint(prog.get(), x, *lambda0,
 //            d_degree,
 //                                             *l, V_sol, rho_val, u_vertices,
-//                                             deriv_eps, p, a, vdot_sos,
+//                                             kappa, p, a, vdot_sos,
 //                                             &vdot_monomials, &vdot_gram);
 //            return prog;
 //          };
@@ -524,7 +525,7 @@ const double kInf = std::numeric_limits<double>::infinity();
 //      VectorX<symbolic::Monomial> vdot_monomials;
 //      MatrixX<symbolic::Variable> vdot_gram;
 //      dut.AddControlLyapunovConstraint(&prog, x, lambda0_sol, d_degree, l_sol,
-//                                       V, rho, u_vertices, deriv_eps, p, a,
+//                                       V, rho, u_vertices, kappa, p, a,
 //                                       &vdot_sos, &vdot_monomials,
 //                                       &vdot_gram);
 //      // Now add the constraint V(in_roa_x) <= rho
@@ -569,7 +570,7 @@ const double kInf = std::numeric_limits<double>::infinity();
 //        solvers::CommonSolverOption::kPrintToConsole, 1);
 //    VectorX<symbolic::Polynomial> p_sol;
 //    const bool found_lagrangian = dut.SearchLagrangian(
-//        V_sol, rho, lambda0_degree, l_degrees, p_degrees, deriv_eps,
+//        V_sol, rho, lambda0_degree, l_degrees, p_degrees, kappa,
 //        search_options, &lambda0_sol, &l_sol, &p_sol);
 //    std::cout << "found Lagrangian in the end: " << found_lagrangian << "\n";
 //    Save(V_sol, save_V);
@@ -577,14 +578,14 @@ const double kInf = std::numeric_limits<double>::infinity();
 //  std::cout << "V_sol(x_swingup): "
 //            << V_sol.EvaluateIndeterminates(x, x_swingup).transpose() << "\n";
 //  const double duration = 20;
-//  Simulate(params, x, V_sol, u_max, deriv_eps, state_swingup.col(12),
+//  Simulate(params, x, V_sol, u_max, kappa, state_swingup.col(12),
 //  duration); return V_sol;
 //}
 
 symbolic::Polynomial SearchWTrigDynamics(
     const CartPoleParams& params,
     const Eigen::Matrix<symbolic::Variable, 5, 1>& x, double u_max,
-    double deriv_eps, const std::optional<std::string>& load_V_init,
+    double kappa, const std::optional<std::string>& load_V_init,
     const std::optional<std::string>& save_V,
     SearchResultDetails* search_result_details) {
   const int V_degree = 2;
@@ -628,8 +629,8 @@ symbolic::Polynomial SearchWTrigDynamics(
           solvers::CommonSolverOption::kPrintToConsole, 1);
       search_options.lagrangian_tiny_coeff_tol = 1E-10;
       bool found_rho = dut.FindRhoBinarySearch(
-          V_init, 0, 0.025, 1E-3, lambda0_degree, l_degrees, p_degrees,
-          deriv_eps, search_options, &rho_sol, &lambda0_sol, &l_sol, &p_sol);
+          V_init, 0, 0.025, 1E-3, lambda0_degree, l_degrees, p_degrees, kappa,
+          search_options, &rho_sol, &lambda0_sol, &l_sol, &p_sol);
       if (found_rho) {
         std::cout << "Binary search rho_sol: " << rho_sol << "\n";
         V_init = V_init / rho_sol;
@@ -640,9 +641,9 @@ symbolic::Polynomial SearchWTrigDynamics(
       }
     } else {
       const int d_degree = lambda0_degree / 2 + 1;
-      auto lagrangian_ret = dut.ConstructLagrangianProgram(
-          V_init, symbolic::Polynomial(), d_degree, l_degrees, p_degrees,
-          deriv_eps);
+      auto lagrangian_ret =
+          dut.ConstructLagrangianProgram(V_init, symbolic::Polynomial(),
+                                         d_degree, l_degrees, p_degrees, kappa);
       solvers::SolverOptions solver_options;
       solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
       drake::log()->info("Maximize rho for the initial Clf");
@@ -657,7 +658,7 @@ symbolic::Polynomial SearchWTrigDynamics(
     }
   }
 
-  // V_init = SearchClfNoInputBound(params, x, deriv_eps);
+  // V_init = SearchClfNoInputBound(params, x, kappa);
 
   Eigen::MatrixXd state_swingup;
   Eigen::MatrixXd control_swingup;
@@ -726,7 +727,7 @@ symbolic::Polynomial SearchWTrigDynamics(
       const auto search_result = dut.Search(
           V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
           positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
-          ellipsoid_eq_lagrangian_degrees, deriv_eps, x_star, S, r_degree,
+          ellipsoid_eq_lagrangian_degrees, kappa, x_star, S, r_degree,
           search_options, ellipsoid_maximize_option);
       V_sol = search_result.V;
       std::cout << "V(x_swingup): "
@@ -761,7 +762,7 @@ symbolic::Polynomial SearchWTrigDynamics(
                 << "\n";
       const auto search_result = dut.Search(
           V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
-          positivity_d, positivity_eq_lagrangian_degrees, p_degrees, deriv_eps,
+          positivity_d, positivity_eq_lagrangian_degrees, p_degrees, kappa,
           x_samples, in_roa_samples, minimize_max, search_options);
       V_sol = search_result.V;
       *search_result_details = search_result.search_result_details;
@@ -787,11 +788,11 @@ int DoMain() {
   }
 
   double u_max = 200;
-  const double deriv_eps = 0.075;
+  const double kappa = 0.075;
   symbolic::Polynomial V_sol;
   bool found_u_max = false;
   // SearchWithSlackA(
-  //    params, x, u_max, deriv_eps,
+  //    params, x, u_max, kappa,
   //    //"/home/hongkaidai/Dropbox/sos_clf_cbf/cart_pole_trig_clf_last16_1.txt",
   //    "cart_pole_trig_clf0.txt", "cart_pole_trig_clf1.txt");
   // abort();
@@ -803,7 +804,7 @@ int DoMain() {
     std::optional<std::string> load_file =
         "sos_data/cart_pole_trig_clf52.txt.iter1";
     SearchResultDetails search_result_details;
-    V_sol = SearchWTrigDynamics(params, x, u_max, deriv_eps, load_file,
+    V_sol = SearchWTrigDynamics(params, x, u_max, kappa, load_file,
                                 "sos_data/cart_pole_trig_clf53.txt",
                                 &search_result_details);
     if (search_result_details.num_bilinear_iterations >= 1 ||
@@ -813,7 +814,7 @@ int DoMain() {
       std::cout << fmt::format("Found u_max = {} after {} trials\n", u_max,
                                u_max_trial);
       const double duration = 20;
-      Simulate(params, x, V_sol, u_max, deriv_eps, Eigen::Vector4d(0, 0, 0, 0),
+      Simulate(params, x, V_sol, u_max, kappa, Eigen::Vector4d(0, 0, 0, 0),
                duration);
       return 0;
     } else {

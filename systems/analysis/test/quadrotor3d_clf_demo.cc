@@ -158,7 +158,7 @@ struct Quadrotor {
     const symbolic::Polynomial& V_init,
     const Eigen::Matrix<symbolic::Polynomial, 12, 1>& f,
     const Eigen::Matrix<symbolic::Polynomial, 12, 4>& G,
-    symbolic::Polynomial* V_sol, double* deriv_eps_sol) {
+    symbolic::Polynomial* V_sol, double* kappa_sol) {
   const Eigen::Matrix<double, 4, 16> u_vertices =
       math::CalculateReflectedGrayCodes<4>().cast<double>().transpose() * 2 -
       Eigen::Matrix<double, 4, 16>::Ones();
@@ -167,8 +167,8 @@ struct Quadrotor {
 
   ControlLyapunov dut(x, f, G, std::nullopt /* dynamics denominator */,
                       u_vertices, state_constraints);
-  const double deriv_eps = 0.2;
-  *deriv_eps_sol = deriv_eps;
+  const double kappa = 0.2;
+  *kappa_sol = kappa;
   const int lambda0_degree = 2;
   const std::vector<int> l_degrees(16, 2);
   const std::vector<int> p_degrees = {};
@@ -199,7 +199,7 @@ struct Quadrotor {
   const auto search_result =
       dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
                  positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
-                 ellipsoid_eq_lagrangian_degrees, deriv_eps, x_star, S,
+                 ellipsoid_eq_lagrangian_degrees, kappa, x_star, S,
                  V_degree - 2, search_options, ellipsoid_bisection_option);
   *V_sol = search_result.V;
 }
@@ -209,7 +209,7 @@ struct Quadrotor {
     const symbolic::Polynomial& V_init,
     const Eigen::Matrix<symbolic::Polynomial, 12, 1>& f,
     const Eigen::Matrix<symbolic::Polynomial, 12, 4>& G,
-    symbolic::Polynomial* V_sol, double* deriv_eps_sol) {
+    symbolic::Polynomial* V_sol, double* kappa_sol) {
   const int V_degree = 2;
   const double positivity_eps{0};
   const ControlLyapunovBoxInputBound dut(f, G, x, positivity_eps);
@@ -253,14 +253,14 @@ struct Quadrotor {
   const Eigen::Matrix<double, 12, 12> S =
       Eigen::Matrix<double, 12, 12>::Identity();
   const int r_degree = V_degree - 2;
-  const double deriv_eps_lower = 0.2;
-  const double deriv_eps_upper = kInf;
+  const double kappa_lower = 0.2;
+  const double kappa_upper = kInf;
   const auto search_result =
       dut.Search(V_init, l_given, lagrangian_degrees, b_degrees, x_star, S,
-                 r_degree, V_degree, deriv_eps_lower, deriv_eps_upper,
-                 search_options, ellipsoid_bisection_option);
+                 r_degree, V_degree, kappa_lower, kappa_upper, search_options,
+                 ellipsoid_bisection_option);
   *V_sol = search_result.V;
-  *deriv_eps_sol = search_result.deriv_eps;
+  *kappa_sol = search_result.kappa;
 }
 
 int DoMain() {
@@ -304,9 +304,9 @@ int DoMain() {
   std::cout << "V_init: " << V_init << "\n";
 
   symbolic::Polynomial V_sol;
-  double deriv_eps_sol;
-  search(x, V_init, f, G, &V_sol, &deriv_eps_sol);
-  // search_w_box_bounds(x, V_init, f, G, &V_sol, &deriv_eps_sol);
+  double kappa_sol;
+  search(x, V_init, f, G, &V_sol, &kappa_sol);
+  // search_w_box_bounds(x, V_init, f, G, &V_sol, &kappa_sol);
 
   return 0;
 }

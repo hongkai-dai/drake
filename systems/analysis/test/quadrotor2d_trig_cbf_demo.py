@@ -8,7 +8,7 @@ import pydrake.symbolic as sym
 
 def SearchWithSlackA(
     quadrotor: analysis.Quadrotor2dTrigPlant, x: np.array, thrust_max: float,
-    deriv_eps: float, unsafe_regions: list, x_safe: np.array
+    kappa: float, unsafe_regions: list, x_safe: np.array
 ) -> sym.Polynomial:
     f, G = analysis.TrigPolyDynamics(quadrotor, x)
     u_vertices = np.array([
@@ -53,7 +53,7 @@ def SearchWithSlackA(
         hdot_a_cost_weight=1., unsafe_a_cost_weight=[1., 1.])
     search_options.bilinear_iterations = 100
     search_result = dut.SearchWithSlackA(
-        h_init, h_degree, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
+        h_init, h_degree, kappa, lambda0_degree, lambda1_degree, l_degrees,
         hdot_eq_lagrangian_degrees, hdot_a_info, t_degrees, s_degrees,
         unsafe_eq_lagrangian_degrees, unsafe_a_info, x_safe,
         h_x_safe_min, search_options)
@@ -61,7 +61,7 @@ def SearchWithSlackA(
     search_options.lagrangian_step_solver_options.SetOption(
         mp.CommonSolverOption.kPrintToConsole, 1)
     search_lagrangian_ret = dut.SearchLagrangian(
-        search_result.h, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
+        search_result.h, kappa, lambda0_degree, lambda1_degree, l_degrees,
         hdot_eq_lagrangian_degrees, None, t_degrees, s_degrees,
         unsafe_eq_lagrangian_degrees, [None] * len(unsafe_regions),
         search_options, backoff_scale=None)
@@ -76,7 +76,7 @@ def DoMain():
 
     thrust_equilibrium = analysis.EquilibriumThrust(plant)
     thrust_max = 3 * thrust_equilibrium
-    deriv_eps = 0.5
+    kappa = 0.5
     unsafe_regions = [None, None]
     unsafe_regions[0] = np.array([sym.Polynomial(x[1] + 0.3)])
     unsafe_regions[1] = np.array([sym.Polynomial(0.5 - x[1])])
@@ -87,7 +87,7 @@ def DoMain():
         x_safe[:, i] = analysis.ToQuadrotor2dTrigState(safe_states[:, i])
 
     h_sol = SearchWithSlackA(plant, x, thrust_max,
-                             deriv_eps, unsafe_regions, x_safe)
+                             kappa, unsafe_regions, x_safe)
 
 
 if __name__ == "__main__":

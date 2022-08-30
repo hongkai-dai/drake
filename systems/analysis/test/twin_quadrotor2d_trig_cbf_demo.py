@@ -11,7 +11,7 @@ import pydrake.common
 
 def Search(
     quadrotor: analysis.Quadrotor2dTrigPlant, x: np.ndarray, thrust_max: float,
-    deriv_eps: float, unsafe_regions: list, x_safe: np.ndarray
+    kappa: float, unsafe_regions: list, x_safe: np.ndarray
 ) -> sym.Polynomial:
     f, G = analysis.TrigPolyDynamicsTwinQuadrotor(quadrotor, x)
 
@@ -91,12 +91,12 @@ def Search(
         search_options.barrier_step_backoff_scale = 0.03
         search_options.lagrangian_step_backoff_scale = 0.04
         search_result = dut.SearchWithSlackA(
-            h_init, h_degree, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
+            h_init, h_degree, kappa, lambda0_degree, lambda1_degree, l_degrees,
             hdot_eq_lagrangian_degrees, hdot_a_info, t_degrees, s_degrees,
             unsafe_eq_lagrangian_degrees, unsafe_a_info, x_safe,
             h_x_safe_min, search_options)
         search_lagrangian_ret = dut.SearchLagrangian(
-            search_result.h, deriv_eps, lambda0_degree, lambda1_degree, l_degrees,
+            search_result.h, kappa, lambda0_degree, lambda1_degree, l_degrees,
             hdot_eq_lagrangian_degrees, None, t_degrees, s_degrees,
             unsafe_eq_lagrangian_degrees, [None] * len(unsafe_regions),
             search_options, backoff_scale=None)
@@ -120,7 +120,7 @@ def Search(
         x_anchor = x_safe[:, 0]
         h_x_anchor_max = h_init.EvaluateIndeterminates(x, x_anchor)[0] * 2
         search_result = dut.Search(
-            h_init, h_degree, deriv_eps, lambda0_degree, lambda1_degree,
+            h_init, h_degree, kappa, lambda0_degree, lambda1_degree,
             l_degrees, hdot_eq_lagrangian_degrees, t_degrees, s_degrees,
             unsafe_eq_lagrangian_degrees, x_anchor, h_x_anchor_max,
             search_options, ellipsoids, ellipsoid_options)
@@ -129,7 +129,7 @@ def Search(
         pickle.dump({
             "h": clf_cbf_utils.serialize_polynomial(search_result.h),
             "beta_plus": beta_plus, "beta_minus": beta_minus,
-            "deriv_eps": deriv_eps, "thrust_max": thrust_max,
+            "kappa": kappa, "thrust_max": thrust_max,
             "x_safe": x_safe}, handle)
     return search_result.h
 
@@ -142,7 +142,7 @@ def DoMain():
 
     thrust_equilibrium = analysis.EquilibriumThrust(quadrotor)
     thrust_max = 3 * thrust_equilibrium
-    deriv_eps = 0.5
+    kappa = 0.5
     unsafe_regions = [np.array([
         sym.Polynomial(x[5] ** 2 + x[6] ** 2 - quadrotor.length() ** 2 )])]
 
@@ -154,7 +154,7 @@ def DoMain():
         x2 = analysis.ToQuadrotor2dTrigState(safe_states[i][1])
         x_safe[:, i] = np.concatenate((x1[2:], x2[:2] - x1[:2], x2[2:]))
 
-    h_sol = Search(quadrotor, x, thrust_max, deriv_eps, unsafe_regions, x_safe)
+    h_sol = Search(quadrotor, x, thrust_max, kappa, unsafe_regions, x_safe)
 
 if __name__ == "__main__":
     with MosekSolver.AcquireLicense():

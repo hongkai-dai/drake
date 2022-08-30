@@ -81,7 +81,7 @@ class ControlLyapunov {
       solvers::MathematicalProgram* prog, const VectorX<symbolic::Variable>& x,
       const symbolic::Polynomial& lambda0, int d_degree,
       const VectorX<symbolic::Polynomial>& l, const symbolic::Polynomial& V,
-      const T& rho, const Eigen::MatrixXd& u_vertices, double deriv_eps,
+      const T& rho, const Eigen::MatrixXd& u_vertices, double kappa,
       const VectorX<symbolic::Polynomial>& p,
       const std::optional<symbolic::Polynomial>& a,
       symbolic::Polynomial* vdot_poly, VectorX<symbolic::Monomial>* monomials,
@@ -121,7 +121,7 @@ class ControlLyapunov {
    * constraint).
    */
   [[nodiscard]] LagrangianReturn ConstructLagrangianProgram(
-      const symbolic::Polynomial& V, double rho, double deriv_eps,
+      const symbolic::Polynomial& V, double rho, double kappa,
       int lambda0_degree, const std::vector<int>& l_degrees,
       const std::vector<int>& p_degrees,
       std::optional<SlackPolynomialInfo> a_info) const;
@@ -157,7 +157,7 @@ class ControlLyapunov {
   LagrangianMaxRhoReturn ConstructLagrangianProgram(
       const symbolic::Polynomial& V, const symbolic::Polynomial& lambda0,
       int d_degree, const std::vector<int>& l_degrees,
-      const std::vector<int>& p_degrees, double deriv_eps) const;
+      const std::vector<int>& p_degrees, double kappa) const;
 
   struct LyapunovReturn {
     LyapunovReturn() : prog{std::make_unique<solvers::MathematicalProgram>()} {}
@@ -189,7 +189,7 @@ class ControlLyapunov {
       const VectorX<symbolic::Polynomial>& l, int V_degree, double rho,
       double positivity_eps, int positivity_d,
       const std::vector<int>& positivity_eq_lagrangian_degrees,
-      const std::vector<int>& p_degrees, double deriv_eps,
+      const std::vector<int>& p_degrees, double kappa,
       std::optional<SlackPolynomialInfo> a_info) const;
 
   struct SearchOptions {
@@ -291,7 +291,7 @@ class ControlLyapunov {
       int positivity_d,
       const std::vector<int>& positivity_eq_lagrangian_degrees,
       const std::vector<int>& p_degrees,
-      const std::vector<int>& ellipsoid_eq_lagrangian_degrees, double deriv_eps,
+      const std::vector<int>& ellipsoid_eq_lagrangian_degrees, double kappa,
       const Eigen::Ref<const Eigen::VectorXd>& x_star,
       const Eigen::Ref<const Eigen::MatrixXd>& S, int r_degree,
       const SearchOptions& search_options,
@@ -313,7 +313,7 @@ class ControlLyapunov {
    * @param positivity_eps ε₁ in the documentation above.
    * @param positivity_d d1 in the documentation above.
    * @param positivity_eq_lagrangian_degrees Degrees of r(x).
-   * @param deriv_eps ε₂ in the documentation above.
+   * @param kappa ε₂ in the documentation above.
    * @param in_roa_samples. For each column of in_roa_samples, we will impose
    * the constraint V(in_roa_samples.col(i)) <= rho.
    */
@@ -321,7 +321,7 @@ class ControlLyapunov {
                       const std::vector<int>& l_degrees, int V_degree,
                       double positivity_eps, int positivity_d,
                       const std::vector<int>& positivity_eq_lagrangian_degrees,
-                      const std::vector<int>& p_degrees, double deriv_eps,
+                      const std::vector<int>& p_degrees, double kappa,
                       const Eigen::Ref<const Eigen::MatrixXd>& x_samples,
                       const std::optional<Eigen::MatrixXd>& in_roa_samples,
                       bool minimize_max,
@@ -349,8 +349,8 @@ class ControlLyapunov {
       const std::vector<int>& l_degrees, int V_degree, double positivity_eps,
       int positivity_d,
       const std::vector<int>& positivity_eq_lagrangian_degrees,
-      const std::vector<int>& p_degrees, double deriv_eps,
-      const std::optional<Eigen::MatrixXd>& in_roa_samples, 
+      const std::vector<int>& p_degrees, double kappa,
+      const std::optional<Eigen::MatrixXd>& in_roa_samples,
       SlackPolynomialInfo a_info,
       const SearchWithSlackAOptions& search_options) const;
 
@@ -376,7 +376,7 @@ class ControlLyapunov {
   SearchLagrangianResult SearchLagrangian(
       const symbolic::Polynomial& V, double rho, int lambda0_degree,
       const std::vector<int>& l_degrees, const std::vector<int>& p_degrees,
-      double deriv_eps, const SearchOptions& search_options,
+      double kappa, const SearchOptions& search_options,
       std::optional<bool> always_write_sol,
       std::optional<SlackPolynomialInfo> a_info,
       std::optional<double> backoff_scale) const;
@@ -389,7 +389,7 @@ class ControlLyapunov {
   bool FindRhoBinarySearch(const symbolic::Polynomial& V, double rho_min,
                            double rho_max, double rho_tol, int lambda0_degree,
                            const std::vector<int>& l_degrees,
-                           const std::vector<int>& p_degrees, double deriv_eps,
+                           const std::vector<int>& p_degrees, double kappa,
                            const SearchOptions& search_options, double* rho_sol,
                            symbolic::Polynomial* lambda0,
                            VectorX<symbolic::Polynomial>* l,
@@ -655,7 +655,7 @@ class ControlLyapunovBoxInputBound {
   struct SearchReturn {
     symbolic::Polynomial V;
     VectorX<symbolic::Polynomial> b;
-    double deriv_eps;
+    double kappa;
     std::vector<std::vector<std::array<symbolic::Polynomial, 3>>> l;
     symbolic::Polynomial ellipsoid_lagrangian;
     // The ellipsoid is {x | (x-x*)S(x-x*) <= d}
@@ -715,8 +715,8 @@ class ControlLyapunovBoxInputBound {
       const std::vector<int>& b_degrees,
       const Eigen::Ref<const Eigen::VectorXd>& x_star,
       const Eigen::Ref<const Eigen::MatrixXd>& S, int s_degree,
-      const symbolic::Polynomial& t_given, int V_degree, double deriv_eps_lower,
-      double deriv_eps_upper, const SearchOptions& options) const;
+      const symbolic::Polynomial& t_given, int V_degree, double kappa_lower,
+      double kappa_upper, const SearchOptions& options) const;
 
   /**
    * We can search for the inscribed ellipsoid {x|(x−x*)ᵀS(x−x*) <=d} with the
@@ -746,8 +746,7 @@ class ControlLyapunovBoxInputBound {
       const std::vector<int>& b_degrees,
       const Eigen::Ref<const Eigen::VectorXd>& x_star,
       const Eigen::Ref<const Eigen::MatrixXd>& S, int r_degree, int V_degree,
-      double deriv_eps_lower, double deriv_eps_upper,
-      const SearchOptions& options,
+      double kappa_lower, double kappa_upper, const SearchOptions& options,
       const EllipsoidBisectionOption& ellipsoid_bisection_option) const;
 
   // Step 1 in Search() function.
@@ -755,10 +754,10 @@ class ControlLyapunovBoxInputBound {
       const symbolic::Polynomial& V,
       const std::vector<std::vector<symbolic::Polynomial>>& l_given,
       const std::vector<std::vector<std::array<int, 3>>>& lagrangian_degrees,
-      const std::vector<int>& b_degrees, double deriv_eps_lower,
-      double deriv_eps_upper, const solvers::SolverId& solver_id,
+      const std::vector<int>& b_degrees, double kappa_lower, double kappa_upper,
+      const solvers::SolverId& solver_id,
       const std::optional<solvers::SolverOptions>& solver_options,
-      double lsol_tiny_coeff_tol, double* deriv_eps,
+      double lsol_tiny_coeff_tol, double* kappa,
       VectorX<symbolic::Polynomial>* b,
       std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>* l) const;
 
@@ -766,7 +765,7 @@ class ControlLyapunovBoxInputBound {
   // The objective is to maximize d in the ellipsoid.
   void SearchLyapunov(
       const std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>& l,
-      const std::vector<int>& b_degrees, int V_degree, double deriv_eps,
+      const std::vector<int>& b_degrees, int V_degree, double kappa,
       const Eigen::Ref<const Eigen::VectorXd>& x_star,
       const Eigen::Ref<const Eigen::MatrixXd>& S, const symbolic::Polynomial& s,
       const symbolic::Polynomial& t, const solvers::SolverId& solver_id,
@@ -781,7 +780,7 @@ class ControlLyapunovBoxInputBound {
   // by rho.
   void SearchLyapunov(
       const std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>& l,
-      const std::vector<int>& b_degrees, int V_degree, double deriv_eps,
+      const std::vector<int>& b_degrees, int V_degree, double kappa,
       const Eigen::Ref<const Eigen::VectorXd>& x_star,
       const Eigen::Ref<const Eigen::MatrixXd>& S, double d, int r_degree,
       const solvers::SolverId& solver_id,
@@ -823,7 +822,7 @@ class ControlLyapunovBoxInputBound {
           lagrangians,
       std::vector<std::vector<std::array<MatrixX<symbolic::Variable>, 3>>>*
           lagrangian_grams,
-      symbolic::Variable* deriv_eps, VectorX<symbolic::Polynomial>* b,
+      symbolic::Variable* kappa, VectorX<symbolic::Polynomial>* b,
       VdotSosConstraintReturn* vdot_sos_constraint) const;
 
   /**
@@ -843,7 +842,7 @@ class ControlLyapunovBoxInputBound {
    */
   std::unique_ptr<solvers::MathematicalProgram> ConstructLyapunovProgram(
       const std::vector<std::vector<std::array<symbolic::Polynomial, 3>>>& l,
-      bool symmetric_dynamics, double deriv_eps, int V_degree,
+      bool symmetric_dynamics, double kappa, int V_degree,
       const std::vector<int>& b_degrees, symbolic::Polynomial* V,
       MatrixX<symbolic::Expression>* positivity_constraint_gram,
       VectorX<symbolic::Monomial>* positivity_constraint_monomial,
@@ -877,7 +876,7 @@ class ClfController : public LeafSystem<double> {
                 const Eigen::Ref<const MatrixX<symbolic::Polynomial>>& G,
                 const std::optional<symbolic::Polynomial>& dynamics_denominator,
 
-                symbolic::Polynomial V, double deriv_eps);
+                symbolic::Polynomial V, double kappa);
 
   virtual ~ClfController() {}
 
@@ -924,7 +923,7 @@ class ClfController : public LeafSystem<double> {
 
   const symbolic::Polynomial& V() const { return V_; }
 
-  double deriv_eps() const { return deriv_eps_; }
+  double kappa() const { return kappa_; }
 
  protected:
   const symbolic::Polynomial& dVdx_times_f() const { return dVdx_times_f_; }
@@ -951,7 +950,7 @@ class ClfController : public LeafSystem<double> {
   MatrixX<symbolic::Polynomial> G_;
   std::optional<symbolic::Polynomial> dynamics_denominator_;
   symbolic::Polynomial V_;
-  double deriv_eps_;
+  double kappa_;
   symbolic::Polynomial dVdx_times_f_;
   RowVectorX<symbolic::Polynomial> dVdx_times_G_;
   OutputPortIndex control_output_index_;
@@ -991,7 +990,7 @@ class ControlLyapunovNoInputBound {
   void AddControlLyapunovConstraint(
       solvers::MathematicalProgram* prog, const symbolic::Polynomial& lambda0,
       const VectorX<symbolic::Polynomial>& l, const symbolic::Polynomial& V,
-      double deriv_eps, const VectorX<symbolic::Polynomial>& eq_lagrangian,
+      double kappa, const VectorX<symbolic::Polynomial>& eq_lagrangian,
       const VectorX<symbolic::Polynomial>& ineq_constraints,
       const VectorX<symbolic::Polynomial>& ineq_lagrangian,
       symbolic::Polynomial* vdot_sos,
@@ -1000,7 +999,7 @@ class ControlLyapunovNoInputBound {
 
   bool SearchLagrangian(
       const symbolic::Polynomial& V, int lambda0_degree,
-      const std::vector<int>& l_degrees, double deriv_eps,
+      const std::vector<int>& l_degrees, double kappa,
       const std::vector<int>& eq_lagrangian_degrees,
       const VectorX<symbolic::Polynomial>& ineq_constraints,
       const std::vector<int>& ineq_lagrangian_degrees,

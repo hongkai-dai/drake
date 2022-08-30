@@ -96,7 +96,7 @@ symbolic::Polynomial FindClfInit(
 
   const double positivity_eps = 0.001;
   const int d = V_degree / 2;
-  const double deriv_eps = 0.01;
+  const double kappa = 0.01;
   const Vector2<symbolic::Polynomial> state_eq_constraints =
       AcrobotStateEqConstraints(x);
   const std::vector<int> positivity_ceq_lagrangian_degrees{
@@ -109,7 +109,7 @@ symbolic::Polynomial FindClfInit(
 
   auto ret = FindCandidateRegionalLyapunov(
       x, dynamics_numerator, dynamics_denominator, V_degree, positivity_eps, d,
-      deriv_eps, state_eq_constraints, positivity_ceq_lagrangian_degrees,
+      kappa, state_eq_constraints, positivity_ceq_lagrangian_degrees,
       derivative_ceq_lagrangian_degrees, state_ineq_constraints,
       positivity_cin_lagrangian_degrees, derivative_cin_lagrangian_degrees);
   solvers::SolverOptions solver_options;
@@ -131,7 +131,7 @@ void AppendVdotImplication(
     const Vector4<symbolic::Variable>& z,
     const Vector4<symbolic::Polynomial>& z_poly, double z_factor,
     const symbolic::Polynomial& V, const Vector4<symbolic::Polynomial>& qdot,
-    double deriv_eps, const std::vector<int>& l_degrees,
+    double kappa, const std::vector<int>& l_degrees,
     const std::vector<int>& p_degrees,
     const Vector6<symbolic::Polynomial>& state_constraints,
     symbolic::Polynomial* vdot_sos) {
@@ -145,7 +145,7 @@ void AppendVdotImplication(
         solvers::MathematicalProgram::NonnegativePolynomial::kSos, "l");
   }
   const RowVector2<symbolic::Polynomial> dVdv = V.Jacobian(x.tail<2>());
-  *vdot_sos -= l.sum() * (dVdq.dot(qdot) + deriv_eps * V);
+  *vdot_sos -= l.sum() * (dVdq.dot(qdot) + kappa * V);
 
   *vdot_sos -= l(0) * (dVdv.dot(z_poly.head<2>() * z_factor)) +
                l(1) * (dVdv.dot(z_poly.tail<2>() * z_factor));
@@ -163,7 +163,7 @@ symbolic::Polynomial AddControlLyapunovConstraint(
     const Vector4<symbolic::Polynomial>& z_poly, double z_factor,
     const symbolic::Polynomial& lambda0, const symbolic::Polynomial& V,
     double rho, const Vector2<symbolic::Polynomial>& l,
-    const Vector4<symbolic::Polynomial>& qdot, double deriv_eps,
+    const Vector4<symbolic::Polynomial>& qdot, double kappa,
     const Vector6<symbolic::Polynomial>& p,
     const Vector6<symbolic::Polynomial>& state_constraints,
     MatrixX<symbolic::Variable>* vdot_sos_hessian,
@@ -172,7 +172,7 @@ symbolic::Polynomial AddControlLyapunovConstraint(
       (1 + lambda0) *
       symbolic::Polynomial(x.cast<symbolic::Expression>().dot(x)) * (V - rho);
   const RowVector4<symbolic::Polynomial> dVdq = V.Jacobian(x.head<4>());
-  vdot_sos -= l.sum() * (dVdq.dot(qdot) + deriv_eps * V);
+  vdot_sos -= l.sum() * (dVdq.dot(qdot) + kappa * V);
   const RowVector2<symbolic::Polynomial> dVdv = V.Jacobian(x.tail<2>());
   vdot_sos -= l(0) * dVdv.dot(z_poly.head<2>() * z_factor);
   vdot_sos -= l(1) * dVdv.dot(z_poly.tail<2>() * z_factor);
@@ -237,7 +237,7 @@ void SearchWImplicitTrigDynamics() {
   }
   const symbolic::Variables x_set{x};
 
-  const double deriv_eps = 0.1;
+  const double kappa = 0.1;
   const int lambda0_degree = 0;
   const std::vector<int> l_degrees{{0, 0}};
   const std::vector<int> p_degrees{{2, 2, 3, 3, 3, 3}};
@@ -247,7 +247,7 @@ void SearchWImplicitTrigDynamics() {
     const bool binary_search_rho = true;
     if (binary_search_rho) {
       auto is_rho_feasible = [&x, &z, &xz_set, z_factor, lambda0_degree,
-                              &V_init, &l_degrees, deriv_eps, &qdot, &z_poly,
+                              &V_init, &l_degrees, kappa, &qdot, &z_poly,
                               &p_degrees, &state_constraints](double rho) {
         solvers::MathematicalProgram prog;
         prog.AddIndeterminates(x);
@@ -261,8 +261,8 @@ void SearchWImplicitTrigDynamics() {
             symbolic::Polynomial(x.cast<symbolic::Expression>().dot(x)) *
             (V_init - rho);
         AppendVdotImplication(&prog, x, z, z_poly, z_factor, V_init, qdot,
-                              deriv_eps, l_degrees, p_degrees,
-                              state_constraints, &vdot_sos);
+                              kappa, l_degrees, p_degrees, state_constraints,
+                              &vdot_sos);
         prog.AddSosConstraint(vdot_sos);
         RemoveTinyCoeff(&prog, 1E-8);
         solvers::SolverOptions solver_options;
@@ -303,9 +303,8 @@ void SearchWImplicitTrigDynamics() {
           symbolic::Polynomial(
               pow(x.cast<symbolic::Expression>().dot(x), d_degree)) *
           (V_init - rho);
-      AppendVdotImplication(&prog, x, z, z_poly, z_factor, V_init, qdot,
-                            deriv_eps, l_degrees, p_degrees, state_constraints,
-                            &vdot_sos);
+      AppendVdotImplication(&prog, x, z, z_poly, z_factor, V_init, qdot, kappa,
+                            l_degrees, p_degrees, state_constraints, &vdot_sos);
       prog.AddSosConstraint(vdot_sos);
       prog.AddLinearCost(Vector1d(-1), 0, Vector1<symbolic::Variable>(rho));
       RemoveTinyCoeff(&prog, 1E-8);
@@ -358,9 +357,9 @@ void SearchWImplicitTrigDynamics() {
         p(i) = prog.NewFreePolynomial(xz_set, p_degrees[i],
                                       "p" + std::to_string(i));
       }
-      AddControlLyapunovConstraint(
-          &prog, x, z_poly, z_factor, lambda0, V_sol, rho, l, qdot, deriv_eps,
-          p, state_constraints, &vdot_sos_hessian, &vdot_sos_monomials);
+      AddControlLyapunovConstraint(&prog, x, z_poly, z_factor, lambda0, V_sol,
+                                   rho, l, qdot, kappa, p, state_constraints,
+                                   &vdot_sos_hessian, &vdot_sos_monomials);
       solvers::SolverOptions solver_options;
       solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
       RemoveTinyCoeff(&prog, 1E-8);
@@ -414,9 +413,8 @@ void SearchWImplicitTrigDynamics() {
                                       "p" + std::to_string(i));
       }
       const symbolic::Polynomial vdot_sos = AddControlLyapunovConstraint(
-          &prog, x, z_poly, z_factor, lambda0_sol, V, rho, l_sol, qdot,
-          deriv_eps, p, state_constraints, &vdot_sos_hessian,
-          &vdot_sos_monomials);
+          &prog, x, z_poly, z_factor, lambda0_sol, V, rho, l_sol, qdot, kappa,
+          p, state_constraints, &vdot_sos_hessian, &vdot_sos_monomials);
 
       // Now minimize V on x_samples.
       std::vector<int> x_indices{{28}};
@@ -476,8 +474,7 @@ void SearchWImplicitTrigDynamics() {
   const double Vdot_val = vdot_calculator.CalcMin(x_val)(0);
   std::cout << "V_val: " << V_val << "\n";
   std::cout << "min Vdot_val: " << Vdot_val << "\n";
-  std::cout << "Vdot_val + eps * V_val: " << Vdot_val + deriv_eps * V_val
-            << "\n";
+  std::cout << "Vdot_val + eps * V_val: " << Vdot_val + kappa * V_val << "\n";
   Vector6d n_val1;
   double d_val1;
   Vector6d n_val2;
@@ -528,7 +525,7 @@ void SearchWImplicitTrigDynamics() {
             << "\n";
 
   // const double duration = 5;
-  // Simulate(parameters, x, V_sol, u_max, deriv_eps, Eigen::Vector4d(1.1 *
+  // Simulate(parameters, x, V_sol, u_max, kappa, Eigen::Vector4d(1.1 *
   // M_PI, 0, 0, 0),
   //         duration);
 }

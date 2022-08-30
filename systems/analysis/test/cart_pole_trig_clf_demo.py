@@ -63,12 +63,12 @@ def SwingUpTrajectoryOptimization():
     return x_traj, u_traj
 
 def simulate(
-    parameters: analysis.CartPoleParams, x, clf, deriv_eps, u_bound,
+    parameters: analysis.CartPoleParams, x, clf, kappa, u_bound,
         initial_state, duration):
     builder, cart_pole, scene_graph = construct_builder()
     f, G, dynamics_denominator = analysis.TrigPolyDynamics(parameters, x)
     clf_controller = builder.AddSystem(analysis.CartpoleClfController(
-        x, f, G, dynamics_denominator, clf, deriv_eps, u_bound))
+        x, f, G, dynamics_denominator, clf, kappa, u_bound))
 
     state_logger = LogVectorOutput(cart_pole.get_state_output_port(), builder)
     clf_logger = LogVectorOutput(clf_controller.clf_output_port(), builder)
@@ -160,7 +160,7 @@ def FindClfInit(params: analysis.CartPoleParams, V_degree, x):
 
     positivity_eps = 0.001
     d = int(V_degree / 2)
-    deriv_eps = 0.01
+    kappa = 0.01
     state_eq_constraints = np.array([analysis.CartpoleStateEqConstraint(x)])
     positivity_ceq_lagrangian_degrees = [V_degree - 2]
     derivative_ceq_lagrangian_degrees = [V_degree + 2]
@@ -170,7 +170,7 @@ def FindClfInit(params: analysis.CartPoleParams, V_degree, x):
 
     ret = analysis.FindCandidateRegionalLyapunov(
         x, dynamics_numerator, dynamics_denominator, V_degree, positivity_eps,
-        d, deriv_eps, state_eq_constraints, positivity_ceq_lagrangian_degrees,
+        d, kappa, state_eq_constraints, positivity_ceq_lagrangian_degrees,
         derivative_ceq_lagrangian_degrees, state_ineq_constraints,
         positivity_cin_lagrangian_degrees, derivative_cin_lagrangian_degrees)
     solver_options = mp.SolverOptions()
@@ -181,7 +181,7 @@ def FindClfInit(params: analysis.CartPoleParams, V_degree, x):
     return V_sol
 
 
-def SearchWithSlackA(params: analysis.CartPoleParams, x, u_max, deriv_eps):
+def SearchWithSlackA(params: analysis.CartPoleParams, x, u_max, kappa):
     state_constraints = np.array([analysis.CartpoleStateEqConstraint(x)])
     u_vertices = np.array([[-u_max, u_max]])
     f, G, dynamics_denominator = analysis.TrigPolyDynamics(params, x)
@@ -233,12 +233,12 @@ def SearchWithSlackA(params: analysis.CartPoleParams, x, u_max, deriv_eps):
 
     search_result = dut.SearchWithSlackA(
         V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
-        positivity_d, positivity_eq_lagrangian_degrees, p_degrees, deriv_eps,
+        positivity_d, positivity_eq_lagrangian_degrees, p_degrees, kappa,
         in_roa_samples, a_info, search_options)
     return search_result.V
 
 
-def SearchWTrigDynamics(params, x, u_max, deriv_eps):
+def SearchWTrigDynamics(params, x, u_max, kappa):
     x_set = sym.Variables(x)
     V_degree = 2
     f, G, dynamics_denominator = analysis.TrigPolyDynamics(params, x)
@@ -265,7 +265,7 @@ def SearchWTrigDynamics(params, x, u_max, deriv_eps):
         #V_init = FindHjbLower(params, V_degree, x)
         d_degree = int(lambda0_degree / 2) + 1
         lagrangian_ret = dut.ConstructLagrangianProgram(
-            V_init, sym.Polynomial(), d_degree, l_degrees, p_degrees, deriv_eps)
+            V_init, sym.Polynomial(), d_degree, l_degrees, p_degrees, kappa)
         solver_options = mp.SolverOptions()
         solver_options.SetOption(mp.CommonSolverOption.kPrintToConsole, 1)
         result = mp.Solve(lagrangian_ret.prog(), None, solver_options)
@@ -283,7 +283,7 @@ def SearchWTrigDynamics(params, x, u_max, deriv_eps):
     verify_V_init = False
     if verify_V_init:
         dut.SearchLagrangian(V_init, 1., lambda0_degree, l_degrees,
-                             p_degrees, deriv_eps, search_options, None, None, None)
+                             p_degrees, kappa, search_options, None, None, None)
 
     state_swingup, control_swingup = SwingUpTrajectoryOptimization()
     x_swingup = np.empty((5, state_swingup.shape[1]))
@@ -317,12 +317,12 @@ def SearchWTrigDynamics(params, x, u_max, deriv_eps):
     search_result = dut.Search(
         V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
         positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
-        ellipsoid_eq_lagrangian_degrees, deriv_eps, x_star, S, r_degree,
+        ellipsoid_eq_lagrangian_degrees, kappa, x_star, S, r_degree,
         search_options, ellipsoid_maximize_option)
     with open("/home/hongkaidai/sos_clf_cbf_data/cart_pole/cartpole_trig_clf54.pickle", "wb") as handle:
         pickle.dump({
             "V": clf_cbf_utils.serialize_polynomial(search_result.V),
-            "deriv_eps": deriv_eps, "u_max": u_max, "rho": search_options.rho,
+            "kappa": kappa, "u_max": u_max, "rho": search_options.rho,
             "x_swingup": x_swingup,
             "V_swingup": search_result.V.EvaluateIndeterminates(x, x_swingup)},
             handle)
@@ -334,9 +334,9 @@ def main():
     params = analysis.CartPoleParams()
     x = sym.MakeVectorContinuousVariable(5, "x")
     u_max = 176
-    deriv_eps = 0.01
-    #V_sol = SearchWithSlackA(params, x, u_max, deriv_eps)
-    SearchWTrigDynamics(params, x, u_max, deriv_eps)
+    kappa = 0.01
+    #V_sol = SearchWithSlackA(params, x, u_max, kappa)
+    SearchWTrigDynamics(params, x, u_max, kappa)
 
 
 if __name__ == "__main__":

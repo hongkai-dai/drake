@@ -69,7 +69,7 @@ symbolic::Polynomial FindClfInit(
 
   const double positivity_eps = 0.001;
   const int d = V_degree / 2;
-  const double deriv_eps = 0.01;
+  const double kappa = 0.01;
   const Vector1<symbolic::Polynomial> state_eq_constraints(
       CartpoleStateEqConstraint(x));
   const std::vector<int> positivity_ceq_lagrangian_degrees{{V_degree - 2}};
@@ -81,7 +81,7 @@ symbolic::Polynomial FindClfInit(
 
   auto ret = FindCandidateRegionalLyapunov(
       x, dynamics_numerator, dynamics_denominator, V_degree, positivity_eps, d,
-      deriv_eps, state_eq_constraints, positivity_ceq_lagrangian_degrees,
+      kappa, state_eq_constraints, positivity_ceq_lagrangian_degrees,
       derivative_ceq_lagrangian_degrees, state_ineq_constraints,
       positivity_cin_lagrangian_degrees, derivative_cin_lagrangian_degrees);
   solvers::SolverOptions solver_options;
@@ -104,7 +104,7 @@ symbolic::Polynomial AddControlLyapunovConstraint(
     const Vector2<symbolic::Polynomial>& z2_poly, double z_factor,
     const symbolic::Polynomial& lambda0, const symbolic::Polynomial& V,
     double rho, const Vector2<symbolic::Polynomial>& l,
-    const Vector3<symbolic::Polynomial>& qdot, double deriv_eps,
+    const Vector3<symbolic::Polynomial>& qdot, double kappa,
     const Eigen::Matrix<symbolic::Polynomial, 5, 1>& p,
     const Eigen::Matrix<symbolic::Polynomial, 5, 1>& state_constraints,
     MatrixX<symbolic::Variable>* vdot_sos_gram,
@@ -113,7 +113,7 @@ symbolic::Polynomial AddControlLyapunovConstraint(
       (1 + lambda0) *
       symbolic::Polynomial(x.cast<symbolic::Expression>().dot(x)) * (V - rho);
   const RowVector3<symbolic::Polynomial> dVdq = V.Jacobian(x.head<3>());
-  vdot_sos -= l.sum() * (dVdq.dot(qdot) + deriv_eps * V);
+  vdot_sos -= l.sum() * (dVdq.dot(qdot) + kappa * V);
   const RowVector2<symbolic::Polynomial> dVdv = V.Jacobian(x.tail<2>());
   vdot_sos -= l(0) * dVdv.dot(z1_poly) * z_factor;
   vdot_sos -= l(1) * dVdv.dot(z2_poly) * z_factor;
@@ -129,7 +129,7 @@ bool FindLagrangian(const Eigen::Matrix<symbolic::Variable, 5, 1>& x,
                     int lambda0_degree, const symbolic::Polynomial& V,
                     double rho, const std::vector<int>& l_degrees,
                     const std::vector<int>& p_degrees,
-                    const Vector3<symbolic::Polynomial>& qdot, double deriv_eps,
+                    const Vector3<symbolic::Polynomial>& qdot, double kappa,
                     Eigen::Matrix<symbolic::Polynomial, 5, 1> state_constraints,
                     symbolic::Polynomial* lambda0_sol,
                     Vector2<symbolic::Polynomial>* l_sol) {
@@ -165,7 +165,7 @@ bool FindLagrangian(const Eigen::Matrix<symbolic::Variable, 5, 1>& x,
   MatrixX<symbolic::Variable> vdot_sos_gram;
   VectorX<symbolic::Monomial> vdot_sos_monomials;
   AddControlLyapunovConstraint(&prog, x, z1_poly, z2_poly, z_factor, lambda0, V,
-                               rho, l, qdot, deriv_eps, p, state_constraints,
+                               rho, l, qdot, kappa, p, state_constraints,
                                &vdot_sos_gram, &vdot_sos_monomials);
   solvers::SolverOptions solver_options;
   solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
@@ -241,7 +241,7 @@ void Search(const std::optional<std::string>& load_V_init,
   }
   const symbolic::Variables x_set{x};
 
-  const double deriv_eps = 0.01;
+  const double kappa = 0.01;
   int lambda0_degree = 2;
   const std::vector<int> l_degrees{{2, 2}};
   const std::vector<int> p_degrees{{6, 6, 6, 6, 6}};
@@ -261,12 +261,12 @@ void Search(const std::optional<std::string>& load_V_init,
       double rho_tol = 3E-4;
 
       auto is_rho_feasible = [&x, &z1, &z2, z_factor, lambda0_degree, &V_init,
-                              &l_degrees, &p_degrees, &qdot, deriv_eps,
+                              &l_degrees, &p_degrees, &qdot, kappa,
                               &state_constraints](double rho) {
         symbolic::Polynomial lambda0_sol;
         Vector2<symbolic::Polynomial> l_sol;
         return FindLagrangian(x, z1, z2, z_factor, lambda0_degree, V_init, rho,
-                              l_degrees, p_degrees, qdot, deriv_eps,
+                              l_degrees, p_degrees, qdot, kappa,
                               state_constraints, &lambda0_sol, &l_sol);
       };
       if (is_rho_feasible(rho_max)) {
@@ -310,7 +310,7 @@ void Search(const std::optional<std::string>& load_V_init,
       }
       const RowVector2<symbolic::Polynomial> dVdv =
           V_init.Jacobian(x.tail<2>());
-      vdot_sos -= l.sum() * (dVdq.dot(qdot) + deriv_eps * V_init);
+      vdot_sos -= l.sum() * (dVdq.dot(qdot) + kappa * V_init);
       vdot_sos -= l(0) * dVdv.dot(z1_poly) * z_factor +
                   l(1) * dVdv.dot(z2_poly) * z_factor;
       Eigen::Matrix<symbolic::Polynomial, 5, 1> p;
@@ -357,7 +357,7 @@ void Search(const std::optional<std::string>& load_V_init,
     {
       const bool found_lagrangian = FindLagrangian(
           x, z1, z2, z_factor, lambda0_degree, V_sol, rho, l_degrees, p_degrees,
-          qdot, deriv_eps, state_constraints, &lambda0_sol, &l_sol);
+          qdot, kappa, state_constraints, &lambda0_sol, &l_sol);
       if (!found_lagrangian) {
         std::cout << "rho=" << rho_sol << "\n";
         return;
@@ -392,7 +392,7 @@ void Search(const std::optional<std::string>& load_V_init,
       }
       vdot_sos = AddControlLyapunovConstraint(
           &prog, x, z1_poly, z2_poly, z_factor, lambda0_sol, V, rho, l_sol,
-          qdot, deriv_eps, p, state_constraints, &vdot_sos_gram,
+          qdot, kappa, p, state_constraints, &vdot_sos_gram,
           &vdot_sos_monomials);
 
       // Now minimize V on x_samples.
@@ -497,8 +497,7 @@ void Search(const std::optional<std::string>& load_V_init,
   const double Vdot_val = vdot_calculator.CalcMin(x_val)(0);
   std::cout << "V_val: " << V_val << "\n";
   std::cout << "Vdot_val: " << Vdot_val << "\n";
-  std::cout << "Vdot_val + deriv_eps * V_val" << Vdot_val + deriv_eps * V_val
-            << "\n";
+  std::cout << "Vdot_val + kappa * V_val" << Vdot_val + kappa * V_val << "\n";
   Eigen::Matrix<double, 5, 1> n_val1;
   Eigen::Matrix<double, 5, 1> n_val2;
   double d_val1, d_val2;
@@ -534,7 +533,7 @@ void Search(const std::optional<std::string>& load_V_init,
             << "\n";
 
   const double duration = 20;
-  Simulate(params, x, V_sol, u_max, deriv_eps, state_swingup.col(12), duration);
+  Simulate(params, x, V_sol, u_max, kappa, state_swingup.col(12), duration);
 }
 
 int DoMain() {

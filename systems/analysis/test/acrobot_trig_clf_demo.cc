@@ -159,7 +159,7 @@ symbolic::Polynomial FindClfInit(
 
   const double positivity_eps = 0.001;
   const int d = V_degree / 2;
-  const double deriv_eps = 0.01;
+  const double kappa = 0.01;
   const Vector2<symbolic::Polynomial> state_eq_constraints =
       AcrobotStateEqConstraints(x);
   const std::vector<int> positivity_ceq_lagrangian_degrees{
@@ -172,7 +172,7 @@ symbolic::Polynomial FindClfInit(
 
   auto ret = FindCandidateRegionalLyapunov(
       x, dynamics_numerator, dynamics_denominator, V_degree, positivity_eps, d,
-      deriv_eps, state_eq_constraints, positivity_ceq_lagrangian_degrees,
+      kappa, state_eq_constraints, positivity_ceq_lagrangian_degrees,
       derivative_ceq_lagrangian_degrees, state_ineq_constraints,
       positivity_cin_lagrangian_degrees, derivative_cin_lagrangian_degrees);
   solvers::SolverOptions solver_options;
@@ -215,7 +215,7 @@ void SearchWTrigDynamics(double u_max,
   const std::vector<int> l_degrees{{2, 2}};
   const std::vector<int> p_degrees{{6, 6}};
   symbolic::Polynomial lambda0;
-  const double deriv_eps = 0.1;
+  const double kappa = 0.1;
   symbolic::Polynomial V_init;
   double rho_val = 0.1;
   if (load_clf.has_value()) {
@@ -234,8 +234,8 @@ void SearchWTrigDynamics(double u_max,
       search_options.lagrangian_tiny_coeff_tol = 1E-10;
       double rho_sol;
       bool found_rho = dut.FindRhoBinarySearch(
-          V_init, 0, 0.00125, 5E-4, lambda0_degree, l_degrees, p_degrees,
-          deriv_eps, search_options, &rho_sol, &lambda0_sol, &l_sol, &p_sol);
+          V_init, 0, 0.00125, 5E-4, lambda0_degree, l_degrees, p_degrees, kappa,
+          search_options, &rho_sol, &lambda0_sol, &l_sol, &p_sol);
       if (found_rho) {
         std::cout << "Binary search rho_sol: " << rho_sol << "\n";
         V_init =
@@ -251,9 +251,9 @@ void SearchWTrigDynamics(double u_max,
       VectorX<symbolic::Monomial> vdot_monomials;
       MatrixX<symbolic::Variable> vdot_gram;
       const int d_degree = lambda0_degree / 2 + 1;
-      auto lagrangian_ret = dut.ConstructLagrangianProgram(
-          V_init, symbolic::Polynomial(), d_degree, l_degrees, p_degrees,
-          deriv_eps);
+      auto lagrangian_ret =
+          dut.ConstructLagrangianProgram(V_init, symbolic::Polynomial(),
+                                         d_degree, l_degrees, p_degrees, kappa);
       solvers::SolverOptions solver_options;
       solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
       drake::log()->info("Maximize rho for the initial Clf");
@@ -324,7 +324,7 @@ void SearchWTrigDynamics(double u_max,
     const auto search_result =
         dut.Search(V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
                    positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
-                   deriv_eps, x_samples, std::nullopt /* in_roa_samples */,
+                   kappa, x_samples, std::nullopt /* in_roa_samples */,
                    minimize_max, search_options);
     std::cout
         << "V(x_samples): "

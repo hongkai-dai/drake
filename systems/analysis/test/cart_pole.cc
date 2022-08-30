@@ -99,9 +99,8 @@ CartpoleClfController::CartpoleClfController(
     const Eigen::Ref<const Eigen::Matrix<symbolic::Polynomial, 5, 1>>& f,
     const Eigen::Ref<const Eigen::Matrix<symbolic::Polynomial, 5, 1>>& G,
     const symbolic::Polynomial& dynamics_denominator, symbolic::Polynomial V,
-    double deriv_eps, double u_max)
-    : ClfController(x, f, G, dynamics_denominator, V, deriv_eps),
-      u_max_{u_max} {}
+    double kappa, double u_max)
+    : ClfController(x, f, G, dynamics_denominator, V, kappa), u_max_{u_max} {}
 
 void CartpoleClfController::DoCalcControl(const Context<double>& context,
                                           BasicVector<double>* output) const {
@@ -132,7 +131,7 @@ void CartpoleClfController::DoCalcControl(const Context<double>& context,
   if (!result.is_success()) {
     drake::log()->info(
         "dVdx*f+eps*V={}, dVdx*G={}",
-        dVdx_times_f_val / dynamics_denominator_val + deriv_eps() * V_val,
+        dVdx_times_f_val / dynamics_denominator_val + kappa() * V_val,
         dVdx_times_G_val / dynamics_denominator_val);
     drake::log()->error("ClfController fails at t={} with x={}, V={}",
                         context.get_time(), x_val.transpose(), V_val);
@@ -144,7 +143,7 @@ void CartpoleClfController::DoCalcControl(const Context<double>& context,
 
 void Simulate(const CartPoleParams& parameters,
               const Eigen::Matrix<symbolic::Variable, 5, 1>& x,
-              const symbolic::Polynomial& clf, double u_bound, double deriv_eps,
+              const symbolic::Polynomial& clf, double u_bound, double kappa,
               const Eigen::Vector4d& initial_state, double duration) {
   systems::DiagramBuilder<double> builder;
 
@@ -170,7 +169,7 @@ void Simulate(const CartPoleParams& parameters,
   TrigPolyDynamics(parameters, x, &f, &G, &dynamics_denominator);
 
   auto clf_controller = builder.AddSystem<CartpoleClfController>(
-      x, f, G, dynamics_denominator, clf, deriv_eps, u_bound);
+      x, f, G, dynamics_denominator, clf, kappa, u_bound);
   auto state_logger =
       LogVectorOutput(cart_pole->get_state_output_port(), &builder);
   auto clf_logger = LogVectorOutput(

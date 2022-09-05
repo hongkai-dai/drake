@@ -41,7 +41,7 @@ def search_controller(x, f, G, V, pi_degree, kappa, thrust_max, lambda1_degree, 
     u = np.empty((4,), dtype=object)
     for i in range(4):
         u[i] = prog.NewFreePolynomial(x_set, pi_degree)
-    state_eq_lagrangian_degree = 4
+    state_eq_lagrangian_degree = 2
     state_eq_lagrangian = prog.NewFreePolynomial(x_set, state_eq_lagrangian_degree)
     Vdot_sos_condition = -kappa * V - dVdx.dot(f) - dVdx.dot(G @ u) - lambda1 * (1 - V) - state_eq_lagrangian * state_constraint
     prog.AddSosConstraint(Vdot_sos_condition)
@@ -122,10 +122,11 @@ def search():
     state_constraints = np.array([analysis.QuadrotorStateEqConstraint(x)])
 
     V_degree = 2
-    pi_degree = 3
+    pi_degree = 1
     load_V_init = True
     if load_V_init:
-        with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_clf/quadrotor3d_trig_clf_init.pickle", "rb") as input_file:
+        #with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_clf/quadrotor3d_trig_clf_sol3.pickle", "rb") as input_file:
+        with open("/home/hongkaidai/Desktop/quadrotor3d_trig_clf_sol3.pickle", "rb") as input_file:
             V_init = clf_cbf_utils.deserialize_polynomial(
                 x_set, pickle.load(input_file)["V"])
     else:
@@ -139,9 +140,9 @@ def search():
     # π(x) - l1(x)(1-V) is sos
     # (thrust_max - π(x)) - l2(x)(1-V) is sos
     # l1(x) is sos, l2(x) is sos
-    lambda1_degree = 4
-    l1_degrees = [2, 2, 2, 2]
-    l2_degrees = [2, 2, 2, 2]
+    lambda1_degree = 2
+    l1_degrees = [0, 0, 0, 0]
+    l2_degrees = [0, 0, 0, 0]
     iter_count = 0
     V_sol = V_init * 1000
     state_samples = np.zeros((12, 4))

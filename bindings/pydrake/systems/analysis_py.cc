@@ -572,6 +572,51 @@ Parameter ``interruptible``:
                 py::arg("dynamics_denominator"), py::arg("u_vertices"),
                 py::arg("state_constraints"), cls_doc.ctor.doc);
 
+    control_lyapunov
+        .def(
+            "AddControlLyapunovConstraint",
+            [](const Class& self, solvers::MathematicalProgram* prog,
+                const VectorX<symbolic::Variable>& x,
+                const symbolic::Polynomial& lambda0, int d_degree,
+                const VectorX<symbolic::Polynomial>& l,
+                const symbolic::Polynomial& V, const double rho,
+                const Eigen::MatrixXd& u_vertices, double kappa,
+                const VectorX<symbolic::Polynomial>& p,
+                const std::optional<symbolic::Polynomial>& a) {
+              symbolic::Polynomial vdot_poly;
+              VectorX<symbolic::Monomial> monomials;
+              MatrixX<symbolic::Variable> gram;
+              self.AddControlLyapunovConstraint<double>(prog, x, lambda0,
+                  d_degree, l, V, rho, u_vertices, kappa, p, a, &vdot_poly,
+                  &monomials, &gram);
+              return std::make_tuple(vdot_poly, monomials, gram);
+            },
+            py::arg("prog"), py::arg("x"), py::arg("lambda0"),
+            py::arg("d_degree"), py::arg("l"), py::arg("V"), py::arg("rho"),
+            py::arg("u_vertices"), py::arg("kappa"), py::arg("p"), py::arg("a"))
+        .def(
+            "AddControlLyapunovConstraint",
+            [](const Class& self, solvers::MathematicalProgram* prog,
+                const VectorX<symbolic::Variable>& x,
+                const symbolic::Polynomial& lambda0, int d_degree,
+                const VectorX<symbolic::Polynomial>& l,
+                const symbolic::Polynomial& V, const symbolic::Variable& rho,
+                const Eigen::MatrixXd& u_vertices, double kappa,
+                const VectorX<symbolic::Polynomial>& p,
+                const std::optional<symbolic::Polynomial>& a) {
+              symbolic::Polynomial vdot_poly;
+              VectorX<symbolic::Monomial> monomials;
+              MatrixX<symbolic::Variable> gram;
+              self.AddControlLyapunovConstraint<symbolic::Variable>(prog, x,
+                  lambda0, d_degree, l, V, rho, u_vertices, kappa, p, a,
+                  &vdot_poly, &monomials, &gram);
+              return std::make_tuple(vdot_poly, monomials, gram);
+            },
+            py::arg("prog"), py::arg("x"), py::arg("lambda0"),
+            py::arg("d_degree"), py::arg("l"), py::arg("V"), py::arg("rho"),
+            py::arg("u_vertices"), py::arg("kappa"), py::arg("p"),
+            py::arg("a"));
+
     py::class_<analysis::ControlLyapunov::LagrangianReturn>(
         control_lyapunov, "LagrangianReturn")
         .def(
@@ -579,14 +624,14 @@ Parameter ``interruptible``:
             [](const Class::LagrangianReturn& self) { return self.prog.get(); },
             pybind11::return_value_policy::reference)
         .def_readonly("lambda0", &Class::LagrangianReturn::lambda0)
-        .def_readonly("lambda0_gram", &Class::LagrangianReturn::lambda0_gram)
-        .def_readonly("l", &Class::LagrangianReturn::l)
-        .def_readonly("l_grams", &Class::LagrangianReturn::l_grams)
-        .def_readonly("p", &Class::LagrangianReturn::p)
+        .def_readonly("lambda0_gram", &Class::LagrangianReturn::lambda0_gram, py_rvp::copy)
+        .def_readonly("l", &Class::LagrangianReturn::l, py_rvp::copy)
+        .def_readonly("l_grams", &Class::LagrangianReturn::l_grams, py_rvp::copy)
+        .def_readonly("p", &Class::LagrangianReturn::p, py_rvp::copy)
         .def_readonly("vdot_sos", &Class::LagrangianReturn::vdot_sos)
         .def_readonly(
-            "vdot_monomials", &Class::LagrangianReturn::vdot_monomials)
-        .def_readonly("vdot_gram", &Class::LagrangianReturn::vdot_gram);
+            "vdot_monomials", &Class::LagrangianReturn::vdot_monomials, py_rvp::copy)
+        .def_readonly("vdot_gram", &Class::LagrangianReturn::vdot_gram, py_rvp::copy);
 
     control_lyapunov.def(
         "ConstructLagrangianProgram",
@@ -630,12 +675,12 @@ Parameter ``interruptible``:
         control_lyapunov, "LyapunovReturn")
         .def(
             "prog",
-            [](const Class::LagrangianReturn& self) { return self.prog.get(); },
+            [](const Class::LyapunovReturn& self) { return self.prog.get(); },
             pybind11::return_value_policy::reference)
         .def_readonly("V", &Class::LyapunovReturn::V)
         .def_readonly("positivity_eq_lagrangian",
-            &Class::LyapunovReturn::positivity_eq_lagrangian)
-        .def_readonly("p", &Class::LyapunovReturn::p);
+            &Class::LyapunovReturn::positivity_eq_lagrangian, py_rvp::copy)
+        .def_readonly("p", &Class::LyapunovReturn::p, py_rvp::copy);
 
     control_lyapunov.def("ConstructLyapunovProgram",
         &Class::ConstructLyapunovProgram, py::arg("lambda0"), py::arg("l"),
@@ -699,8 +744,8 @@ Parameter ``interruptible``:
         .def_readonly("positivity_eq_lagrangian",
             &Class::SearchResult::positivity_eq_lagrangian)
         .def_readonly("lambda0", &Class::SearchResult::lambda0)
-        .def_readonly("l", &Class::SearchResult::l)
-        .def_readonly("p", &Class::SearchResult::p)
+        .def_readonly("l", &Class::SearchResult::l, py_rvp::copy)
+        .def_readonly("p", &Class::SearchResult::p, py_rvp::copy)
         .def_readonly("search_result_details",
             &Class::SearchResult::search_result_details);
 
@@ -1281,6 +1326,23 @@ Parameter ``interruptible``:
     m.def("OptimizePolynomialAtSamples", &analysis::OptimizePolynomialAtSamples,
         py::arg("prog"), py::arg("p"), py::arg("x"), py::arg("x_samples"),
         py::arg("optimize_polynomial_mode"));
+
+    m.def("SmallestCoeff", &analysis::SmallestCoeff, py::arg("prog"))
+        .def("RemoveTinyCoeff", &analysis::RemoveTinyCoeff, py::arg("prog"),
+            py::arg("zero_tol"));
+
+    m.def(
+        "NewSosPolynomialPassOrigin",
+        [](solvers::MathematicalProgram* prog,
+            const symbolic::Variables& indeterminates, int degree) {
+          symbolic::Polynomial p;
+          VectorX<symbolic::Monomial> monomial_basis;
+          MatrixX<symbolic::Expression> gram;
+          analysis::NewSosPolynomialPassOrigin(prog, indeterminates, degree,
+              symbolic::internal::DegreeType::kAny, &p, &monomial_basis, &gram);
+          return std::make_tuple(p, monomial_basis, gram);
+        },
+        py::arg("prog"), py::arg("indeterminates"), py::arg("degree"));
   }
 
   {

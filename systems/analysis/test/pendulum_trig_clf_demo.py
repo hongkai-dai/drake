@@ -1,6 +1,8 @@
 import numpy as np
 import pickle
 
+import matplotlib.pyplot as plt
+
 import clf_cbf_utils
 
 import pydrake.systems.analysis as analysis
@@ -20,6 +22,7 @@ from pydrake.examples import (
     PendulumPlant,
     PendulumGeometry,
 )
+import pydrake.systems.trajectory_optimization as trajectory_optimization
 from pydrake.geometry import (
     MeshcatVisualizer,
     MeshcatVisualizerParams,
@@ -27,6 +30,41 @@ from pydrake.geometry import (
     StartMeshcat,
     SceneGraph,
 )
+
+
+def construct_builder():
+    builder = DiagramBuilder()
+    pendulum = builder.AddSystem(PendulumPlant())
+    scene_graph = builder.AddSystem(SceneGraph())
+    return builder, pendulum, scene_graph
+
+
+def SwingUpTrajectoryOptimization(u_max):
+    builder, pendulum, scene_graph = construct_builder()
+    diagram = builder.Build()
+    diagram_context = diagram.CreateDefaultContext()
+    context = pendulum.CreateDefaultContext()
+    num_time_samples = 50
+    minimum_timestep = 0.04
+    maximum_timestep = 0.06
+    dircol = trajectory_optimization.DirectCollocation(
+        pendulum, context, num_time_samples, minimum_timestep,
+        maximum_timestep, pendulum.get_input_port().get_index())
+    for i in range(num_time_samples):
+        dircol.prog().AddBoundingBoxConstraint(-u_max, u_max, dircol.input(i))
+    dircol.prog().AddBoundingBoxConstraint(
+        np.zeros((2,)), np.zeros((2,)), dircol.state(0))
+    dircol.prog().AddBoundingBoxConstraint(
+        np.array([np.pi, 0]), np.array([np.pi, 0]),
+        dircol.state(num_time_samples - 1))
+    dircol.prog().AddBoundingBoxConstraint(
+        0, 0, dircol.input(num_time_samples - 1)[0])
+    dircol.AddRunningCost(dircol.input().dot(dircol.input()))
+    result = mp.Solve(dircol.prog())
+    assert (result.is_success())
+    x_traj = dircol.GetStateSamples(result)
+    u_traj = dircol.GetInputSamples(result)
+    return x_traj, u_traj
 
 
 class PendulumClfController(LeafSystem):
@@ -101,8 +139,9 @@ def simulate(x, f, G, clf, u_max, kappa, initial_state, duration, meshcat):
     geom = PendulumGeometry.AddToBuilder(
         builder, pendulum.get_output_port(0), scene_graph)
 
-    MeshcatVisualizer.AddToBuilder(
-        builder, scene_graph, meshcat, MeshcatVisualizerParams(role=Role.kPerception))
+    if meshcat is not None:
+        MeshcatVisualizer.AddToBuilder(
+            builder, scene_graph, meshcat, MeshcatVisualizerParams(role=Role.kPerception))
 
     state_converter = builder.AddSystem(
         analysis.PendulumTrigStateConverter(theta_des=np.pi))
@@ -111,7 +150,7 @@ def simulate(x, f, G, clf, u_max, kappa, initial_state, duration, meshcat):
         0), state_converter.get_input_port())
 
     clf_controller = builder.AddSystem(PendulumClfController(
-        x, f, G, clf, kappa, u_max, Vdot_cost_weight=100))
+        x, f, G, clf, kappa, u_max, Vdot_cost_weight=0))
     builder.Connect(clf_controller.control_output_port(),
                     pendulum.get_input_port())
     builder.Connect(state_converter.get_output_port(),
@@ -126,7 +165,7 @@ def simulate(x, f, G, clf, u_max, kappa, initial_state, duration, meshcat):
 
     simulator = analysis.Simulator(diagram)
 
-    analysis.ResetIntegratorFromFlags(simulator, "radau3", 0.001)
+    #analysis.ResetIntegratorFromFlags(simulator, "radau3", 0.01)
 
     simulator.get_mutable_context().SetContinuousState(initial_state)
     simulator.AdvanceTo(duration)
@@ -224,28 +263,67 @@ def search(u_max, kappa):
     search_options.lagrangian_step_solver_options = mp.SolverOptions()
     search_options.lagrangian_step_solver_options.SetOption(
         mp.CommonSolverOption.kPrintToConsole, 1)
-    #search_options.lyap_step_backoff_scale = 0.01
+    search_options.lyap_step_backoff_scale = 0.01
     search_options.lsol_tiny_coeff_tol = 1E-5
     search_options.lyap_tiny_coeff_tol = 1E-7
 
+    state_swingup, control_swingup = SwingUpTrajectoryOptimization(u_max)
+    x_swingup = np.empty((3, state_swingup.shape[1]))
+    for i in range(state_swingup.shape[1]):
+        x_swingup[:, i] = analysis.ToPendulumTrigState(
+            state_swingup[0, i], state_swingup[1, i], np.pi)
     x_samples = np.empty((3, 1))
     x_samples[:, 0] = analysis.ToPendulumTrigState(0., 0., np.pi)
+    x_samples = x_swingup
 
     search_result = dut.Search(
         V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
         positivity_d, positivity_eq_lagrangian_degrees, p_degrees, kappa,
         x_samples, None, True, search_options)
-    print(search_result.V)
+    with open("/home/hongkaidai/Dropbox/sos_clf_cbf/pendulum/pendulum_trig_clf1.pickle", "wb") as handle:
+        pickle.dump({
+            "V": clf_cbf_utils.serialize_polynomial(search_result.V),
+            "kappa": kappa, "u_max": u_max, "rho": search_options.rho}, handle)
 
-    meshcat = StartMeshcat()
-    simulate(
-        x, f, G, search_result.V, u_max, kappa, np.array([0., 0.]), 20, meshcat)
+
+def draw_clf_contour(fig, ax, V, rho, x):
+    X, Y = np.meshgrid(np.arange(-0.6 * np.pi, 1.5 * np.pi,
+                       0.02), np.arange(-10, 10, 0.01))
+
+    V_val = V.EvaluateIndeterminates(x, np.vstack((np.sin(X).reshape(
+        (1, -1)), (np.cos(X) + 1).reshape((1, -1)), Y.reshape((1, -1))))).reshape(X.shape)
+    heatmap_handle = ax.pcolormesh(X, Y, V_val)
+    fig.colorbar(heatmap_handle, ax=ax)
+    contour_handle = ax.contour(X, Y, V_val, [rho])
+    contour_handle.collections[0].set_edgecolor('r')
+    #ax.clabel(contour_handle, [rho])
+    ax.set_xlabel(r"$\theta$")
+    ax.set_ylabel(r"$\dot{\theta}$")
+    ax.set_xticks([-0.5 * np.pi, 0, 0.5*np.pi, np.pi, 1.5*np.pi],
+                  labels=[r"$-0.5\pi$", "0", r"$0.5\pi$", r"$\pi$", r"$1.5\pi$"])
+    ax.set_title("V(x) for pendulum")
+    return contour_handle, heatmap_handle
+
+
+def plot_results():
+    x = sym.MakeVectorContinuousVariable(3, "x")
+    x_set = sym.Variables(x)
+    with open("/home/hongkaidai/Dropbox/sos_clf_cbf/pendulum/pendulum_trig_clf1.pickle", "rb") as input_file:
+        load_data = pickle.load(input_file)
+        V = clf_cbf_utils.deserialize_polynomial(x_set, load_data["V"])
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    contour_handle, heatmap_handle = draw_clf_contour(fig, ax, V, rho=1, x=x)
+    for fig_format in ["png", "pdf"]:
+        fig.savefig("/home/hongkaidai/Dropbox/talks/pictures/sos_clf_cbf/pendulum_V." +
+                    fig_format, format=fig_format)
 
 
 def main():
-    u_max = 30
+    u_max = 5
     kappa = 0.1
-    search(u_max, kappa)
+    #search(u_max, kappa)
+    plot_results()
 
 
 if __name__ == "__main__":

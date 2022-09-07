@@ -259,20 +259,18 @@ GTEST_TEST(FindCandidateLyapunov, Test) {
   // clang-format on
   const Eigen::Matrix<double, 2, 5> xdot_val = A * x_val;
 
-  symbolic::Polynomial V;
   const int V_degree = 2;
   const int positivity_eps = 0.1;
   const int d = 1;
   VectorX<symbolic::Polynomial> state_constraints(0);
   std::vector<int> eq_lagrangian_degrees{};
-  VectorX<symbolic::Polynomial> eq_lagrangian;
 
-  auto prog = FindCandidateLyapunov(x, V_degree, positivity_eps, d,
-                                    state_constraints, eq_lagrangian_degrees,
-                                    x_val, xdot_val, &V, &eq_lagrangian);
-  const auto result = solvers::Solve(*prog);
+  auto find_candidate_lyap_ret =
+      FindCandidateLyapunov(x, V_degree, positivity_eps, d, state_constraints,
+                            eq_lagrangian_degrees, x_val, xdot_val);
+  const auto result = solvers::Solve(*(find_candidate_lyap_ret.prog));
   ASSERT_TRUE(result.is_success());
-  const auto V_sol = result.GetSolution(V);
+  const auto V_sol = result.GetSolution(find_candidate_lyap_ret.V);
   const Eigen::VectorXd V_val = V_sol.EvaluateIndeterminates(x, x_val);
   EXPECT_TRUE((V_val.array() >=
                positivity_eps *

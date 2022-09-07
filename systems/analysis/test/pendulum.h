@@ -20,7 +20,8 @@ void ControlAffineDynamics(
     Vector2<symbolic::Polynomial>* f, Vector2<symbolic::Polynomial>* G);
 
 template <typename T>
-Vector3<T> ToTrigState(const T& theta, const T& thetadot, double theta_des) {
+Vector3<T> ToPendulumTrigState(const T& theta, const T& thetadot,
+                               double theta_des) {
   const double sin_theta_des = std::sin(theta_des);
   const double cos_theta_des = std::cos(theta_des);
   using std::cos;
@@ -78,11 +79,11 @@ double EquilibriumTorque(
  * Convert (theta, thetadot) to (sin(theta)-sin(theta_des),
  * cos(theta)-cos(theta_des), thetadot)
  */
-class TrigStateConverter : public LeafSystem<double> {
+class PendulumTrigStateConverter : public LeafSystem<double> {
  public:
-  DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(TrigStateConverter)
+  DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(PendulumTrigStateConverter)
 
-  TrigStateConverter(double theta_des);
+  PendulumTrigStateConverter(double theta_des);
 
   void Convert(const Context<double>& context, BasicVector<double>* x) const;
 

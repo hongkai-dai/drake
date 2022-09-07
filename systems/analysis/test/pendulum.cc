@@ -81,16 +81,16 @@ double EquilibriumTorque(
   return u_des;
 }
 
-TrigStateConverter::TrigStateConverter(double theta_des)
+PendulumTrigStateConverter::PendulumTrigStateConverter(double theta_des)
     : LeafSystem<double>(),
       sin_theta_des(std::sin(theta_des)),
       cos_theta_des(std::cos(theta_des)) {
   this->DeclareVectorInputPort("theta_thetadot", 2);
-  this->DeclareVectorOutputPort("x", 3, &TrigStateConverter::Convert);
+  this->DeclareVectorOutputPort("x", 3, &PendulumTrigStateConverter::Convert);
 }
 
-void TrigStateConverter::Convert(const Context<double>& context,
-                                 BasicVector<double>* x) const {
+void PendulumTrigStateConverter::Convert(const Context<double>& context,
+                                         BasicVector<double>* x) const {
   const Eigen::Vector2d theta_thetadot = this->get_input_port().Eval(context);
   const double theta = theta_thetadot(0);
   x->get_mutable_value() =

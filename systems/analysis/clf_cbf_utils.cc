@@ -388,17 +388,16 @@ symbolic::Variables FindNoLinearTermVariables(
   return no_linear_term_variables;
 }
 
-std::unique_ptr<solvers::MathematicalProgram> FindCandidateLyapunov(
+FindCandidateLyapunovReturn FindCandidateLyapunov(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x, int V_degree,
     double positivity_eps, int d,
     const VectorX<symbolic::Polynomial>& state_constraints,
     const std::vector<int>& eq_lagrangian_degrees,
     const Eigen::Ref<const Eigen::MatrixXd>& x_val,
-    const Eigen::Ref<const Eigen::MatrixXd>& xdot_val, symbolic::Polynomial* V,
-    VectorX<symbolic::Polynomial>* eq_lagrangian) {
+    const Eigen::Ref<const Eigen::MatrixXd>& xdot_val) {
+  FindCandidateLyapunovReturn ret;
   CheckPolynomialsPassOrigin(state_constraints);
-  auto prog = std::make_unique<solvers::MathematicalProgram>();
-  prog->AddIndeterminates(x);
+  ret.prog->AddIndeterminates(x);
   const symbolic::Variables x_set(x);
   DRAKE_DEMAND(x_val.rows() == x.rows());
   DRAKE_DEMAND(xdot_val.rows() == x.rows());
@@ -406,32 +405,32 @@ std::unique_ptr<solvers::MathematicalProgram> FindCandidateLyapunov(
   VectorX<symbolic::Monomial> V_monomials;
   const symbolic::Variables no_linear_term_variables =
       FindNoLinearTermVariables(x_set, state_constraints);
-  *V = NewFreePolynomialPassOrigin(prog.get(), x_set, V_degree, "V",
-                                   symbolic::internal::DegreeType::kAny,
-                                   no_linear_term_variables);
+  ret.V = NewFreePolynomialPassOrigin(ret.prog.get(), x_set, V_degree, "V",
+                                      symbolic::internal::DegreeType::kAny,
+                                      no_linear_term_variables);
   // Add the constraint V - ε*(xᵀx)ᵈ - l(x)*c(x) is sos.
-  symbolic::Polynomial sos_condition = *V;
+  symbolic::Polynomial sos_condition = ret.V;
   DRAKE_DEMAND(positivity_eps >= 0);
   if (positivity_eps > 0) {
     sos_condition -=
         positivity_eps *
         symbolic::Polynomial(pow(x.cast<symbolic::Expression>().dot(x), d));
   }
-  eq_lagrangian->resize(state_constraints.rows());
+  ret.eq_lagrangian.resize(state_constraints.rows());
   for (int i = 0; i < state_constraints.rows(); ++i) {
-    (*eq_lagrangian)(i) =
-        prog->NewFreePolynomial(x_set, eq_lagrangian_degrees[i]);
+    ret.eq_lagrangian(i) =
+        ret.prog->NewFreePolynomial(x_set, eq_lagrangian_degrees[i]);
   }
-  sos_condition -= eq_lagrangian->dot(state_constraints);
-  prog->AddSosConstraint(sos_condition);
+  sos_condition -= ret.eq_lagrangian.dot(state_constraints);
+  ret.prog->AddSosConstraint(sos_condition);
 
   Eigen::MatrixXd A_V_samples;
   VectorX<symbolic::Variable> V_decision_variables;
   Eigen::VectorXd b_V_samples;
-  V->EvaluateWithAffineCoefficients(x, x_val, &A_V_samples,
-                                    &V_decision_variables, &b_V_samples);
+  ret.V.EvaluateWithAffineCoefficients(x, x_val, &A_V_samples,
+                                       &V_decision_variables, &b_V_samples);
   // Now add the constraint V(xⁱ)<=1
-  prog->AddLinearConstraint(
+  ret.prog->AddLinearConstraint(
       A_V_samples, Eigen::VectorXd::Constant(A_V_samples.rows(), -kInf),
       Eigen::VectorXd::Ones(A_V_samples.rows()) - b_V_samples,
       V_decision_variables);
@@ -443,7 +442,7 @@ std::unique_ptr<solvers::MathematicalProgram> FindCandidateLyapunov(
     xdot_vars(i) = symbolic::Variable("xd" + std::to_string(i));
     xdot_poly(i) = symbolic::Polynomial(xdot_vars(i));
   }
-  const RowVectorX<symbolic::Polynomial> dVdx = V->Jacobian(x);
+  const RowVectorX<symbolic::Polynomial> dVdx = ret.V.Jacobian(x);
   const symbolic::Polynomial Vdot = dVdx.dot(xdot_poly);
   Eigen::MatrixXd A_Vdot_samples;
   VectorX<symbolic::Variable> Vdot_decision_variables;
@@ -457,12 +456,12 @@ std::unique_ptr<solvers::MathematicalProgram> FindCandidateLyapunov(
                                       &Vdot_decision_variables,
                                       &b_Vdot_samples);
   // Add the cost min ∑ᵢ Vdot(xⁱ)
-  prog->AddLinearConstraint(
+  ret.prog->AddLinearConstraint(
       A_Vdot_samples, Eigen::VectorXd::Constant(A_Vdot_samples.rows(), -kInf),
       -b_Vdot_samples, Vdot_decision_variables);
-  prog->AddLinearCost(A_Vdot_samples.colwise().sum(), b_Vdot_samples.sum(),
-                      Vdot_decision_variables);
-  return prog;
+  ret.prog->AddLinearCost(A_Vdot_samples.colwise().sum(), b_Vdot_samples.sum(),
+                          Vdot_decision_variables);
+  return ret;
 }
 
 FindCandidateRegionalLyapunovReturn FindCandidateRegionalLyapunov(

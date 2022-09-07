@@ -217,8 +217,8 @@ GTEST_TEST(PendulumROA, TestTrigLQR) {
     int x_count = 0;
     for (int i = 0; i < theta_samples.rows(); ++i) {
       for (int j = 0; j < thetadot_samples.rows(); ++j) {
-        x_val.col(x_count) =
-            ToTrigState(theta_samples(i), thetadot_samples(j), theta_des);
+        x_val.col(x_count) = ToPendulumTrigState(
+            theta_samples(i), thetadot_samples(j), theta_des);
         const double u = -lqr_result.K.row(0).dot(x_val.col(x_count)) +
                          EquilibriumTorque(pendulum, theta_des);
         xdot_val.col(x_count) = TrigDynamics<double>(
@@ -232,13 +232,12 @@ GTEST_TEST(PendulumROA, TestTrigLQR) {
     const int d = 0;
     const VectorX<symbolic::Polynomial> state_constraints_init(0);
     const std::vector<int> eq_lagrangian_degrees{};
-    VectorX<symbolic::Polynomial> eq_lagrangian;
-    auto prog_V_init = FindCandidateLyapunov(
+    auto find_candidate_lyap_ret = FindCandidateLyapunov(
         x, V_init_degree, positivity_eps, d, state_constraints_init,
-        eq_lagrangian_degrees, x_val, xdot_val, &V_init, &eq_lagrangian);
-    const auto result_init = solvers::Solve(*prog_V_init);
+        eq_lagrangian_degrees, x_val, xdot_val);
+    const auto result_init = solvers::Solve(*(find_candidate_lyap_ret.prog));
     ASSERT_TRUE(result_init.is_success());
-    V_init = result_init.GetSolution(V_init);
+    V_init = result_init.GetSolution(find_candidate_lyap_ret.V);
   }
   Vector3<symbolic::Polynomial> f;
   Vector3<symbolic::Polynomial> G;
@@ -268,7 +267,7 @@ GTEST_TEST(PendulumROA, TestTrigLQR) {
     // (using trigonometric nonlinear dynamics) is often positive.
     symbolic::Environment env;
     double theta = 0.1;
-    env.insert(x, ToTrigState(theta, 0.2, theta_des));
+    env.insert(x, ToPendulumTrigState(theta, 0.2, theta_des));
     std::cout << "V_val: " << V.Evaluate(env) << "\n";
     std::cout << "Vdot_val: " << Vdot.Evaluate(env) << "\n";
   }

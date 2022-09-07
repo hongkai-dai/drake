@@ -22,6 +22,7 @@
 #include "drake/systems/analysis/simulator_python_internal.h"
 #include "drake/systems/analysis/test/acrobot.h"
 #include "drake/systems/analysis/test/cart_pole.h"
+#include "drake/systems/analysis/test/pendulum.h"
 #include "drake/systems/analysis/test/quadrotor.h"
 #include "drake/systems/analysis/test/quadrotor2d.h"
 
@@ -1309,6 +1310,25 @@ Parameter ``interruptible``:
         py::arg("positivity_cin_lagrangian_degrees"),
         py::arg("derivative_cin_lagrangian_degrees"));
 
+    py::class_<analysis::FindCandidateLyapunovReturn>(
+        m, "FindCandidateLyapunovReturn")
+        .def(
+            "prog",
+            [](const analysis::FindCandidateLyapunovReturn& self) {
+              return self.prog.get();
+            },
+            pybind11::return_value_policy::reference)
+        .def_readonly("V", &analysis::FindCandidateLyapunovReturn::V)
+        .def_readonly("eq_lagrangian",
+            &analysis::FindCandidateLyapunovReturn::eq_lagrangian,
+            py_rvp::copy);
+
+    m.def("FindCandidateLyapunov", &analysis::FindCandidateLyapunov,
+        py::arg("x"), py::arg("V_degree"), py::arg("positivity_eps"),
+        py::arg("d"), py::arg("state_constraints"),
+        py::arg("eq_lagrangian_degrees"), py::arg("x_val"),
+        py::arg("xdot_val"));
+
     m.def("SearchWithBackoff", analysis::SearchWithBackoff, py::arg("prog"),
         py::arg("solver_id"), py::arg("solver_options"),
         py::arg("backoff_scale"));
@@ -1343,6 +1363,39 @@ Parameter ``interruptible``:
           return std::make_tuple(p, monomial_basis, gram);
         },
         py::arg("prog"), py::arg("indeterminates"), py::arg("degree"));
+  }
+
+  {
+    // Pendulum
+    AddTemplateFunction(m, "ToPendulumTrigState",
+        &analysis::ToPendulumTrigState<double>, GetPyParam<double>(),
+        py::arg("theta"), py::arg("theta_dot"), py::arg("theta_des"));
+
+    m.def(
+        "TrigPolyDynamics",
+        [](const examples::pendulum::PendulumPlant<double>& pendulum,
+            const Vector3<symbolic::Variable>& x, double theta_des) {
+          Vector3<symbolic::Polynomial> f;
+          Vector3<symbolic::Polynomial> G;
+          analysis::TrigPolyDynamics(pendulum, x, theta_des, &f, &G);
+          return std::make_tuple(f, G);
+        },
+        py::arg("pendulum"), py::arg("x"), py::arg("theta_des"));
+
+    m.def(
+        "TrigDynamicsLQR",
+        [](const examples::pendulum::PendulumPlant<double>& pendulum,
+            double theta_des, const Eigen::Ref<const Eigen::Matrix3d>& Q,
+            const Eigen::Ref<const Vector1d>& R) {
+          controllers::LinearQuadraticRegulatorResult lqr_result =
+              analysis::TrigDynamicsLQR(pendulum, theta_des, Q, R);
+          return std::make_tuple(lqr_result.K, lqr_result.S);
+        },
+        py::arg("pendulum"), py::arg("theta_des"), py::arg("Q"), py::arg("R"));
+
+    py::class_<analysis::PendulumTrigStateConverter,
+        systems::LeafSystem<double>>(m, "PendulumTrigStateConverter")
+        .def(py::init<double>(), py::arg("theta_des"));
   }
 
   {

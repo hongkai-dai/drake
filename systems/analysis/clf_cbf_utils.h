@@ -145,6 +145,18 @@ symbolic::Variables FindNoLinearTermVariables(
     const symbolic::Variables& indeterminates,
     const VectorX<symbolic::Polynomial>& p);
 
+struct FindCandidateLyapunovReturn {
+  FindCandidateLyapunovReturn()
+      : prog{std::make_unique<solvers::MathematicalProgram>()} {}
+  FindCandidateLyapunovReturn(FindCandidateLyapunovReturn&&) = default;
+  FindCandidateLyapunovReturn& operator=(FindCandidateLyapunovReturn&&) =
+      default;
+
+  std::unique_ptr<solvers::MathematicalProgram> prog;
+  symbolic::Polynomial V;
+  VectorX<symbolic::Polynomial> eq_lagrangian;
+};
+
 /**
  * Constructs a program to find Lyapunov candidate V that satisfy the following
  * constraints
@@ -160,14 +172,13 @@ symbolic::Variables FindNoLinearTermVariables(
  * @param x_vals The sampled value of x, x_vals.col(i) is xⁱ
  * @param xdot_vals xdot_vals.col(i) is the dynamics derivative at xⁱ
  */
-std::unique_ptr<solvers::MathematicalProgram> FindCandidateLyapunov(
+FindCandidateLyapunovReturn FindCandidateLyapunov(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& x, int V_degree,
     double positivity_eps, int d,
     const VectorX<symbolic::Polynomial>& state_constraints,
     const std::vector<int>& eq_lagrangian_degrees,
     const Eigen::Ref<const Eigen::MatrixXd>& x_val,
-    const Eigen::Ref<const Eigen::MatrixXd>& xdot_val, symbolic::Polynomial* V,
-    VectorX<symbolic::Polynomial>* eq_lagrangian);
+    const Eigen::Ref<const Eigen::MatrixXd>& xdot_val);
 
 struct FindCandidateRegionalLyapunovReturn {
   FindCandidateRegionalLyapunovReturn()

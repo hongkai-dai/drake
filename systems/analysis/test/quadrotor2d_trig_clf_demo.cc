@@ -201,27 +201,27 @@ const double kInf = std::numeric_limits<double>::infinity();
   }
 
   MatrixX<symbolic::Expression> V_init_gram;
-  symbolic::Polynomial V_init;
   const double positivity_eps = 0.1;
   const int d = 1;
   const Vector1<symbolic::Polynomial> state_constraints(
       symbolic::Polynomial(x(2) * x(2) + x(3) * x(3) + 2 * x(3)));
   const std::vector<int> eq_lagrangian_degrees{V_degree - 2};
-  VectorX<symbolic::Polynomial> eq_lagrangian;
 
-  auto prog_V_init = FindCandidateLyapunov(
-      x, V_degree, positivity_eps, d, state_constraints, eq_lagrangian_degrees,
-      x_val, xdot_val, &V_init, &eq_lagrangian);
-  for (const auto& [monomial, coeff] : V_init.monomial_to_coefficient_map()) {
+  auto find_candidate_lyap_ret =
+      FindCandidateLyapunov(x, V_degree, positivity_eps, d, state_constraints,
+                            eq_lagrangian_degrees, x_val, xdot_val);
+  for (const auto& [monomial, coeff] :
+       find_candidate_lyap_ret.V.monomial_to_coefficient_map()) {
     // The polynomial cannot have large coefficients.
-    prog_V_init->AddLinearConstraint(coeff, -50, 50);
+    find_candidate_lyap_ret.prog->AddLinearConstraint(coeff, -50, 50);
   }
   solvers::SolverOptions solver_options;
   solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole, 1);
-  const auto result_init =
-      solvers::Solve(*prog_V_init, std::nullopt, solver_options);
+  const auto result_init = solvers::Solve(*(find_candidate_lyap_ret.prog),
+                                          std::nullopt, solver_options);
   DRAKE_DEMAND(result_init.is_success());
-  const symbolic::Polynomial V_init_sol = result_init.GetSolution(V_init);
+  const symbolic::Polynomial V_init_sol =
+      result_init.GetSolution(find_candidate_lyap_ret.V);
   Save(V_init_sol, "quadrotor2d_trig_clf_init.txt");
   return V_init_sol;
 }

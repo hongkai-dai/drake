@@ -163,7 +163,8 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
   auto clf_controller =
       builder.AddSystem<PendulumClfController>(x, f, G, clf, kappa, u_bound);
 
-  auto state_converter = builder.AddSystem<TrigStateConverter>(theta_des);
+  auto state_converter =
+      builder.AddSystem<PendulumTrigStateConverter>(theta_des);
 
   builder.Connect(pendulum->get_state_output_port(),
                   state_converter->get_input_port());
@@ -233,8 +234,8 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
     const auto lqr_result = TrigDynamicsLQR(pendulum, theta_des, Q, R);
     for (int i = 0; i < theta_samples.rows(); ++i) {
       for (int j = 0; j < thetadot_samples.rows(); ++j) {
-        x_val.col(x_count) =
-            ToTrigState(theta_samples(i), thetadot_samples(j), theta_des);
+        x_val.col(x_count) = ToPendulumTrigState(
+            theta_samples(i), thetadot_samples(j), theta_des);
         const double u = -lqr_result.K.row(0).dot(x_val.col(x_count)) +
                          EquilibriumTorque(pendulum, theta_des);
         xdot_val.col(x_count) = TrigDynamics<double>(
@@ -248,13 +249,12 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
       const int d = 0;
       const VectorX<symbolic::Polynomial> state_constraints_init(0);
       const std::vector<int> eq_lagrangian_degrees{};
-      VectorX<symbolic::Polynomial> eq_lagrangian;
-      auto prog_V_init = FindCandidateLyapunov(
+      auto find_candidate_lyap_ret = FindCandidateLyapunov(
           x, V_init_degree, positivity_eps, d, state_constraints_init,
-          eq_lagrangian_degrees, x_val, xdot_val, &V_init, &eq_lagrangian);
-      const auto result_init = solvers::Solve(*prog_V_init);
+          eq_lagrangian_degrees, x_val, xdot_val);
+      const auto result_init = solvers::Solve(*(find_candidate_lyap_ret.prog));
       DRAKE_DEMAND(result_init.is_success());
-      V_init = result_init.GetSolution(V_init);
+      V_init = result_init.GetSolution(find_candidate_lyap_ret.V);
     }
   }
   const ControlLyapunov dut(x, f, G, std::nullopt /*dynamics denominator */,
@@ -323,7 +323,7 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
     // There are tiny coefficients coming from numerical roundoff error.
     search_options.lyap_tiny_coeff_tol = 1E-7;
     Eigen::MatrixXd x_samples(3, 1);
-    x_samples.col(0) = ToTrigState<double>(0., 0, theta_des);
+    x_samples.col(0) = ToPendulumTrigState<double>(0., 0, theta_des);
 
     const auto search_result = dut.Search(
         V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
@@ -336,7 +336,7 @@ void SimulateTrigClf(const Vector3<symbolic::Variable>& x, double theta_des,
   std::cout << fmt::format(
       "V at (theta, thetadot)=({}, {}) = {}\n", theta0, thetadot0,
       V_sol.EvaluateIndeterminates(
-          x, ToTrigState<double>(theta0, thetadot0, theta_des))(0));
+          x, ToPendulumTrigState<double>(theta0, thetadot0, theta_des))(0));
 
   SimulateTrigClf(x, theta_des, V_sol, u_bound, kappa, theta0, thetadot0, 30);
 }

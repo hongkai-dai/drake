@@ -1,6 +1,7 @@
 import numpy as np
 import pickle
 
+import pdb
 import matplotlib.pyplot as plt
 
 import clf_cbf_utils
@@ -173,7 +174,8 @@ def simulate(x, f, G, clf, u_max, kappa, initial_state, duration, meshcat):
     state_data = state_logger.FindLog(simulator.get_context()).data()
     clf_data = clf_logger.FindLog(simulator.get_context()).data()
     control_data = control_logger.FindLog(simulator.get_context()).data()
-    return state_data, control_data, clf_data
+    time_data = state_logger.FindLog(simulator.get_context()).sample_times()
+    return state_data, control_data, clf_data, time_data
 
 
 def state_eq_constraints(x):
@@ -263,7 +265,7 @@ def search(u_max, kappa):
     search_options.lagrangian_step_solver_options = mp.SolverOptions()
     search_options.lagrangian_step_solver_options.SetOption(
         mp.CommonSolverOption.kPrintToConsole, 1)
-    search_options.lyap_step_backoff_scale = 0.01
+    #search_options.lyap_step_backoff_scale = 0.01
     search_options.lsol_tiny_coeff_tol = 1E-5
     search_options.lyap_tiny_coeff_tol = 1E-7
 
@@ -272,34 +274,39 @@ def search(u_max, kappa):
     for i in range(state_swingup.shape[1]):
         x_swingup[:, i] = analysis.ToPendulumTrigState(
             state_swingup[0, i], state_swingup[1, i], np.pi)
-    x_samples = np.empty((3, 1))
+    x_samples = np.empty((3, 2))
     x_samples[:, 0] = analysis.ToPendulumTrigState(0., 0., np.pi)
-    x_samples = x_swingup
+    x_samples[:, 1] = analysis.ToPendulumTrigState(2 * np.pi, 0., np.pi)
+    #x_samples = x_swingup
 
     search_result = dut.Search(
         V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
         positivity_d, positivity_eq_lagrangian_degrees, p_degrees, kappa,
         x_samples, None, True, search_options)
-    with open("/home/hongkaidai/Dropbox/sos_clf_cbf/pendulum/pendulum_trig_clf1.pickle", "wb") as handle:
+    with open("/home/hongkaidai/Dropbox/sos_clf_cbf/pendulum/pendulum_trig_clf2.pickle", "wb") as handle:
         pickle.dump({
             "V": clf_cbf_utils.serialize_polynomial(search_result.V),
             "kappa": kappa, "u_max": u_max, "rho": search_options.rho}, handle)
 
 
-def draw_clf_contour(fig, ax, V, rho, x):
+def draw_clf_contour(fig, ax, V, rho, x, draw_heatmap):
     X, Y = np.meshgrid(np.arange(-0.6 * np.pi, 1.5 * np.pi,
-                       0.02), np.arange(-10, 10, 0.01))
+                       0.02), np.arange(-10.0, 10, 0.01))
 
     V_val = V.EvaluateIndeterminates(x, np.vstack((np.sin(X).reshape(
         (1, -1)), (np.cos(X) + 1).reshape((1, -1)), Y.reshape((1, -1))))).reshape(X.shape)
-    heatmap_handle = ax.pcolormesh(X, Y, V_val)
-    fig.colorbar(heatmap_handle, ax=ax)
+    if draw_heatmap:
+        heatmap_handle = ax.pcolormesh(X, Y, V_val)
+        fig.colorbar(heatmap_handle, ax=ax)
+    else:
+        heatmap_handle = None
     contour_handle = ax.contour(X, Y, V_val, [rho])
     contour_handle.collections[0].set_edgecolor('r')
+    ax.plot([np.pi], [0], "*", markersize=20, color="r")
     #ax.clabel(contour_handle, [rho])
     ax.set_xlabel(r"$\theta$")
     ax.set_ylabel(r"$\dot{\theta}$")
-    ax.set_xticks([-0.5 * np.pi, 0, 0.5*np.pi, np.pi, 1.5*np.pi],
+    ax.set_xticks([-0.5*np.pi, 0, 0.5*np.pi, np.pi, 1.5*np.pi],
                   labels=[r"$-0.5\pi$", "0", r"$0.5\pi$", r"$\pi$", r"$1.5\pi$"])
     ax.set_title("V(x) for pendulum")
     return contour_handle, heatmap_handle
@@ -311,12 +318,61 @@ def plot_results():
     with open("/home/hongkaidai/Dropbox/sos_clf_cbf/pendulum/pendulum_trig_clf1.pickle", "rb") as input_file:
         load_data = pickle.load(input_file)
         V = clf_cbf_utils.deserialize_polynomial(x_set, load_data["V"])
-    fig = plt.figure()
-    ax = fig.add_subplot(111)
-    contour_handle, heatmap_handle = draw_clf_contour(fig, ax, V, rho=1, x=x)
+        u_max = load_data["u_max"]
+        kappa = load_data["kappa"]
+    fig1 = plt.figure()
+    ax1 = fig1.add_subplot(111)
+    contour_handle1, heatmap_handle1 = draw_clf_contour(fig1, ax1, V, rho=1, x=x, draw_heatmap=True)
     for fig_format in ["png", "pdf"]:
-        fig.savefig("/home/hongkaidai/Dropbox/talks/pictures/sos_clf_cbf/pendulum_V." +
+        fig1.savefig("/home/hongkaidai/Dropbox/talks/pictures/sos_clf_cbf/pendulum_V1." +
                     fig_format, format=fig_format)
+
+    # Simulate
+    pendulum = pydrake.examples.PendulumPlant()
+    theta_des = np.pi
+    f, G = analysis.TrigPolyDynamics(pendulum, x, theta_des)
+    num_trajs = 3
+    state_trajs = [None] * num_trajs
+    control_trajs = [None] * num_trajs
+    time_trajs = [None] * num_trajs
+    V_trajs = [None] * num_trajs
+    traj_color = [
+        [0.2, 0.3, 0.8],
+        [0.8, 0.5, 0.6],
+        [0.2, 0.7, 0.6]]
+    initial_states = [
+        np.array([0, 0]),
+        #np.array([-0.4*np.pi, 1]),
+        np.array([0, 6]),
+        np.array([0,-4])]
+    for i in range(num_trajs):
+        state_trajs[i], control_trajs[i], V_trajs[i], time_trajs[i] = simulate(x, f, G, V, u_max, kappa, initial_states[i], 100, meshcat=None)
+    #pdb.set_trace()
+    fig2 = plt.figure()
+    ax2 = fig2.add_subplot(111)
+    contour_handle2, _ = draw_clf_contour(fig2, ax2, V, rho=1, x=x, draw_heatmap=False)
+    for i in range(num_trajs):
+        ax2.plot(state_trajs[i][0, :], state_trajs[i][1, :], color=traj_color[i])
+    for fig_format in ["pdf", "png"]:
+        fig2.savefig("/home/hongkaidai/Dropbox/talks/pictures/sos_clf_cbf/pendulum_phase."+fig_format, format=fig_format)
+    
+    fig3 = plt.figure()
+    ax3 = fig3.add_subplot(111)
+    for i in range(num_trajs):
+        ax3.plot(time_trajs[i], V_trajs[i][0, :], color=traj_color[i])
+    ax3.set_xlabel("time (s)", fontsize=14)
+    ax3.set_ylabel("V(x(t))", fontsize=14)
+    for fig_format in ["pdf", "png"]:
+        fig3.savefig("/home/hongkaidai/Dropbox/talks/pictures/sos_clf_cbf/pendulum_V_time."+fig_format, format=fig_format)
+
+    fig4 = plt.figure()
+    ax4 = fig4.add_subplot(111)
+    for i in range(num_trajs):
+        ax4.plot(time_trajs[i], control_trajs[i][0, :], color=traj_color[i])
+    ax4.set_xlabel("time (s)", fontsize=14)
+    ax4.set_ylabel("u(t)", fontsize=14)
+    for fig_format in ["pdf", "png"]:
+        fig4.savefig("/home/hongkaidai/Dropbox/talks/pictures/sos_clf_cbf/pendulum_control_time."+fig_format, format=fig_format)
 
 
 def main():

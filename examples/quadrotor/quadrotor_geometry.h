@@ -39,10 +39,11 @@ class QuadrotorGeometry final : public systems::LeafSystem<double> {
   static const QuadrotorGeometry* AddToBuilder(
       systems::DiagramBuilder<double>* builder,
       const systems::OutputPort<double>& quadrotor_state_port,
+      const std::optional<std::string>& name,
       geometry::SceneGraph<double>* scene_graph);
 
  private:
-  explicit QuadrotorGeometry(geometry::SceneGraph<double>*);
+  explicit QuadrotorGeometry(geometry::SceneGraph<double>*, const std::optional<std::string>& name);
   void OutputGeometryPose(const systems::Context<double>&,
                           geometry::FramePoseVector<double>*) const;
 

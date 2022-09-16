@@ -32,6 +32,8 @@ from pydrake.geometry import (
     SceneGraph,
 )
 
+meshcat = StartMeshcat()
+
 
 def construct_builder():
     builder = DiagramBuilder()
@@ -141,7 +143,7 @@ def simulate(x, f, G, clf, u_max, kappa, initial_state, duration, meshcat):
         builder, pendulum.get_output_port(0), scene_graph)
 
     if meshcat is not None:
-        MeshcatVisualizer.AddToBuilder(
+        visualizer = MeshcatVisualizer.AddToBuilder(
             builder, scene_graph, meshcat, MeshcatVisualizerParams(role=Role.kPerception))
 
     state_converter = builder.AddSystem(
@@ -227,11 +229,13 @@ def search(u_max, kappa):
     u_vertices = np.array([[-u_max, u_max]])
     state_constraints = state_eq_constraints(x)
 
-    load_V_init = False
+    load_V_init = True
     V_degree = 2
 
+    x_set = sym.Variables(x)
     if load_V_init:
-        pass
+        with open("/home/hongkaidai/Dropbox/sos_clf_cbf/pendulum/pendulum_trig_clf4.pickle", "rb") as input_file:
+            V_init = clf_cbf_utils.deserialize_polynomial(x_set, pickle.load(input_file)["V"])
     else:
         V_init = find_clf_init(pendulum, V_degree, x, f, G)
         V_init = V_init.RemoveTermsWithSmallCoefficients(1E-6)
@@ -250,7 +254,11 @@ def search(u_max, kappa):
     solver_options.SetOption(mp.CommonSolverOption.kPrintToConsole, 1)
     result_rho = mp.Solve(lagrangian_ret.prog(), None, solver_options)
     assert (result_rho.is_success())
-    V_init = V_init / result_rho.GetSolution(lagrangian_ret.rho)
+    V_init = V_init / result_rho.GetSolution(lagrangian_ret.rho) * 0.12
+    with open("/home/hongkaidai/Dropbox/sos_clf_cbf/pendulum/pendulum_trig_clf_init5.pickle", "wb") as handle:
+        pickle.dump({
+            "V": clf_cbf_utils.serialize_polynomial(V_init),
+            "kappa": kappa, "u_max": u_max, "rho": 1}, handle)
 
     positivity_eps = 0.0001
     positivity_d = int(V_degree / 2)
@@ -274,23 +282,25 @@ def search(u_max, kappa):
     for i in range(state_swingup.shape[1]):
         x_swingup[:, i] = analysis.ToPendulumTrigState(
             state_swingup[0, i], state_swingup[1, i], np.pi)
-    x_samples = np.empty((3, 2))
+    x_samples = np.empty((3, 1))
     x_samples[:, 0] = analysis.ToPendulumTrigState(0., 0., np.pi)
-    x_samples[:, 1] = analysis.ToPendulumTrigState(2 * np.pi, 0., np.pi)
-    #x_samples = x_swingup
+    x_samples = x_swingup[:, :15]
 
     search_result = dut.Search(
         V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
         positivity_d, positivity_eq_lagrangian_degrees, p_degrees, kappa,
         x_samples, None, True, search_options)
-    with open("/home/hongkaidai/Dropbox/sos_clf_cbf/pendulum/pendulum_trig_clf2.pickle", "wb") as handle:
+    with open("/home/hongkaidai/Dropbox/sos_clf_cbf/pendulum/pendulum_trig_clf5.pickle", "wb") as handle:
         pickle.dump({
             "V": clf_cbf_utils.serialize_polynomial(search_result.V),
-            "kappa": kappa, "u_max": u_max, "rho": search_options.rho}, handle)
+            "kappa": kappa, "u_max": u_max, "rho": search_options.rho,
+            "x_samples": x_samples,
+            "V_samples": search_result.V.EvaluateIndeterminates(x, x_samples)},
+            handle)
 
 
 def draw_clf_contour(fig, ax, V, rho, x, draw_heatmap):
-    X, Y = np.meshgrid(np.arange(-0.6 * np.pi, 1.5 * np.pi,
+    X, Y = np.meshgrid(np.arange(-0.5 * np.pi, 1.5 * np.pi,
                        0.02), np.arange(-10.0, 10, 0.01))
 
     V_val = V.EvaluateIndeterminates(x, np.vstack((np.sin(X).reshape(
@@ -315,7 +325,9 @@ def draw_clf_contour(fig, ax, V, rho, x, draw_heatmap):
 def plot_results():
     x = sym.MakeVectorContinuousVariable(3, "x")
     x_set = sym.Variables(x)
-    with open("/home/hongkaidai/Dropbox/sos_clf_cbf/pendulum/pendulum_trig_clf1.pickle", "rb") as input_file:
+    with open("/home/hongkaidai/Dropbox/sos_clf_cbf/pendulum/pendulum_trig_clf_init.pickle", "rb") as input_file:
+        V_init = clf_cbf_utils.deserialize_polynomial(x_set, pickle.load(input_file)["V"])
+    with open("/home/hongkaidai/Dropbox/sos_clf_cbf/pendulum/pendulum_trig_clf5.pickle", "rb") as input_file:
         load_data = pickle.load(input_file)
         V = clf_cbf_utils.deserialize_polynomial(x_set, load_data["V"])
         u_max = load_data["u_max"]
@@ -323,30 +335,41 @@ def plot_results():
     fig1 = plt.figure()
     ax1 = fig1.add_subplot(111)
     contour_handle1, heatmap_handle1 = draw_clf_contour(fig1, ax1, V, rho=1, x=x, draw_heatmap=True)
-    for fig_format in ["png", "pdf"]:
-        fig1.savefig("/home/hongkaidai/Dropbox/talks/pictures/sos_clf_cbf/pendulum_V1." +
-                    fig_format, format=fig_format)
+    contour_handle_init, _ = draw_clf_contour(fig1, ax1, V_init, rho=1, x=x, draw_heatmap=False)
+    contour_handle_init.collections[0].set_edgecolor('g')
 
     # Simulate
     pendulum = pydrake.examples.PendulumPlant()
     theta_des = np.pi
     f, G = analysis.TrigPolyDynamics(pendulum, x, theta_des)
-    num_trajs = 3
+    num_trajs = 1
     state_trajs = [None] * num_trajs
     control_trajs = [None] * num_trajs
     time_trajs = [None] * num_trajs
     V_trajs = [None] * num_trajs
     traj_color = [
         [0.2, 0.3, 0.8],
-        [0.8, 0.5, 0.6],
-        [0.2, 0.7, 0.6]]
+        #[0.8, 0.5, 0.6],
+        #[0.2, 0.7, 0.6]
+        ]
     initial_states = [
         np.array([0, 0]),
         #np.array([-0.4*np.pi, 1]),
-        np.array([0, 6]),
-        np.array([0,-4])]
+        #np.array([0, 6]),
+        #np.array([0,-4])
+        ]
     for i in range(num_trajs):
-        state_trajs[i], control_trajs[i], V_trajs[i], time_trajs[i] = simulate(x, f, G, V, u_max, kappa, initial_states[i], 100, meshcat=None)
+        state_trajs[i], control_trajs[i], V_trajs[i], time_trajs[i] = simulate(x, f, G, V, u_max, kappa, initial_states[i], 100, meshcat=meshcat)
+    ax1.plot(state_trajs[0][0, :], state_trajs[0][1, :], '--', color='c')
+    ax1.xaxis.label.set_fontsize(20)
+    ax1.yaxis.label.set_fontsize(20)
+    ax1.xaxis.set_tick_params(labelsize=14)
+    ax1.yaxis.set_tick_params(labelsize=14)
+    ax1.title.set_fontsize(20)
+    fig1.set_tight_layout(True)
+    for fig_format in ["pdf", "png"]:
+        fig1.savefig("/home/hongkaidai/Dropbox/talks/pictures/sos_clf_cbf/pendulum_V5." +
+                    fig_format, format=fig_format)
     #pdb.set_trace()
     fig2 = plt.figure()
     ax2 = fig2.add_subplot(111)
@@ -354,7 +377,7 @@ def plot_results():
     for i in range(num_trajs):
         ax2.plot(state_trajs[i][0, :], state_trajs[i][1, :], color=traj_color[i])
     for fig_format in ["pdf", "png"]:
-        fig2.savefig("/home/hongkaidai/Dropbox/talks/pictures/sos_clf_cbf/pendulum_phase."+fig_format, format=fig_format)
+        fig2.savefig("/home/hongkaidai/Dropbox/talks/pictures/sos_clf_cbf/pendulum_phase5."+fig_format, format=fig_format)
     
     fig3 = plt.figure()
     ax3 = fig3.add_subplot(111)
@@ -363,23 +386,31 @@ def plot_results():
     ax3.set_xlabel("time (s)", fontsize=14)
     ax3.set_ylabel("V(x(t))", fontsize=14)
     for fig_format in ["pdf", "png"]:
-        fig3.savefig("/home/hongkaidai/Dropbox/talks/pictures/sos_clf_cbf/pendulum_V_time."+fig_format, format=fig_format)
+        fig3.savefig("/home/hongkaidai/Dropbox/talks/pictures/sos_clf_cbf/pendulum_V_time5."+fig_format, format=fig_format)
 
     fig4 = plt.figure()
     ax4 = fig4.add_subplot(111)
-    for i in range(num_trajs):
+    for i in range(1):
         ax4.plot(time_trajs[i], control_trajs[i][0, :], color=traj_color[i])
+    ax4.set_ylim(0, u_max)
     ax4.set_xlabel("time (s)", fontsize=14)
     ax4.set_ylabel("u(t)", fontsize=14)
+    ax4.set_title("pendulum control")
+    ax4.xaxis.label.set_fontsize(20)
+    ax4.yaxis.label.set_fontsize(20)
+    ax4.xaxis.set_tick_params(labelsize=20)
+    ax4.yaxis.set_tick_params(labelsize=20)
+    ax4.title.set_fontsize(20)
+    fig4.set_tight_layout(True)
     for fig_format in ["pdf", "png"]:
-        fig4.savefig("/home/hongkaidai/Dropbox/talks/pictures/sos_clf_cbf/pendulum_control_time."+fig_format, format=fig_format)
+        fig4.savefig("/home/hongkaidai/Dropbox/talks/pictures/sos_clf_cbf/pendulum_control_time5."+fig_format, format=fig_format)
 
 
 def main():
-    u_max = 5
+    u_max = 4.5
     kappa = 0.1
-    #search(u_max, kappa)
-    plot_results()
+    search(u_max, kappa)
+    #plot_results()
 
 
 if __name__ == "__main__":

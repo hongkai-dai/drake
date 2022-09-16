@@ -103,9 +103,9 @@ def simulate(x, f, G, clf, thrust_max, kappa, initial_state, duration, meshcat, 
     scene_graph = builder.AddSystem(pydrake.geometry.SceneGraph())
 
     geom = QuadrotorGeometry.AddToBuilder(
-        builder, quadrotor.get_output_port(0), scene_graph)
+        builder, quadrotor.get_output_port(0), None, scene_graph)
 
-    MeshcatVisualizer.AddToBuilder(
+    visualizer = MeshcatVisualizer.AddToBuilder(
         builder, scene_graph, meshcat,
         MeshcatVisualizerParams(role=Role.kPerception))
 
@@ -150,7 +150,7 @@ def simulate(x, f, G, clf, thrust_max, kappa, initial_state, duration, meshcat, 
 
     simulator = analysis.Simulator(diagram)
 
-    analysis.ResetIntegratorFromFlags(simulator, "radau3", 0.001)
+    analysis.ResetIntegratorFromFlags(simulator, "radau3", 0.01)
 
     simulator.get_mutable_context().SetContinuousState(initial_state)
     simulator.AdvanceTo(duration)
@@ -161,13 +161,14 @@ def simulate(x, f, G, clf, thrust_max, kappa, initial_state, duration, meshcat, 
     else:
         clf_data = None
     control_data = control_logger.FindLog(simulator.get_context()).data()
-    return state_data, control_data, clf_data
+    time_data = state_logger.FindLog(simulator.get_context()).sample_times()
+    return state_data, control_data, clf_data, time_data
 
 
 def simulate_demo(meshcat):
     x = sym.MakeVectorContinuousVariable(13, "x")
     x_set = sym.Variables(x)
-    with open("quadrotor3d_trig_clf_sol.pickle", "rb") as input_file:
+    with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_clf/quadrotor3d_trig_clf_sol3.pickle", "rb") as input_file:
         load_data = pickle.load(input_file)
         clf = clf_cbf_utils.deserialize_polynomial(
             x_set, load_data["V"])
@@ -176,9 +177,13 @@ def simulate_demo(meshcat):
     quadrotor = analysis.QuadrotorTrigPlant()
     f, G = analysis.TrigPolyDynamics(quadrotor, x)
     initial_state = np.zeros((12,))
-    initial_state[0] = 1
-    state_data, control_data, clf_data = simulate(
-        x, f, G, clf, thrust_max, kappa, initial_state, 10, meshcat, controller="clf")
+    initial_state[1] = 10 
+    initial_state[3] = 0.45 * np.pi
+    state_data, control_data, clf_data, time_data = simulate(
+        x, f, G, clf, thrust_max, kappa, initial_state, 30, meshcat, controller="clf")
+    with open("quadrotor3d_trig_clf3_sim2.pickle", "wb") as handle:
+        pickle.dump({"state_data": state_data, "control_data": control_data, "clf_data": clf_data, "time_data": time_data}, handle)
+    return
 
 
 def SynthesizeTrigLqr():
@@ -350,10 +355,11 @@ def SearchWTrigDynamics():
 
 def main():
     pydrake.common.configure_logging()
-    SearchWTrigDynamics()
-    #meshcat = StartMeshcat()
-    #simulate_demo(meshcat)
+    #SearchWTrigDynamics()
+    meshcat = StartMeshcat()
+    simulate_demo(meshcat)
 
 
 if __name__ == "__main__":
-    main()
+    with MosekSolver.AcquireLicense():
+        main()

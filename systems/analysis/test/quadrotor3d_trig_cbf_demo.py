@@ -43,7 +43,7 @@ class QuadrotorCbfController(LeafSystem):
         self.deriv_eps = deriv_eps
         self.thrust_max = thrust_max
         self.beta_minus = beta_minus
-        self.beta_plus = beta_plus
+        self.beta_plus = np.inf if beta_plus is None else beta_plus
         dhdx = self.cbf.Jacobian(self.x)
         self.dhdx_times_f = dhdx.dot(self.f)
         self.dhdx_times_G = dhdx @ self.G
@@ -92,8 +92,106 @@ class QuadrotorCbfController(LeafSystem):
         env = {self.x[i]: x_val[i] for i in range(13)}
         output.SetFromVector(np.array([self.cbf.Evaluate(env)]))
 
+class QuadrotorClfCbfController(LeafSystem):
+    def __init__(self, x, f, G, clf, cbf, kappa_V, kappa_h, thrust_max, beta_minus, beta_plus):
+        LeafSystem.__init__(self)
+        assert (x.shape == (13,))
+        self.x = x
+        assert (f.shape == (13,))
+        self.f = f
+        assert (G.shape == (13, 4))
+        self.G = G
+        self.clf = clf
+        self.cbf = cbf
+        self.kappa_V = kappa_V
+        self.kappa_h = kappa_h
+        self.thrust_max = thrust_max
+        self.beta_minus = beta_minus
+        self.beta_plus = np.inf if beta_plus is None else beta_plus
+        dVdx = self.clf.Jacobian(self.x)
+        self.dVdx_times_f = dVdx.dot(self.f)
+        self.dVdx_times_G = dVdx @ self.G
+        dhdx = self.cbf.Jacobian(self.x)
+        self.dhdx_times_f = dhdx.dot(self.f)
+        self.dhdx_times_G = dhdx @ self.G
 
-def simulate(x, f, G, cbf, thrust_max, deriv_eps, beta_minus, beta_plus, initial_state, duration):
+        self.x_input_index = self.DeclareVectorInputPort("x", 13).get_index()
+        self.control_output_index = self.DeclareVectorOutputPort(
+            "control", 4, self.CalcControl).get_index()
+        self.cbf_output_index = self.DeclareVectorOutputPort(
+            "cbf", 1, self.CalcCbf).get_index()
+        self.clf_output_index = self.DeclareVectorOutputPort(
+            "clf", 1, self.CalcClf).get_index()
+
+    def x_input_port(self):
+        return self.get_input_port(self.x_input_index)
+
+    def control_output_port(self):
+        return self.get_output_port(self.control_output_index)
+
+    def cbf_output_port(self):
+        return self.get_output_port(self.cbf_output_index)
+
+    def clf_output_port(self):
+        return self.get_output_port(self.clf_output_index)
+
+    def construct_qp(self, x_val, include_cbf=True):
+        env = {self.x[i]: x_val[i] for i in range(13)}
+
+        prog = mp.MathematicalProgram()
+        nu = 4
+        u = prog.NewContinuousVariables(nu, "u")
+        prog.AddBoundingBoxConstraint(0, self.thrust_max, u)
+        prog.AddQuadraticCost(np.identity(nu), np.zeros((nu,)), 0, u)
+        dVdx_times_f_val = self.dVdx_times_f.Evaluate(env)
+        dVdx_times_G_val = np.array([
+            self.dVdx_times_G[i].Evaluate(env) for i in range(nu)])
+        V_val = self.clf.Evaluate(env)
+        # Add Vdot(x, u) <= -k * V + delta
+        delta = prog.NewContinuousVariables(1)
+        Vdot_A = np.empty((1, 5))
+        Vdot_A[0, :4] = dVdx_times_G_val
+        Vdot_A[0, 4] = -1
+        Vdot_A_vars = np.empty((5,), dtype=object)
+        Vdot_A_vars[:4] = u
+        Vdot_A_vars[4] = delta[0]
+        prog.AddLinearConstraint(
+            Vdot_A, np.array([-np.inf]), np.array([-dVdx_times_f_val  - self.kappa_V * V_val]), Vdot_A_vars)
+        Vdot_cost_weight = 1000000
+        prog.AddLinearCost(np.array([Vdot_cost_weight]), 0, delta)
+        dhdx_times_f_val = self.dhdx_times_f.Evaluate(env)
+        dhdx_times_G_val = np.array([
+            self.dhdx_times_G[i].Evaluate(env) for i in range(nu)])
+        h_val = self.cbf.Evaluate(env)
+        # dhdx * G * u + dhdx * f >= -eps * h
+        if include_cbf and self.beta_minus <= h_val <= self.beta_plus:
+            prog.AddLinearConstraint(
+                dhdx_times_G_val.reshape((1, -1)),
+                np.array([-self.kappa_h * h_val - dhdx_times_f_val]),
+                np.array([np.inf]), u)
+        return prog, u, delta
+        
+
+    def CalcControl(self, context, output):
+        x_val = self.x_input_port().Eval(context)
+        prog, u, delta = self.construct_qp(x_val)
+        result = mp.Solve(prog)
+        if not result.is_success():
+            raise Exception("CBF controller cannot find u")
+        output.SetFromVector(result.GetSolution(u))
+
+    def CalcCbf(self, context, output):
+        x_val = self.x_input_port().Eval(context)
+        env = {self.x[i]: x_val[i] for i in range(13)}
+        output.SetFromVector(np.array([self.cbf.Evaluate(env)]))
+
+    def CalcClf(self, context, output):
+        x_val = self.x_input_port().Eval(context)
+        env = {self.x[i]: x_val[i] for i in range(13)}
+        output.SetFromVector(np.array([self.clf.Evaluate(env)]))
+
+
+def simulate(x, f, G, clf, cbf, thrust_max, kappa_V, kappa_h, beta_minus, beta_plus, initial_state, duration):
     builder = DiagramBuilder()
 
     quadrotor = builder.AddSystem(QuadrotorPlant())
@@ -101,7 +199,7 @@ def simulate(x, f, G, cbf, thrust_max, deriv_eps, beta_minus, beta_plus, initial
     scene_graph = builder.AddSystem(pydrake.geometry.SceneGraph())
 
     geom = QuadrotorGeometry.AddToBuilder(
-        builder, quadrotor.get_output_port(0), scene_graph)
+        builder, quadrotor.get_output_port(0), "quadrotor", scene_graph)
 
     MeshcatVisualizer.AddToBuilder(
         builder, scene_graph, meshcat,
@@ -112,32 +210,48 @@ def simulate(x, f, G, cbf, thrust_max, deriv_eps, beta_minus, beta_plus, initial
     builder.Connect(quadrotor.get_output_port(
         0), state_converter.get_input_port())
 
-    cbf_controller = builder.AddSystem(QuadrotorCbfController(
-        x, f, G, cbf, deriv_eps, thrust_max, beta_minus, beta_plus))
+    if clf is not None:
+        controller = builder.AddSystem(QuadrotorClfCbfController(
+            x, f, G, clf, cbf, kappa_V, kappa_h, thrust_max, beta_minus, beta_plus))
+    else:
+        controller = builder.AddSystem(QuadrotorCbfController(
+            x, f, G, cbf, kappa_h, thrust_max, beta_minus, beta_plus))
 
-    builder.Connect(cbf_controller.control_output_port(),
+    builder.Connect(controller.control_output_port(),
                     quadrotor.get_input_port())
     builder.Connect(state_converter.get_output_port(),
-                    cbf_controller.x_input_port())
+                    controller.x_input_port())
 
     state_logger = LogVectorOutput(quadrotor.get_output_port(), builder)
-    cbf_logger = LogVectorOutput(cbf_controller.cbf_output_port(), builder)
+    if cbf is not None:
+        cbf_logger = LogVectorOutput(controller.cbf_output_port(), builder)
+    if clf is not None:
+        clf_logger = LogVectorOutput(controller.clf_output_port(), builder)
     control_logger = LogVectorOutput(
-        cbf_controller.control_output_port(), builder)
+        controller.control_output_port(), builder)
 
     diagram = builder.Build()
 
     simulator = analysis.Simulator(diagram)
 
-    analysis.ResetIntegratorFromFlags(simulator, "implicit_euler", 0.001)
+    analysis.ResetIntegratorFromFlags(simulator, "implicit_euler", 0.01)
 
     simulator.get_mutable_context().SetContinuousState(initial_state)
     simulator.AdvanceTo(duration)
 
     state_data = state_logger.FindLog(simulator.get_context()).data()
-    cbf_data = cbf_logger.FindLog(simulator.get_context()).data()
+    if cbf is not None:
+        cbf_data = cbf_logger.FindLog(simulator.get_context()).data()
+    else:
+        cbf_data = None
+    if clf is not None:
+        clf_data = clf_logger.FindLog(simulator.get_context()).data()
+    else:
+        clf_data = None
     control_data = control_logger.FindLog(simulator.get_context()).data()
-    pass
+    time_data = state_logger.FindLog(simulator.get_context()).sample_times()
+    print(f"final state: {state_data[:, -1]}")
+    return state_data, control_data, clf_data, cbf_data, time_data
 
 
 def get_u_vertices(thrust_max):
@@ -477,14 +591,39 @@ def main():
     x_safe[:, 1] = np.zeros(13)
     x_safe[4, 1] = 1
     #h_sol = search(x, f, G, thrust_max, deriv_eps, unsafe_regions, x_safe)
-    h_sol = search_sphere_obstacle_cbf(
-        x, f, G, -0.01, 0.01, thrust_max, deriv_eps, x_safe)
+    #h_sol = search_sphere_obstacle_cbf(
+    #    x, f, G, -0.01, 0.01, thrust_max, deriv_eps, x_safe)
 
-    # with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_cbf/quadrotor3d_trig_cbf15.pickle", "rb") as input_file:
-    #    input_data = pickle.load(input_file)
-    #x_set = sym.Variables(x)
-    #cbf = clf_cbf_utils.deserialize_polynomial(x_set, input_data["h"])
-    #simulate(x, f, G, cbf, thrust_max, input_data["deriv_eps"], input_data["beta_minus"], input_data["beta_plus"], np.zeros((12,)), 1)
+    x_set = sym.Variables(x)
+    with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_cbf/quadrotor3d_trig_cbf23.pickle", "rb") as input_file:
+        cbf_input_data = pickle.load(input_file)
+        cbf = clf_cbf_utils.deserialize_polynomial(x_set, cbf_input_data["h"])
+        kappa_h = cbf_input_data["deriv_eps"]
+        beta_minus = cbf_input_data["beta_minus"]
+        beta_plus = cbf_input_data["beta_plus"]
+    with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_clf/quadrotor3d_trig_clf_sol3.pickle", "rb") as input_file:
+        clf_input_data = pickle.load(input_file)
+        clf = clf_cbf_utils.deserialize_polynomial(x_set, clf_input_data["V"])
+        kappa_V = clf_input_data["kappa"]
+    x0 = np.zeros((12,))
+    x0[0] = 1 
+    x0[1] = 0.
+    x0[2] = 0.5
+    x0[3] = 0.1*np.pi
+    x0[6] = 0.
+    if clf is not None:
+        print(f"CLF_init {clf.EvaluateIndeterminates(x, analysis.ToQuadrotorTrigState(x0).reshape((-1, 1)))}")
+    if cbf is not None:
+        print(f"CBF_init {cbf.EvaluateIndeterminates(x, analysis.ToQuadrotorTrigState(x0).reshape((-1, 1)))}")
+    state_data, control_data, clf_data, cbf_data, time_data = simulate(x, f, G, clf, cbf, thrust_max, kappa_V, kappa_h, beta_minus, beta_plus, x0, 100)
+    with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_cbf/quadrotor3d_sim_clf3_cbf23_1.pickle", "wb") as handle:
+        pickle.dump({
+            "state_data": state_data,
+            "control_data": control_data,
+            "clf_data": clf_data,
+            "cbf_data": cbf_data,
+            "time_data": time_data}, handle)
+    return
 
 
 if __name__ == "__main__":

@@ -810,7 +810,9 @@ Parameter ``interruptible``:
         .def_readwrite(
             "a_zero_tol", &Class::SearchWithSlackAOptions::a_zero_tol)
         .def_readwrite("lagrangian_step_backoff_scale",
-            &Class::SearchWithSlackAOptions::lagrangian_step_backoff_scale);
+            &Class::SearchWithSlackAOptions::lagrangian_step_backoff_scale)
+        .def_readwrite("in_roa_samples_rho",
+            &Class::SearchWithSlackAOptions::in_roa_samples_rho);
 
     control_lyapunov.def("SearchWithSlackA", &Class::SearchWithSlackA,
         py::arg("V_init"), py::arg("lambda0_degree"), py::arg("l_degrees"),

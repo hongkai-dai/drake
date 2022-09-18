@@ -769,11 +769,13 @@ ControlLyapunov::SearchWithSlackAResult ControlLyapunov::SearchWithSlackA(
         lyapunov_ret.V.EvaluateWithAffineCoefficients(
             x_, in_roa_samples.value(), &A_in_roa_samples,
             &variables_in_roa_samples, &b_in_roa_samples);
+        const double in_roa_samples_rho =
+            search_options.in_roa_samples_rho.value_or(search_options.rho);
         lyapunov_ret.prog->AddLinearConstraint(
             A_in_roa_samples,
             Eigen::VectorXd::Constant(b_in_roa_samples.rows(), -kInf),
             Eigen::VectorXd::Constant(b_in_roa_samples.rows(),
-                                      search_options.rho) -
+                                      in_roa_samples_rho) -
                 b_in_roa_samples,
             variables_in_roa_samples);
       }

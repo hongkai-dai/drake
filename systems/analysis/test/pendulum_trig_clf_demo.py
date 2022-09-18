@@ -32,7 +32,46 @@ from pydrake.geometry import (
     SceneGraph,
 )
 
-meshcat = StartMeshcat()
+
+def search_clf_init_w_samples(x, f, G, V_degree, u_max, kappa, x_samples):
+    prog = mp.MathematicalProgram()
+    x_set = sym.Variables(x)
+    monomial_basis = sym.MonomialBasis(x_set, int(V_degree / 2))
+    monomial_basis_no_1 = np.array([monomial_basis[i] for i in range(monomial_basis.shape[0]) if monomial_basis[i].total_degree() > 0])
+    V_gram = prog.NewSymmetricContinuousVariables(monomial_basis_no_1.shape[0])
+    V = prog.NewSosPolynomial(V_gram, monomial_basis_no_1, mp.MathematicalProgram.NonnegativePolynomial.kSdsos)
+    prog.AddScaledDiagonallyDominantMatrixConstraint(V_gram - 0.0001* np.eye(monomial_basis_no_1.shape[0]))
+    # Now for each sample state xs, add the constraint
+    # dVdx*f - |dVdx*G|*u_max <= -κV
+    V_expr = V.ToExpression()
+    f_expr = np.array([f[i].ToExpression() for i in range(3)])
+    G_expr = np.array([G[i].ToExpression() for i in range(3)])
+    dVdx = V_expr.Jacobian(x)
+    dVdx_times_f = dVdx.dot(f_expr)
+    dVdx_times_G = dVdx.dot(G_expr)
+    assert (x_samples.shape[0] == 3)
+    num_samples = x_samples.shape[1]
+    b = prog.NewBinaryVariables(num_samples)
+    dVdx_times_G_abs = prog.NewContinuousVariables(num_samples)
+    M = 1000
+    for i in range(num_samples):
+        env = {x[j]: x_samples[j, i] for j in range(3)} 
+        dVdx_times_G_sample = dVdx_times_G.EvaluatePartial(env)
+        dVdx_times_f_sample = dVdx_times_f.EvaluatePartial(env)
+        V_sample = V_expr.EvaluatePartial(env)
+        prog.AddLinearConstraint(dVdx_times_G_abs[i]>= dVdx_times_G_sample)
+        prog.AddLinearConstraint(dVdx_times_G_abs[i] >= -dVdx_times_G_sample)
+        prog.AddLinearConstraint(dVdx_times_G_abs[i] <= dVdx_times_G_sample + 2*M *b[i])
+        prog.AddLinearConstraint(dVdx_times_G_abs[i] <= -dVdx_times_G_sample + 2*M *(1-b[i]))
+        prog.AddLinearConstraint(dVdx_times_f_sample - dVdx_times_G_abs[i] * u_max <= -kappa*V_sample)
+
+    solver = GurobiSolver()
+    solver_options = mp.SolverOptions()
+    solver_options.SetOption(mp.CommonSolverOption.kPrintToConsole, 1)
+    result = solver.Solve(prog, None, solver_options)
+    assert (result.is_success())
+    V_sol = result.GetSolution(V)
+    return V_sol
 
 
 def construct_builder():
@@ -229,74 +268,116 @@ def search(u_max, kappa):
     u_vertices = np.array([[-u_max, u_max]])
     state_constraints = state_eq_constraints(x)
 
-    load_V_init = True
+    load_V_init = False
     V_degree = 2
-
-    x_set = sym.Variables(x)
-    if load_V_init:
-        with open("/home/hongkaidai/Dropbox/sos_clf_cbf/pendulum/pendulum_trig_clf4.pickle", "rb") as input_file:
-            V_init = clf_cbf_utils.deserialize_polynomial(x_set, pickle.load(input_file)["V"])
-    else:
-        V_init = find_clf_init(pendulum, V_degree, x, f, G)
-        V_init = V_init.RemoveTermsWithSmallCoefficients(1E-6)
-
-    dut = analysis.ControlLyapunov(
-        x, f, G, None, u_vertices, state_constraints)
-    lambda0_degree = 2
-    l_degrees = [4, 4]
-    p_degrees = [8]
-    V_degree = 4
-
-    # Maximize rho such that V(x)<=rho defines a valid ROA.
-    lagrangian_ret = dut.ConstructLagrangianProgram(
-        V_init, sym.Polynomial(), int(V_degree / 2) + 1, l_degrees, p_degrees, kappa)
-    solver_options = mp.SolverOptions()
-    solver_options.SetOption(mp.CommonSolverOption.kPrintToConsole, 1)
-    result_rho = mp.Solve(lagrangian_ret.prog(), None, solver_options)
-    assert (result_rho.is_success())
-    V_init = V_init / result_rho.GetSolution(lagrangian_ret.rho) * 0.12
-    with open("/home/hongkaidai/Dropbox/sos_clf_cbf/pendulum/pendulum_trig_clf_init5.pickle", "wb") as handle:
-        pickle.dump({
-            "V": clf_cbf_utils.serialize_polynomial(V_init),
-            "kappa": kappa, "u_max": u_max, "rho": 1}, handle)
-
-    positivity_eps = 0.0001
-    positivity_d = int(V_degree / 2)
-    positivity_eq_lagrangian_degrees = [V_degree - 2]
-
-    search_options = analysis.ControlLyapunov.SearchOptions()
-    search_options.d_converge_tol = 0.
-    search_options.bilinear_iterations = 50
-    search_options.lyap_step_solver_options = mp.SolverOptions()
-    search_options.lyap_step_solver_options.SetOption(
-        mp.CommonSolverOption.kPrintToConsole, 1)
-    search_options.lagrangian_step_solver_options = mp.SolverOptions()
-    search_options.lagrangian_step_solver_options.SetOption(
-        mp.CommonSolverOption.kPrintToConsole, 1)
-    #search_options.lyap_step_backoff_scale = 0.01
-    search_options.lsol_tiny_coeff_tol = 1E-5
-    search_options.lyap_tiny_coeff_tol = 1E-7
 
     state_swingup, control_swingup = SwingUpTrajectoryOptimization(u_max)
     x_swingup = np.empty((3, state_swingup.shape[1]))
     for i in range(state_swingup.shape[1]):
         x_swingup[:, i] = analysis.ToPendulumTrigState(
             state_swingup[0, i], state_swingup[1, i], np.pi)
-    x_samples = np.empty((3, 1))
-    x_samples[:, 0] = analysis.ToPendulumTrigState(0., 0., np.pi)
-    x_samples = x_swingup[:, :15]
 
-    search_result = dut.Search(
-        V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
-        positivity_d, positivity_eq_lagrangian_degrees, p_degrees, kappa,
-        x_samples, None, True, search_options)
-    with open("/home/hongkaidai/Dropbox/sos_clf_cbf/pendulum/pendulum_trig_clf5.pickle", "wb") as handle:
-        pickle.dump({
-            "V": clf_cbf_utils.serialize_polynomial(search_result.V),
-            "kappa": kappa, "u_max": u_max, "rho": search_options.rho,
-            "x_samples": x_samples,
-            "V_samples": search_result.V.EvaluateIndeterminates(x, x_samples)},
-            handle)
+    x_set = sym.Variables(x)
+    if load_V_init:
+        with open("/home/hongkaidai/Dropbox/sos_clf_cbf/pendulum/pendulum_trig_clf15.pickle", "rb") as input_file:
+            V_init = clf_cbf_utils.deserialize_polynomial(x_set, pickle.load(input_file)["V"])
+    else:
+        V_init = find_clf_init(pendulum, V_degree, x, f, G)
+        V_init = V_init.RemoveTermsWithSmallCoefficients(1E-6)
+        # Maximize rho such that V(x)<=rho defines a valid ROA.
+    dut = analysis.ControlLyapunov(
+        x, f, G, None, u_vertices, state_constraints)
+    lambda0_degree = 2
+    l_degrees = [4, 4]
+    p_degrees = [8]
+    V_degree = 4
+    if not load_V_init:
+        lagrangian_ret = dut.ConstructLagrangianProgram(
+            V_init, sym.Polynomial(), int(V_degree / 2) + 1, l_degrees, p_degrees, kappa)
+        solver_options = mp.SolverOptions()
+        solver_options.SetOption(mp.CommonSolverOption.kPrintToConsole, 1)
+        result_rho = mp.Solve(lagrangian_ret.prog(), None, solver_options)
+        assert (result_rho.is_success())
+        V_init = V_init / result_rho.GetSolution(lagrangian_ret.rho) * 1.5 
+        with open("/home/hongkaidai/Dropbox/sos_clf_cbf/pendulum/pendulum_trig_clf_init15.pickle", "wb") as handle:
+            pickle.dump({
+                "V": clf_cbf_utils.serialize_polynomial(V_init),
+                "kappa": kappa, "u_max": u_max, "rho": 1}, handle)
+
+    positivity_eps = 0.000
+    positivity_d = int(V_degree / 2)
+    positivity_eq_lagrangian_degrees = [V_degree - 2]
+
+    search_type = "sample"
+    if search_type == "slack":
+        search_options = analysis.ControlLyapunov.SearchWithSlackAOptions()
+    else:
+        search_options = analysis.ControlLyapunov.SearchOptions()
+    search_options.d_converge_tol = 0.
+    search_options.bilinear_iterations = 200
+    search_options.lyap_step_solver_options = mp.SolverOptions()
+    search_options.lyap_step_solver_options.SetOption(
+        mp.CommonSolverOption.kPrintToConsole, 1)
+    search_options.lagrangian_step_solver_options = mp.SolverOptions()
+    search_options.lagrangian_step_solver_options.SetOption(
+        mp.CommonSolverOption.kPrintToConsole, 1)
+    search_options.lyap_step_backoff_scale = 0.01
+    search_options.lsol_tiny_coeff_tol = 1E-5
+    search_options.lyap_tiny_coeff_tol = 1E-7
+
+    if search_type == "slack":
+        search_options.a_zero_tol=1E-9
+        search_options.in_roa_samples_rho=search_options.rho * 0.999
+        a_info = analysis.SlackPolynomialInfo(
+            p_degrees[0] + 2, analysis.SlackPolynomialType.kSos)
+        in_roa_samples = analysis.ToPendulumTrigState(0., 0., np.pi)
+        search_result = dut.SearchWithSlackA(
+            V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
+            positivity_d, positivity_eq_lagrangian_degrees, p_degrees, kappa,
+            in_roa_samples, a_info, search_options)
+        search_lagrangian_result = dut.SearchLagrangian(
+            search_result.V, search_options.rho, lambda0_degree, l_degrees,
+            p_degrees, kappa, search_options, None, None, None)
+        print(f"Search Lagrangian is successful {search_lagrangian_result.success}")
+        with open("/home/hongkaidai/Dropbox/sos_clf_cbf/pendulum/pendulum_trig_clf15.pickle", "wb") as handle:
+            pickle.dump({
+                "V": clf_cbf_utils.serialize_polynomial(search_result.V),
+                "kappa": kappa, "u_max": u_max, "rho": search_options.rho,
+                "in_roa_samples": in_roa_samples, "a_degree": a_info.degree},
+                handle)
+    elif search_type == "ellipsoid":
+        ellipsoid_option = analysis.ControlLyapunov.EllipsoidMaximizeOption(
+            t=sym.Polynomial(x.dot(x)), s_degree=0, backoff_scale=0.01)
+        ellipsoid_eq_lagrangian_degrees = [V_degree - 2]
+        x_star = analysis.ToPendulumTrigState(0., 0., np.pi)
+        S = np.diag(np.array([1., 1., 1.]))
+        r_degree = V_degree - 2
+        search_result = dut.Search(
+            V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
+            positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
+            ellipsoid_eq_lagrangian_degrees, kappa, x_star, S, r_degree,
+            search_options, ellipsoid_option)
+        with open("/home/hongkaidai/Dropbox/sos_clf_cbf/pendulum/pendulum_trig_clf16.pickle", "wb") as handle:
+            pickle.dump({
+                "V": clf_cbf_utils.serialize_polynomial(search_result.V),
+                "kappa": kappa, "u_max": u_max, "rho": search_options.rho,
+                "x_star": x_star, "S": S}, handle)
+    elif search_type == "sample":
+        x_samples = np.empty((3, 1))
+        x_samples[:, 0] = analysis.ToPendulumTrigState(0., 0., np.pi)
+        x_samples = x_swingup[:, 25:]
+
+        search_result = dut.Search(
+            V_init, lambda0_degree, l_degrees, V_degree, positivity_eps,
+            positivity_d, positivity_eq_lagrangian_degrees, p_degrees, kappa,
+            x_samples, None, True, search_options)
+        with open("/home/hongkaidai/Dropbox/sos_clf_cbf/pendulum/pendulum_trig_clf16.pickle", "wb") as handle:
+            pickle.dump({
+                "V": clf_cbf_utils.serialize_polynomial(search_result.V),
+                "kappa": kappa, "u_max": u_max, "rho": search_options.rho,
+                "x_samples": x_samples,
+                "V_samples": search_result.V.EvaluateIndeterminates(x, x_samples)},
+                handle)
 
 
 def draw_clf_contour(fig, ax, V, rho, x, draw_heatmap):
@@ -323,11 +404,12 @@ def draw_clf_contour(fig, ax, V, rho, x, draw_heatmap):
 
 
 def plot_results():
+    meshcat = StartMeshcat()
     x = sym.MakeVectorContinuousVariable(3, "x")
     x_set = sym.Variables(x)
     with open("/home/hongkaidai/Dropbox/sos_clf_cbf/pendulum/pendulum_trig_clf_init.pickle", "rb") as input_file:
         V_init = clf_cbf_utils.deserialize_polynomial(x_set, pickle.load(input_file)["V"])
-    with open("/home/hongkaidai/Dropbox/sos_clf_cbf/pendulum/pendulum_trig_clf5.pickle", "rb") as input_file:
+    with open("/home/hongkaidai/Dropbox/sos_clf_cbf/pendulum/pendulum_trig_clf14.pickle", "rb") as input_file:
         load_data = pickle.load(input_file)
         V = clf_cbf_utils.deserialize_polynomial(x_set, load_data["V"])
         u_max = load_data["u_max"]
@@ -368,7 +450,7 @@ def plot_results():
     ax1.title.set_fontsize(20)
     fig1.set_tight_layout(True)
     for fig_format in ["pdf", "png"]:
-        fig1.savefig("/home/hongkaidai/Dropbox/talks/pictures/sos_clf_cbf/pendulum_V5." +
+        fig1.savefig("/home/hongkaidai/Dropbox/talks/pictures/sos_clf_cbf/pendulum_V14." +
                     fig_format, format=fig_format)
     #pdb.set_trace()
     fig2 = plt.figure()
@@ -377,7 +459,7 @@ def plot_results():
     for i in range(num_trajs):
         ax2.plot(state_trajs[i][0, :], state_trajs[i][1, :], color=traj_color[i])
     for fig_format in ["pdf", "png"]:
-        fig2.savefig("/home/hongkaidai/Dropbox/talks/pictures/sos_clf_cbf/pendulum_phase5."+fig_format, format=fig_format)
+        fig2.savefig("/home/hongkaidai/Dropbox/talks/pictures/sos_clf_cbf/pendulum_phase14."+fig_format, format=fig_format)
     
     fig3 = plt.figure()
     ax3 = fig3.add_subplot(111)
@@ -386,7 +468,7 @@ def plot_results():
     ax3.set_xlabel("time (s)", fontsize=14)
     ax3.set_ylabel("V(x(t))", fontsize=14)
     for fig_format in ["pdf", "png"]:
-        fig3.savefig("/home/hongkaidai/Dropbox/talks/pictures/sos_clf_cbf/pendulum_V_time5."+fig_format, format=fig_format)
+        fig3.savefig("/home/hongkaidai/Dropbox/talks/pictures/sos_clf_cbf/pendulum_V_time14."+fig_format, format=fig_format)
 
     fig4 = plt.figure()
     ax4 = fig4.add_subplot(111)
@@ -403,12 +485,12 @@ def plot_results():
     ax4.title.set_fontsize(20)
     fig4.set_tight_layout(True)
     for fig_format in ["pdf", "png"]:
-        fig4.savefig("/home/hongkaidai/Dropbox/talks/pictures/sos_clf_cbf/pendulum_control_time5."+fig_format, format=fig_format)
+        fig4.savefig("/home/hongkaidai/Dropbox/talks/pictures/sos_clf_cbf/pendulum_control_time14."+fig_format, format=fig_format)
 
 
 def main():
-    u_max = 4.5
-    kappa = 0.1
+    u_max = 4 
+    kappa = 0.01
     search(u_max, kappa)
     #plot_results()
 

@@ -335,6 +335,7 @@ class ControlLyapunov {
   struct SearchWithSlackAOptions : public SearchOptions {
     double a_zero_tol{0};
     double lagrangian_step_backoff_scale{0.};
+    std::optional<double> in_roa_samples_rho{std::nullopt};
   };
 
   /**

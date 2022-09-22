@@ -19,6 +19,7 @@ from pydrake.systems.primitives import LogVectorOutput
 from pydrake.examples import (
     QuadrotorGeometry,
     QuadrotorPlant,
+    QuadrotorTrigGeometry,
 )
 from pydrake.geometry import (
     MeshcatVisualizer,
@@ -98,21 +99,16 @@ class QuadrotorClfController(LeafSystem):
 def simulate(x, f, G, clf, thrust_max, kappa, initial_state, duration, meshcat, controller="clf"):
     builder = DiagramBuilder()
 
-    quadrotor = builder.AddSystem(QuadrotorPlant())
+    quadrotor = builder.AddSystem(analysis.QuadrotorTrigPlant())
 
     scene_graph = builder.AddSystem(pydrake.geometry.SceneGraph())
 
-    geom = QuadrotorGeometry.AddToBuilder(
+    geom = QuadrotorTrigGeometry.AddToBuilder(
         builder, quadrotor.get_output_port(0), None, scene_graph)
 
     visualizer = MeshcatVisualizer.AddToBuilder(
         builder, scene_graph, meshcat,
         MeshcatVisualizerParams(role=Role.kPerception))
-
-    state_converter = builder.AddSystem(analysis.QuadrotorTrigStateConverter())
-
-    builder.Connect(quadrotor.get_output_port(
-        0), state_converter.get_input_port())
 
     if controller == "lqr":
         K, _ = SynthesizeTrigLqr()
@@ -121,7 +117,7 @@ def simulate(x, f, G, clf, thrust_max, kappa, initial_state, duration, meshcat, 
         thrust_equilibrium = quadrotor.m() * quadrotor.g() / 4
         lqr_constant = builder.AddSystem(
             primitives.ConstantValueSource(np.full((4,), thrust_equilibrium)))
-        builder.Connect(state_converter.get_output_port(),
+        builder.Connect(quadrotor.get_output_port(0),
                         lqr_gain.get_input_port())
         builder.Connect(lqr_gain.get_output_port(), adder.get_input_port(0))
         builder.Connect(lqr_constant.get_output_port(),
@@ -137,7 +133,7 @@ def simulate(x, f, G, clf, thrust_max, kappa, initial_state, duration, meshcat, 
 
         builder.Connect(clf_controller.control_output_port(),
                         quadrotor.get_input_port())
-        builder.Connect(state_converter.get_output_port(),
+        builder.Connect(quadrotor.get_output_port(0),
                         clf_controller.x_input_port())
 
     state_logger = LogVectorOutput(quadrotor.get_output_port(), builder)
@@ -152,7 +148,8 @@ def simulate(x, f, G, clf, thrust_max, kappa, initial_state, duration, meshcat, 
 
     analysis.ResetIntegratorFromFlags(simulator, "radau3", 0.01)
 
-    simulator.get_mutable_context().SetContinuousState(initial_state)
+    x0 = analysis.ToQuadrotorTrigState(initial_state)
+    simulator.get_mutable_context().SetContinuousState(x0)
     simulator.AdvanceTo(duration)
 
     state_data = state_logger.FindLog(simulator.get_context()).data()
@@ -177,11 +174,12 @@ def simulate_demo(meshcat):
     quadrotor = analysis.QuadrotorTrigPlant()
     f, G = analysis.TrigPolyDynamics(quadrotor, x)
     initial_state = np.zeros((12,))
-    initial_state[1] = 10 
-    initial_state[3] = 0.45 * np.pi
+    initial_state[0] = 2
+    initial_state[1] = 0 
+    initial_state[3] = np.pi * 0.8
     state_data, control_data, clf_data, time_data = simulate(
         x, f, G, clf, thrust_max, kappa, initial_state, 30, meshcat, controller="clf")
-    with open("quadrotor3d_trig_clf3_sim2.pickle", "wb") as handle:
+    with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_clf/quadrotor3d_trig_clf3_sim8.pickle", "wb") as handle:
         pickle.dump({"state_data": state_data, "control_data": control_data, "clf_data": clf_data, "time_data": time_data}, handle)
     return
 

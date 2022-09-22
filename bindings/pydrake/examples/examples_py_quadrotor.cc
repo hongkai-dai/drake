@@ -3,6 +3,7 @@
 #include "drake/bindings/pydrake/pydrake_pybind.h"
 #include "drake/examples/quadrotor/quadrotor_geometry.h"
 #include "drake/examples/quadrotor/quadrotor_plant.h"
+#include "drake/examples/quadrotor/quadrotor_trig_geometry.h"
 #include "drake/systems/primitives/affine_system.h"
 
 namespace drake {
@@ -47,6 +48,16 @@ void DefineExamplesQuadrotor(py::module m) {
           py::arg("scene_graph"), py::return_value_policy::reference,
           // Keep alive, ownership: `return` keeps `builder` alive.
           py::keep_alive<0, 1>(), doc.QuadrotorGeometry.AddToBuilder.doc);
+
+  py::class_<QuadrotorTrigGeometry, LeafSystem<double>>(
+      m, "QuadrotorTrigGeometry", doc.QuadrotorTrigGeometry.doc)
+      .def("get_frame_id", &QuadrotorTrigGeometry::get_frame_id,
+          doc.QuadrotorTrigGeometry.get_frame_id.doc)
+      .def_static("AddToBuilder", &QuadrotorTrigGeometry::AddToBuilder,
+          py::arg("builder"), py::arg("quadrotor_state_port"), py::arg("name"),
+          py::arg("scene_graph"), py::return_value_policy::reference,
+          // Keep alive, ownership: `return` keeps `builder` alive.
+          py::keep_alive<0, 1>(), doc.QuadrotorTrigGeometry.AddToBuilder.doc);
 
   m.def("StabilizingLQRController", &StabilizingLQRController,
       py::arg("quadrotor_plant"), py::arg("nominal_position"),

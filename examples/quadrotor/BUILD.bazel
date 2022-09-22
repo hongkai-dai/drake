@@ -59,6 +59,22 @@ drake_cc_library(
     ],
 )
 
+drake_cc_library(
+    name = "quadrotor_trig_geometry",
+    srcs = ["quadrotor_trig_geometry.cc"],
+    hdrs = ["quadrotor_trig_geometry.h"],
+    data = [":models"],
+    deps = [
+        "//common:find_resource",
+        "//geometry:scene_graph",
+        "//math:geometric_transform",
+        "//multibody/parsing",
+        "//multibody/plant",
+        "//systems/framework:diagram_builder",
+        "//systems/framework:leaf_system",
+    ],
+)
+
 drake_cc_binary(
     name = "run_quadrotor_dynamics",
     srcs = ["run_quadrotor_dynamics.cc"],

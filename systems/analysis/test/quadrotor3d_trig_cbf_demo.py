@@ -18,6 +18,7 @@ from pydrake.systems.primitives import LogVectorOutput
 from pydrake.examples import (
     QuadrotorGeometry,
     QuadrotorPlant,
+    QuadrotorTrigGeometry,
 )
 from pydrake.geometry import (
     MeshcatVisualizer,
@@ -27,7 +28,6 @@ from pydrake.geometry import (
     SceneGraph,
 )
 
-meshcat = StartMeshcat()
 
 
 class QuadrotorCbfController(LeafSystem):
@@ -191,14 +191,14 @@ class QuadrotorClfCbfController(LeafSystem):
         output.SetFromVector(np.array([self.clf.Evaluate(env)]))
 
 
-def simulate(x, f, G, clf, cbf, thrust_max, kappa_V, kappa_h, beta_minus, beta_plus, initial_state, duration):
+def simulate(x, f, G, clf, cbf, thrust_max, kappa_V, kappa_h, beta_minus, beta_plus, initial_state, duration, meshcat):
     builder = DiagramBuilder()
 
-    quadrotor = builder.AddSystem(QuadrotorPlant())
+    quadrotor = builder.AddSystem(analysis.QuadrotorTrigPlant())
 
     scene_graph = builder.AddSystem(pydrake.geometry.SceneGraph())
 
-    geom = QuadrotorGeometry.AddToBuilder(
+    geom = QuadrotorTrigGeometry.AddToBuilder(
         builder, quadrotor.get_output_port(0), "quadrotor", scene_graph)
 
     MeshcatVisualizer.AddToBuilder(
@@ -206,9 +206,6 @@ def simulate(x, f, G, clf, cbf, thrust_max, kappa_V, kappa_h, beta_minus, beta_p
         MeshcatVisualizerParams(role=Role.kPerception))
 
     state_converter = builder.AddSystem(analysis.QuadrotorTrigStateConverter())
-
-    builder.Connect(quadrotor.get_output_port(
-        0), state_converter.get_input_port())
 
     if clf is not None:
         controller = builder.AddSystem(QuadrotorClfCbfController(
@@ -219,7 +216,7 @@ def simulate(x, f, G, clf, cbf, thrust_max, kappa_V, kappa_h, beta_minus, beta_p
 
     builder.Connect(controller.control_output_port(),
                     quadrotor.get_input_port())
-    builder.Connect(state_converter.get_output_port(),
+    builder.Connect(quadrotor.get_output_port(0),
                     controller.x_input_port())
 
     state_logger = LogVectorOutput(quadrotor.get_output_port(), builder)
@@ -236,7 +233,8 @@ def simulate(x, f, G, clf, cbf, thrust_max, kappa_V, kappa_h, beta_minus, beta_p
 
     analysis.ResetIntegratorFromFlags(simulator, "implicit_euler", 0.01)
 
-    simulator.get_mutable_context().SetContinuousState(initial_state)
+    x0 = analysis.ToQuadrotorTrigState(initial_state)
+    simulator.get_mutable_context().SetContinuousState(x0)
     simulator.AdvanceTo(duration)
 
     state_data = state_logger.FindLog(simulator.get_context()).data()
@@ -338,7 +336,7 @@ def search_sphere_obstacle_cbf(x, f, G, beta_minus, beta_plus, thrust_max, kappa
     Given h_init that already satisfies hdot >= -kappa*h, try to minimize h(sphere_center) while keeping h(x_safe) >= 0
     """
     x_set = sym.Variables(x)
-    with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_cbf/quadrotor3d_trig_cbf17.pickle", "rb") as input_file:
+    with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_cbf/quadrotor3d_trig_cbf25.pickle", "rb") as input_file:
         h_init = clf_cbf_utils.deserialize_polynomial(
             x_set, pickle.load(input_file)["h"])
     u_vertices = get_u_vertices(thrust_max)
@@ -360,17 +358,18 @@ def search_sphere_obstacle_cbf(x, f, G, beta_minus, beta_plus, thrust_max, kappa
     unsafe_state_constraints_lagrangian_degrees = []
     unsafe_a_info = [None]
     search_options = analysis.ControlBarrier.SearchOptions()
-    search_options.bilinear_iterations = 20
+    search_options.bilinear_iterations = 40
     search_options.lagrangian_step_solver_options = mp.SolverOptions()
     search_options.lagrangian_step_solver_options.SetOption(
         mp.CommonSolverOption.kPrintToConsole, 1)
     search_options.barrier_step_solver_options = mp.SolverOptions()
     search_options.barrier_step_solver_options.SetOption(
         mp.CommonSolverOption.kPrintToConsole, 1)
-    search_options.barrier_step_backoff_scale = 0.02
+    #search_options.barrier_step_backoff_scale = 0.02
     sphere_center = np.zeros((13,))
     sphere_center[4] = 0.5
     while iter_count <= search_options.bilinear_iterations:
+        print(f"iteration {iter_count}")
         search_lagrangian_ret = dut.SearchLagrangian(
             h_sol, kappa, lambda0_degree, lambda1_degree, l_degrees,
             hdot_eq_lagrangian_degrees, None, t_degrees, s_degrees,
@@ -387,7 +386,8 @@ def search_sphere_obstacle_cbf(x, f, G, beta_minus, beta_plus, thrust_max, kappa
         A_h_safe, var_h_safe, b_h_safe = barrier_ret.h.EvaluateWithAffineCoefficients(
             x, x_safe)
         barrier_ret.prog().AddLinearConstraint(
-            A_h_safe, -b_h_safe, np.full_like(b_h_safe, np.inf), var_h_safe)
+            A_h_safe, np.full_like(b_h_safe, 0.01)-b_h_safe,
+            np.full_like(b_h_safe, np.inf), var_h_safe)
         # Add cost to minimize h(sphere_center)
         A_sphere_center, var_sphere_center, b_sphere_center = barrier_ret.h.EvaluateWithAffineCoefficients(
             x, sphere_center)
@@ -401,6 +401,12 @@ def search_sphere_obstacle_cbf(x, f, G, beta_minus, beta_plus, thrust_max, kappa
         h_sol = result.GetSolution(barrier_ret.h)
         iter_count += 1
 
+    with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_cbf/quadrotor3d_trig_cbf26.pickle", "wb") as handle:
+        pickle.dump({
+            "h": clf_cbf_utils.serialize_polynomial(h_sol),
+            "beta_plus": beta_plus, "beta_minus": beta_minus,
+            "deriv_eps": kappa, "thrust_max": thrust_max,
+            "x_safe": x_safe}, handle)
     return h_sol
 
 
@@ -583,7 +589,7 @@ def main():
     f, G = analysis.TrigPolyDynamics(quadrotor, x)
     thrust_equilibrium = analysis.EquilibriumThrust(quadrotor)
     thrust_max = 3 * thrust_equilibrium
-    deriv_eps = 0.1
+    deriv_eps = 0.3
     unsafe_regions = [np.array([  # sym.Polynomial(x[6] + 0.15)])]
         sym.Polynomial((x[4] - 0.5) ** 2 + x[5] ** 2 + x[6] ** 2 - (0.8*quadrotor.length()) ** 2)])]
     x_safe = np.empty((13, 2))
@@ -591,39 +597,39 @@ def main():
     x_safe[:, 1] = np.zeros(13)
     x_safe[4, 1] = 1
     #h_sol = search(x, f, G, thrust_max, deriv_eps, unsafe_regions, x_safe)
-    #h_sol = search_sphere_obstacle_cbf(
-    #    x, f, G, -0.01, 0.01, thrust_max, deriv_eps, x_safe)
+    h_sol = search_sphere_obstacle_cbf(
+        x, f, G, -0.01, 0.01, thrust_max, deriv_eps, x_safe)
 
-    x_set = sym.Variables(x)
-    with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_cbf/quadrotor3d_trig_cbf23.pickle", "rb") as input_file:
-        cbf_input_data = pickle.load(input_file)
-        cbf = clf_cbf_utils.deserialize_polynomial(x_set, cbf_input_data["h"])
-        kappa_h = cbf_input_data["deriv_eps"]
-        beta_minus = cbf_input_data["beta_minus"]
-        beta_plus = cbf_input_data["beta_plus"]
-    with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_clf/quadrotor3d_trig_clf_sol3.pickle", "rb") as input_file:
-        clf_input_data = pickle.load(input_file)
-        clf = clf_cbf_utils.deserialize_polynomial(x_set, clf_input_data["V"])
-        kappa_V = clf_input_data["kappa"]
-    x0 = np.zeros((12,))
-    x0[0] = 1 
-    x0[1] = 0.
-    x0[2] = 0.5
-    x0[3] = 0.1*np.pi
-    x0[6] = 0.
-    if clf is not None:
-        print(f"CLF_init {clf.EvaluateIndeterminates(x, analysis.ToQuadrotorTrigState(x0).reshape((-1, 1)))}")
-    if cbf is not None:
-        print(f"CBF_init {cbf.EvaluateIndeterminates(x, analysis.ToQuadrotorTrigState(x0).reshape((-1, 1)))}")
-    state_data, control_data, clf_data, cbf_data, time_data = simulate(x, f, G, clf, cbf, thrust_max, kappa_V, kappa_h, beta_minus, beta_plus, x0, 100)
-    with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_cbf/quadrotor3d_sim_clf3_cbf23_1.pickle", "wb") as handle:
-        pickle.dump({
-            "state_data": state_data,
-            "control_data": control_data,
-            "clf_data": clf_data,
-            "cbf_data": cbf_data,
-            "time_data": time_data}, handle)
-    return
+    #x_set = sym.Variables(x)
+    #with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_cbf/quadrotor3d_trig_cbf23.pickle", "rb") as input_file:
+    #    cbf_input_data = pickle.load(input_file)
+    #    cbf = clf_cbf_utils.deserialize_polynomial(x_set, cbf_input_data["h"])
+    #    kappa_h = cbf_input_data["deriv_eps"]
+    #    beta_minus = cbf_input_data["beta_minus"]
+    #    beta_plus = cbf_input_data["beta_plus"]
+    #with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_clf/quadrotor3d_trig_clf_sol3.pickle", "rb") as input_file:
+    #    clf_input_data = pickle.load(input_file)
+    #    clf = clf_cbf_utils.deserialize_polynomial(x_set, clf_input_data["V"])
+    #    kappa_V = clf_input_data["kappa"]
+    #x0 = np.zeros((12,))
+    #x0[0] = 1 
+    #x0[1] = 0.
+    #x0[2] = 0.5
+    #x0[3] = 0.1*np.pi
+    #x0[6] = 0.
+    #if clf is not None:
+    #    print(f"CLF_init {clf.EvaluateIndeterminates(x, analysis.ToQuadrotorTrigState(x0).reshape((-1, 1)))}")
+    #if cbf is not None:
+    #    print(f"CBF_init {cbf.EvaluateIndeterminates(x, analysis.ToQuadrotorTrigState(x0).reshape((-1, 1)))}")
+    #state_data, control_data, clf_data, cbf_data, time_data = simulate(x, f, G, clf, cbf, thrust_max, kappa_V, kappa_h, beta_minus, beta_plus, x0, 100)
+    #with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_cbf/quadrotor3d_sim_clf3_cbf23_1.pickle", "wb") as handle:
+    #    pickle.dump({
+    #        "state_data": state_data,
+    #        "control_data": control_data,
+    #        "clf_data": clf_data,
+    #        "cbf_data": cbf_data,
+    #        "time_data": time_data}, handle)
+    #return
 
 
 if __name__ == "__main__":

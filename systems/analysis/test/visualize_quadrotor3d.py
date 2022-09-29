@@ -83,9 +83,9 @@ def main():
     ax1.yaxis.label.set_fontsize(20)
     ax1.set_title("Quadrotor z height")
     ax1.title.set_fontsize(16)
-    ax1.xaxis.set_tick_params(labelsize=14)
-    ax1.yaxis.set_tick_params(labelsize=14)
-    ax1.legend([z_clf_cbf_handle, z_clf_handle], ["CBF-CLF QP controller", "CLF QP controller"], fontsize=16)
+    ax1.xaxis.set_tick_params(labelsize=16)
+    ax1.yaxis.set_tick_params(labelsize=16)
+    ax1.legend([z_clf_cbf_handle, z_clf_handle], ["CBF-CLF QP controller", "CLF QP controller"], fontsize=18)
     fig1.set_tight_layout(True)
     for fig_format in ["png", "pdf"]:
         fig1.savefig("/home/hongkaidai/Dropbox/talks/pictures/sos_clf_cbf/quadrotor_clf_cbf_z_1." + fig_format, format=fig_format)

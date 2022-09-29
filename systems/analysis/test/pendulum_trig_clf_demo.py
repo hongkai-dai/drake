@@ -385,7 +385,7 @@ def search(u_max, kappa):
 
 def draw_clf_contour(fig, ax, V, rho, x, draw_heatmap):
     X, Y = np.meshgrid(np.arange(-0.5 * np.pi, 1.5 * np.pi,
-                       0.02), np.arange(-10.0, 10, 0.01))
+                       0.02), np.arange(-7.5, 8, 0.01))
 
     V_val = V.EvaluateIndeterminates(x, np.vstack((np.sin(X).reshape(
         (1, -1)), (np.cos(X) + 1).reshape((1, -1)), Y.reshape((1, -1))))).reshape(X.shape)
@@ -398,8 +398,8 @@ def draw_clf_contour(fig, ax, V, rho, x, draw_heatmap):
     contour_handle.collections[0].set_edgecolor('r')
     ax.plot([np.pi], [0], "*", markersize=20, color="r")
     #ax.clabel(contour_handle, [rho])
-    ax.set_xlabel(r"$\theta$")
-    ax.set_ylabel(r"$\dot{\theta}$")
+    ax.set_xlabel(r"$\theta$ (rad)")
+    ax.set_ylabel(r"$\dot{\theta}$ (rad/s)")
     ax.set_xticks([-0.5*np.pi, 0, 0.5*np.pi, np.pi, 1.5*np.pi],
                   labels=[r"$-0.5\pi$", "0", r"$0.5\pi$", r"$\pi$", r"$1.5\pi$"])
     ax.set_title("V(x) for pendulum")
@@ -477,10 +477,11 @@ def plot_results():
     ax4 = fig4.add_subplot(111)
     for i in range(1):
         ax4.plot(time_trajs[i], control_trajs[i][0, :], color=traj_color[i])
-    ax4.set_ylim(0, u_max)
-    ax4.set_xlabel("time (s)", fontsize=14)
-    ax4.set_ylabel("u(t)", fontsize=14)
-    ax4.set_title("pendulum control")
+    ax4.plot(time_trajs[i], np.ones_like(time_trajs[i]) * u_max, '--', color='r')
+    #ax4.set_ylim(0, u_max+0.1)
+    ax4.set_xlabel("time (s)", fontsize=16)
+    ax4.set_ylabel("u(t)", fontsize=16)
+    ax4.set_title("pendulum control", fontsize=16)
     ax4.xaxis.label.set_fontsize(20)
     ax4.yaxis.label.set_fontsize(20)
     ax4.xaxis.set_tick_params(labelsize=20)

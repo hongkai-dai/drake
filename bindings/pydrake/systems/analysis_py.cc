@@ -287,8 +287,10 @@ PYBIND11_MODULE(analysis, m) {
         LeafSystem<T>>(m, "QuadrotorTrigPlant", GetPyParam<T>(),
         doc.analysis.QuadrotorTrigPlant.doc)
         .def(py::init<>(), doc.analysis.QuadrotorTrigPlant.ctor.doc)
+        .def("mass", &analysis::QuadrotorTrigPlant<T>::mass)
         .def("length", &analysis::QuadrotorTrigPlant<T>::length,
             doc.analysis.QuadrotorTrigPlant.length.doc)
+        .def("gravity", &analysis::QuadrotorTrigPlant<T>::gravity)
         .def("get_state_output_port",
             &analysis::QuadrotorTrigPlant<T>::get_state_output_port,
             py_rvp::reference_internal,

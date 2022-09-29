@@ -112,11 +112,11 @@ def simulate(x, f, G, clf, thrust_max, kappa, initial_state, duration, meshcat, 
 
     if controller == "lqr":
         K, _ = SynthesizeTrigLqr()
-        lqr_gain = builder.AddSystem(controller.Gain(-K))
+        lqr_gain = builder.AddSystem(primitives.MatrixGain(-K))
         adder = builder.AddSystem(primitives.Adder(2, 4))
-        thrust_equilibrium = quadrotor.m() * quadrotor.g() / 4
+        thrust_equilibrium = quadrotor.mass() * quadrotor.gravity() / 4
         lqr_constant = builder.AddSystem(
-            primitives.ConstantValueSource(np.full((4,), thrust_equilibrium)))
+            primitives.ConstantVectorSource(np.full((4,), thrust_equilibrium)))
         builder.Connect(quadrotor.get_output_port(0),
                         lqr_gain.get_input_port())
         builder.Connect(lqr_gain.get_output_port(), adder.get_input_port(0))
@@ -139,8 +139,10 @@ def simulate(x, f, G, clf, thrust_max, kappa, initial_state, duration, meshcat, 
     state_logger = LogVectorOutput(quadrotor.get_output_port(), builder)
     if controller == "clf":
         clf_logger = LogVectorOutput(clf_controller.clf_output_port(), builder)
-    control_logger = LogVectorOutput(
-        clf_controller.control_output_port(), builder)
+        control_logger = LogVectorOutput(
+            clf_controller.control_output_port(), builder)
+    else:
+        control_logger = LogVectorOutput(u_saturation.get_output_port(), builder)
 
     diagram = builder.Build()
 
@@ -174,12 +176,12 @@ def simulate_demo(meshcat):
     quadrotor = analysis.QuadrotorTrigPlant()
     f, G = analysis.TrigPolyDynamics(quadrotor, x)
     initial_state = np.zeros((12,))
-    initial_state[0] = 2
-    initial_state[1] = 0 
-    initial_state[3] = np.pi * 0.8
+    initial_state[0] = 30 
+    initial_state[1] = 30 
+    initial_state[3] = np.pi * 0.79
     state_data, control_data, clf_data, time_data = simulate(
-        x, f, G, clf, thrust_max, kappa, initial_state, 30, meshcat, controller="clf")
-    with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_clf/quadrotor3d_trig_clf3_sim8.pickle", "wb") as handle:
+        x, f, G, clf, thrust_max, kappa, initial_state, 50, meshcat, controller="lqr")
+    with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_clf/quadrotor3d_trig_lqr_sim1.pickle", "wb") as handle:
         pickle.dump({"state_data": state_data, "control_data": control_data, "clf_data": clf_data, "time_data": time_data}, handle)
     return
 
@@ -280,7 +282,7 @@ def SearchWTrigDynamics():
             pickle.dump({"V": clf_cbf_utils.serialize_polynomial(
                 V_init)}, handle)
     else:
-        with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_clf/quadrotor3d_trig_clf_init.pickle", "rb") as input_file:
+        with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_clf/quadrotor3d_trig_clf_sol3.pickle", "rb") as input_file:
             V_init = clf_cbf_utils.deserialize_polynomial(
                 x_set, pickle.load(input_file)["V"])
 
@@ -309,13 +311,13 @@ def SearchWTrigDynamics():
                 V_init), "kappa": kappa, "thrust_max": thrust_max},
                 handle)
     else:
-        with open("quadrotor3d_trig_clf_sol1.pickle", "rb") as input_file:
+        with open("/home/hongkaidai/Dropbox/sos_clf_cbf/quadrotor3d_clf/quadrotor3d_trig_clf_sol1.pickle", "rb") as input_file:
             V_init = clf_cbf_utils.deserialize_polynomial(
                 x_set, pickle.load(input_file)["V"])
 
     search_options = analysis.ControlLyapunov.SearchOptions()
     search_options.d_converge_tol = 0.
-    search_options.bilinear_iterations = 10
+    search_options.bilinear_iterations = 20
     search_options.lyap_step_backoff_scale = 0.015
     search_options.lsol_tiny_coeff_tol = 1E-8
     search_options.lyap_tiny_coeff_tol = 1E-8
@@ -326,17 +328,17 @@ def SearchWTrigDynamics():
     search_options.lyap_step_solver_options.SetOption(
         mp.CommonSolverOption.kPrintToConsole, 1)
     state_samples = np.zeros((12, 4))
-    state_samples[:, 0] = np.array([0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.])
-    state_samples[:, 1] = np.array([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.])
+    state_samples[:, 0] = np.array([0, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.])
+    state_samples[:, 1] = np.array([15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.])
     state_samples[:, 2] = np.array(
-        [1, 0, 0, 0, np.pi / 2, 0, 0, 0, 0, 0, 0, 0.])
+        [15, 10, 0, 0, np.pi / 2, 0, 0, 0, 0, 0, 0, 0.])
     state_samples[:, 3] = np.array(
-        [1, 0, 0, np.pi / 2, 0, 0, 0, 0, 0, 0, 0, 0.])
+        [10, 10, 0, np.pi * 0.8, 0, 0, 0, 0, 0, 0, 0, 0.])
     x_samples = np.zeros((13, state_samples.shape[1]))
     for i in range(state_samples.shape[1]):
         x_samples[:, i] = analysis.ToQuadrotorTrigState(state_samples[:, i])
 
-    positivity_eps = 0.0001
+    positivity_eps = 0.000
     positivity_d = int(V_degree / 2)
     positivity_eq_lagrangian_degrees = [V_degree - 2]
     minimize_max = True
@@ -346,16 +348,16 @@ def SearchWTrigDynamics():
         x_samples, None, minimize_max, search_options)
     print(
         f"V(x_samples): {search_result.V.EvaluateIndeterminates(x, x_samples).T}")
-    with open("quadrotor3d_trig_clf_sol2.pickle", "wb") as handle:
+    with open("quadrotor3d_trig_clf_sol4.pickle", "wb") as handle:
         pickle.dump({"V": clf_cbf_utils.serialize_polynomial(
             search_result.V), "kappa": kappa, "thrust_max": thrust_max}, handle)
 
 
 def main():
     pydrake.common.configure_logging()
-    #SearchWTrigDynamics()
-    meshcat = StartMeshcat()
-    simulate_demo(meshcat)
+    SearchWTrigDynamics()
+    #meshcat = StartMeshcat()
+    #simulate_demo(meshcat)
 
 
 if __name__ == "__main__":

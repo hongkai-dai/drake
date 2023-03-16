@@ -518,7 +518,7 @@ ControlBarrier::SearchResult ControlBarrier::Search(
                                search_options.lsol_tiny_coeff_tol,
                                &(ret.hdot_state_constraints_lagrangian));
         drake::log()->info("min h(x) on ellipsoid: {}",
-                           result_barrier.GetSolution(rho).transpose());
+                           fmt_eigen(result_barrier.GetSolution(rho).transpose()));
         for (int i = 0; i < static_cast<int>(unsafe_regions_.size()); ++i) {
           GetPolynomialSolutions(result_barrier, barrier_ret.s[i],
                                  search_options.lsol_tiny_coeff_tol,
@@ -625,7 +625,7 @@ ControlBarrier::SearchResult ControlBarrier::Search(
                                &(ret.hdot_state_constraints_lagrangian));
         drake::log()->info(
             "h(x_samples)={}",
-            ret.h.EvaluateIndeterminates(x_, x_samples).transpose());
+            fmt_eigen(ret.h.EvaluateIndeterminates(x_, x_samples).transpose()));
         for (int i = 0; i < static_cast<int>(unsafe_regions_.size()); ++i) {
           GetPolynomialSolutions(result_barrier, barrier_ret.s[i],
                                  search_options.lsol_tiny_coeff_tol,

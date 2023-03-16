@@ -42,7 +42,7 @@ QuadrotorGeometry::QuadrotorGeometry(
   // scene_graph.
   // TODO(SeanCurtis-TRI): Update this on resolution of #10775.
   multibody::MultibodyPlant<double> mbp(0.0);
-  multibody::Parser parser(&mbp, scene_graph);
+  multibody::Parser parser(&mbp, scene_graph, name.value_or("quadrotor"));
 
   const auto model_instance_indices = parser.AddModelsFromUrl(
       "package://drake_models/skydio_2/quadrotor.urdf");

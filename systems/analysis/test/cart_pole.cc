@@ -129,12 +129,12 @@ void CartpoleClfController::DoCalcControl(const Context<double>& context,
                      u);
   const auto result = solvers::Solve(prog);
   if (!result.is_success()) {
-    drake::log()->info(
-        "dVdx*f+eps*V={}, dVdx*G={}",
-        dVdx_times_f_val / dynamics_denominator_val + kappa() * V_val,
-        dVdx_times_G_val / dynamics_denominator_val);
+    drake::log()->info("dVdx*f+eps*V={}, dVdx*G={}",
+                       dVdx_times_f_val / dynamics_denominator_val +
+                                 kappa() * V_val,
+                       fmt_eigen(dVdx_times_G_val / dynamics_denominator_val));
     drake::log()->error("ClfController fails at t={} with x={}, V={}",
-                        context.get_time(), x_val.transpose(), V_val);
+                        context.get_time(), fmt_eigen(x_val.transpose()), V_val);
     DRAKE_DEMAND(result.is_success());
   }
   const Eigen::VectorXd u_val = result.GetSolution(u);
@@ -199,7 +199,7 @@ void Simulate(const CartPoleParams& parameters,
   Simulator<double> simulator(*diagram);
   // ResetIntegratorFromFlags(&simulator, "implicit_euler", 0.0002);
   simulator.get_mutable_context().SetContinuousState(initial_state);
-  diagram->Publish(simulator.get_context());
+  diagram->ForcedPublish(simulator.get_context());
   std::cout << "Refresh meshcat brower and press to continue\n";
   std::cin.get();
 
@@ -208,11 +208,11 @@ void Simulate(const CartPoleParams& parameters,
 
   std::cout << fmt::format(
       "final state: {}, final V: {}\n",
-      state_logger->FindLog(simulator.get_context())
+      fmt_eigen(state_logger->FindLog(simulator.get_context())
           .data()
           .rightCols<1>()
-          .transpose(),
-      clf_logger->FindLog(simulator.get_context()).data().rightCols<1>());
+          .transpose()),
+      fmt_eigen(clf_logger->FindLog(simulator.get_context()).data().rightCols<1>()));
   // std::cout << "V: " << std::setprecision(10)
   //          << clf_logger->FindLog(simulator.get_context()).data() << "\n";
 }

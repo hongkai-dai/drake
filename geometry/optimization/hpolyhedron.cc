@@ -540,13 +540,13 @@ std::pair<VectorX<Variable>, std::vector<Binding<Constraint>>>
 HPolyhedron::DoAddPointInSetConstraints(
     MathematicalProgram* prog,
     const Eigen::Ref<const VectorXDecisionVariable>& vars) const {
-  auto ret =
-      std::make_pair(VectorX<Variable>(0), std::vector<Binding<Constraint>>{});
-  ret.second.push_back(prog->AddLinearConstraint(
+  VectorX<Variable> new_vars;
+  std::vector<Binding<Constraint>> new_constraints;
+  new_constraints.push_back(prog->AddLinearConstraint(
       A_,
       VectorXd::Constant(b_.size(), -std::numeric_limits<double>::infinity()),
       b_, vars));
-  return ret;
+  return std::make_pair(new_vars, new_constraints);
 }
 
 std::vector<Binding<Constraint>>

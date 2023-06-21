@@ -344,9 +344,9 @@ std::pair<VectorX<Variable>, std::vector<Binding<Constraint>>>
 VPolytope::DoAddPointInSetConstraints(
     solvers::MathematicalProgram* prog,
     const Eigen::Ref<const solvers::VectorXDecisionVariable>& x) const {
+  std::vector<Binding<Constraint>> new_constraints;
   const int n = ambient_dimension();
   const int m = vertices_.cols();
-  std::vector<Binding<Constraint>> new_constraints;
   VectorXDecisionVariable alpha = prog->NewContinuousVariables(m, "a");
   // 0 ≤ αᵢ ≤ 1.  The one is redundant, but may be better than inf for some
   // solvers.

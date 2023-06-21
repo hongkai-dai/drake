@@ -141,10 +141,10 @@ std::pair<VectorX<Variable>, std::vector<Binding<Constraint>>>
 MinkowskiSum::DoAddPointInSetConstraints(
     MathematicalProgram* prog,
     const Eigen::Ref<const VectorXDecisionVariable>& x) const {
-  auto X = prog->NewContinuousVariables(ambient_dimension(), num_terms(), "x");
   std::vector<Variable> new_vars;
-  new_vars.reserve(X.size());
   std::vector<Binding<Constraint>> new_constraints;
+  auto X = prog->NewContinuousVariables(ambient_dimension(), num_terms(), "x");
+  new_vars.reserve(X.size());
   for (int j = 0; j < X.cols(); ++j) {
     for (int i = 0; i < X.rows(); ++i) {
       new_vars.push_back(X(i, j));

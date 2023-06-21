@@ -91,15 +91,15 @@ Spectrahedron::DoAddPointInSetConstraints(
     MathematicalProgram* prog,
     const Eigen::Ref<const VectorXDecisionVariable>& x) const {
   DRAKE_DEMAND(x.size() == sdp_->num_vars());
-  auto ret =
-      std::make_pair(VectorX<Variable>(0), std::vector<Binding<Constraint>>{});
+  VectorX<Variable> new_vars;
+  std::vector<Binding<Constraint>> new_constraints;
   for (const auto& binding : sdp_->GetAllConstraints()) {
-    ret.second.push_back(prog->AddConstraint(
+    new_constraints.push_back(prog->AddConstraint(
         binding.evaluator(),
         GetVariablesByIndex(
             x, sdp_->FindDecisionVariableIndices(binding.variables()))));
   }
-  return ret;
+  return std::make_pair(new_vars, new_constraints);
 }
 
 std::vector<Binding<Constraint>>

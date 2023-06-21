@@ -536,14 +536,12 @@ bool HPolyhedron::DoPointInSet(const Eigen::Ref<const VectorXd>& x,
   return ((A_ * x).array() <= b_.array() + tol).all();
 }
 
-std::pair<VectorX<symbolic::Variable>,
-          std::vector<solvers::Binding<solvers::Constraint>>>
+std::pair<VectorX<Variable>, std::vector<Binding<Constraint>>>
 HPolyhedron::DoAddPointInSetConstraints(
     MathematicalProgram* prog,
     const Eigen::Ref<const VectorXDecisionVariable>& vars) const {
   auto ret =
-      std::make_pair(VectorX<symbolic::Variable>(0),
-                     std::vector<solvers::Binding<solvers::Constraint>>{});
+      std::make_pair(VectorX<Variable>(0), std::vector<Binding<Constraint>>{});
   ret.second.push_back(prog->AddLinearConstraint(
       A_,
       VectorXd::Constant(b_.size(), -std::numeric_limits<double>::infinity()),

@@ -137,15 +137,14 @@ bool MinkowskiSum::DoPointInSet(const Eigen::Ref<const VectorXd>& x,
   return result.is_success();
 }
 
-std::pair<VectorX<symbolic::Variable>,
-          std::vector<solvers::Binding<solvers::Constraint>>>
+std::pair<VectorX<Variable>, std::vector<Binding<Constraint>>>
 MinkowskiSum::DoAddPointInSetConstraints(
     MathematicalProgram* prog,
     const Eigen::Ref<const VectorXDecisionVariable>& x) const {
   auto X = prog->NewContinuousVariables(ambient_dimension(), num_terms(), "x");
-  std::vector<symbolic::Variable> new_vars;
+  std::vector<Variable> new_vars;
   new_vars.reserve(X.size());
-  std::vector<solvers::Binding<solvers::Constraint>> new_constraints;
+  std::vector<Binding<Constraint>> new_constraints;
   for (int j = 0; j < X.cols(); ++j) {
     for (int i = 0; i < X.rows(); ++i) {
       new_vars.push_back(X(i, j));
@@ -168,8 +167,8 @@ MinkowskiSum::DoAddPointInSetConstraints(
                            new_constraints_in_sets_j.begin(),
                            new_constraints_in_sets_j.end());
   }
-  const VectorX<symbolic::Variable> new_vars_vec =
-      Eigen::Map<VectorX<symbolic::Variable>>(new_vars.data(), new_vars.size());
+  const VectorX<Variable> new_vars_vec =
+      Eigen::Map<VectorX<Variable>>(new_vars.data(), new_vars.size());
   return std::make_pair(new_vars_vec, new_constraints);
 }
 
@@ -177,7 +176,7 @@ std::vector<Binding<Constraint>>
 MinkowskiSum::DoAddPointInNonnegativeScalingConstraints(
     MathematicalProgram* prog,
     const Eigen::Ref<const VectorXDecisionVariable>& x,
-    const symbolic::Variable& t) const {
+    const Variable& t) const {
   // We add the constraint
   //   x in t (S1 ⨁ ... ⨁ Sn)
   // by enforcing

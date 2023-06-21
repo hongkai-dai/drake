@@ -66,14 +66,12 @@ bool Point::DoPointInSet(const Eigen::Ref<const VectorXd>& x,
   return is_approx_equal_abstol(x, x_, tol);
 }
 
-std::pair<VectorX<symbolic::Variable>,
-          std::vector<solvers::Binding<solvers::Constraint>>>
+std::pair<VectorX<Variable>, std::vector<Binding<Constraint>>>
 Point::DoAddPointInSetConstraints(
     MathematicalProgram* prog,
     const Eigen::Ref<const VectorXDecisionVariable>& x) const {
   auto ret =
-      std::make_pair(VectorX<symbolic::Variable>(0),
-                     std::vector<solvers::Binding<solvers::Constraint>>{});
+      std::make_pair(VectorX<Variable>(0), std::vector<Binding<Constraint>>{});
   ret.second.push_back(prog->AddBoundingBoxConstraint(x_, x_, x));
   return ret;
 }
@@ -82,7 +80,7 @@ std::vector<Binding<Constraint>>
 Point::DoAddPointInNonnegativeScalingConstraints(
     MathematicalProgram* prog,
     const Eigen::Ref<const VectorXDecisionVariable>& x,
-    const symbolic::Variable& t) const {
+    const Variable& t) const {
   std::vector<Binding<Constraint>> constraints;
   // x == t*x_.
   const int n = ambient_dimension();

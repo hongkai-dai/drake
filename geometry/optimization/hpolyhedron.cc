@@ -546,7 +546,7 @@ HPolyhedron::DoAddPointInSetConstraints(
       A_,
       VectorXd::Constant(b_.size(), -std::numeric_limits<double>::infinity()),
       b_, vars));
-  return std::make_pair(new_vars, new_constraints);
+  return {std::move(new_vars), std::move(new_constraints)};
 }
 
 std::vector<Binding<Constraint>>

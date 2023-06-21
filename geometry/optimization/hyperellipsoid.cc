@@ -203,7 +203,7 @@ Hyperellipsoid::DoAddPointInSetConstraints(
   VectorXd b_cone(m + 1);
   b_cone << 1.0, -A_ * center_;
   new_constraints.push_back(prog->AddLorentzConeConstraint(A_cone, b_cone, x));
-  return std::make_pair(new_vars, new_constraints);
+  return {std::move(new_vars), std::move(new_constraints)};
 }
 
 std::vector<Binding<Constraint>>

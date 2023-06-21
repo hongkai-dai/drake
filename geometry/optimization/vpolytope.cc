@@ -360,7 +360,7 @@ VPolytope::DoAddPointInSetConstraints(
   // ∑ αᵢ = 1.
   new_constraints.push_back(
       prog->AddLinearEqualityConstraint(RowVectorXd::Ones(m), 1.0, alpha));
-  return std::make_pair(alpha, new_constraints);
+  return {std::move(alpha), std::move(new_constraints)};
 }
 
 std::vector<Binding<Constraint>>

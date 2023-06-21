@@ -108,9 +108,9 @@ Intersection::DoAddPointInSetConstraints(
     new_constraints.insert(new_constraints.end(), new_constraints_in_s.begin(),
                            new_constraints_in_s.end());
   }
-  const VectorX<Variable> new_vars_vec =
+  VectorX<Variable> new_vars_vec =
       Eigen::Map<VectorX<Variable>>(new_vars.data(), new_vars.size());
-  return std::make_pair(new_vars_vec, new_constraints);
+  return {std::move(new_vars_vec), std::move(new_constraints)};
 }
 
 std::vector<Binding<Constraint>>

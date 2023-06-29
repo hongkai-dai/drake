@@ -68,6 +68,7 @@ drake_cc_library(
         "//solvers:ipopt_solver",
         "//solvers:mosek_solver",
         "//solvers:scs_solver",
+        "//solvers:csdp_solver",
         "//solvers:solve",
         "@qhull_internal//:qhull",
     ],

@@ -13,6 +13,7 @@
 #include "drake/solvers/ipopt_solver.h"
 #include "drake/solvers/mosek_solver.h"
 #include "drake/solvers/scs_solver.h"
+#include "drake/solvers/csdp_solver.h"
 #include "drake/solvers/solve.h"
 
 namespace drake {
@@ -132,7 +133,7 @@ std::pair<double, VectorXd> Hyperellipsoid::MinimumUniformScalingToTouch(
     b[1] = 1;
     b.tail(A_.rows()) = -A_ * center_;
     prog.AddRotatedLorentzConeConstraint(A, b, {slack, x});
-    preferred_solvers.emplace_back(solvers::ScsSolver::id());
+    preferred_solvers.emplace_back(solvers::CsdpSolver::id());
   }
   auto solver = solvers::MakeFirstAvailableSolver(preferred_solvers);
   solvers::MathematicalProgramResult result;

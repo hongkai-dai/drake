@@ -1792,4 +1792,13 @@ drake_cc_googletest(
     ],
 )
 
+drake_cc_binary(
+    name = "debug_csdp",
+    srcs = ["test/debug_csdp.cc"],
+    deps = [
+        ":csdp_solver",
+        "//geometry/optimization:convex_set",
+    ],
+)
+
 add_lint_tests(enable_clang_format_lint = False)

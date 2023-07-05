@@ -10,7 +10,9 @@
 #include "drake/geometry/optimization/convex_set.h"
 #include "drake/geometry/optimization/hyperellipsoid.h"
 #include "drake/multibody/plant/multibody_plant.h"
+#include "drake/planning/collision_checker.h"
 #include "drake/solvers/mathematical_program.h"
+#include "drake/solvers/minimum_value_constraint.h"
 #include "drake/solvers/solver_interface.h"
 
 namespace drake {
@@ -87,6 +89,28 @@ class ClosestCollisionProgram {
   solvers::MathematicalProgram prog_;
   solvers::VectorXDecisionVariable q_;
   std::optional<solvers::Binding<solvers::LinearConstraint>> P_constraint_{};
+};
+
+class InCollisionConstraint final : public solvers::Constraint {
+ public:
+  DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(InCollisionConstraint)
+
+  InCollisionConstraint(const planning::CollisionChecker* collision_checker,
+                        solvers::MinimumValuePenaltyFunction penalty_function,
+                        double influence_distance);
+
+  ~InCollisionConstraint() override {}
+
+ private:
+  void DoEval(const Eigen::Ref<const Eigen::VectorXd>& x,
+              Eigen::VectorXd* y) const override;
+  void DoEval(const Eigen::Ref<const AutoDiffVecXd>& x,
+              AutoDiffVecXd* y) const override;
+  void DoEval(const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+              VectorX<symbolic::Expression>* y) const override;
+
+  const planning::CollisionChecker* const collision_checker_;
+  std::unique_ptr<solvers::MinimumValueConstraint> minimum_value_constraint_;
 };
 }  // namespace internal
 }  // namespace optimization

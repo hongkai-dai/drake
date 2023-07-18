@@ -155,6 +155,30 @@ class CspaceFreeBox : public CspaceFreePolytopeBase {
                 SeparatingPlaneOrder plane_order,
                 const Options& options = Options{});
 
+  /** Finds the certificates that the C-space box {q | q_box_lower <= q <=
+   * q_box_upper} is collision free.
+   *
+   * @param q_box_lower The lower bound of the C-space box.
+   * @param q_box_upper The upper bound of the C-space box.
+   * @param ignored_collision_pairs We ignore the pair of geometries in
+   * `ignored_collision_pairs`.
+   * @param[out] certificates Contains the certificate we successfully found for
+   * each pair of geometries. Notice that depending on `options`, the program
+   * could search for the certificate for each geometry pair in parallel, and
+   * will terminate the search once it fails to find the certificate for any
+   * pair.
+   * @retval success If true, then we have certified that the C-space box
+   * {q | q_box_lower<=q<=q_box_upper} is collision free. Otherwise
+   * success=false.
+   */
+  bool FindSeparationCertificateGivenBox(
+      const Eigen::Ref<const Eigen::VectorXd>& q_box_lower,
+      const Eigen::Ref<const Eigen::VectorXd>& q_box_upper,
+      const IgnoredCollisionPairs& ignored_collision_pairs,
+      const FindSeparationCertificateOptions& options,
+      std::unordered_map<SortedPair<geometry::GeometryId>,
+                         SeparationCertificateResult>* certificates) const;
+
  private:
   // Forward declare the tester class that will test the private members.
   friend class CspaceFreeBoxTester;
@@ -231,6 +255,15 @@ class CspaceFreeBox : public CspaceFreePolytopeBase {
       const Eigen::Ref<const Eigen::VectorXd>& q_box_lower,
       const Eigen::Ref<const Eigen::VectorXd>& q_box_upper,
       const FindSeparationCertificateOptions& options) const;
+
+  /**
+   Adds the constraint that each column of s_inner-pts is in the box s_box_lower
+   <= s <= s_box_upper.
+   */
+  void AddCspaceBoxContainment(solvers::MathematicalProgram* prog,
+                               const VectorX<symbolic::Variable>& s_box_lower,
+                               const VectorX<symbolic::Variable>& s_box_upper,
+                               const Eigen::MatrixXd& s_inner_pts) const;
 };
 }  // namespace optimization
 }  // namespace geometry

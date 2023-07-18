@@ -1,3 +1,6 @@
+#include <iostream>
+#include <queue>
+
 #include "drake/common/fmt_eigen.h"
 #include "drake/common/test_utilities/eigen_matrix_compare.h"
 #include "drake/common/test_utilities/symbolic_test_util.h"
@@ -12,6 +15,42 @@ namespace {
 // Only use two threads during testing. This value should match the "cpu" tag
 // in BUILD.bazel defining this test.
 constexpr int kTestConcurrency = 2;
+
+// Generate a matrix where each row is a grid point in the box.
+Eigen::MatrixXd CalcBoxGrid(const Eigen::Ref<const Eigen::VectorXd>& box_lower,
+                            const Eigen::Ref<const Eigen::VectorXd>& box_upper,
+                            const std::vector<int>& grid_size) {
+  const int x_dim = box_lower.rows();
+  DRAKE_DEMAND(box_upper.rows() == x_dim);
+  DRAKE_DEMAND(std::ssize(grid_size) == x_dim);
+  std::vector<Eigen::VectorXd> x_grid(x_dim);
+  for (int i = 0; i < x_dim; ++i) {
+    x_grid.push_back(
+        Eigen::VectorXd::LinSpaced(grid_size[i], box_lower(i), box_upper(i)));
+  }
+  std::queue<std::vector<double>> grid_pts;
+  grid_pts.emplace();
+  for (int i = 0; i < x_dim; ++i) {
+    const int queue_size = grid_pts.size();
+    for (int j = 0; j < queue_size; ++j) {
+      for (int k = 0; k < grid_size[i]; ++k) {
+        std::vector<double> grid = grid_pts.front();
+        grid.push_back(x_grid[i](k));
+        grid_pts.push(grid);
+      }
+      grid_pts.pop();
+    }
+  }
+  Eigen::MatrixXd ret(grid_pts.size(), x_dim);
+  int pt_count = 0;
+  while (!grid_pts.empty()) {
+    ret.row(pt_count) =
+        Eigen::Map<Eigen::RowVectorXd>(grid_pts.front().data(), x_dim);
+    pt_count++;
+    grid_pts.pop();
+  }
+  return ret;
+}
 
 // @param q_samples Each row of s_samples is a sampled configuration q.
 // @param a Maps the plane index to the separating plane parameter `a` in {x|
@@ -235,7 +274,9 @@ TEST_F(CIrisToyRobotTest, ConstructPlaneSearchProgram) {
   }
 }
 
-TEST_F(CIrisToyRobotTest, FindSeparationCertificateGivenBox) {
+TEST_F(CIrisToyRobotTest, FindSeparationCertificateGivenBoxSuccess) {
+  // Test FindSeparationCertificateGivenBox that successfully finds the
+  // certificates.
   CspaceFreeBoxTester tester(plant_, scene_graph_,
                              SeparatingPlaneOrder::kAffine);
   const Eigen::VectorXd q_position_lower = plant_->GetPositionLowerLimits();
@@ -298,6 +339,67 @@ TEST_F(CIrisToyRobotTest, FindSeparationCertificateGivenBox) {
           certificate_result->positive_side_rational_lagrangians);
       CheckSosLagrangians(
           certificate_result->negative_side_rational_lagrangians);
+    }
+    // Now test the public FindSeparationCertificateGivenBox function.
+    std::unordered_map<SortedPair<geometry::GeometryId>,
+                       CspaceFreeBox::SeparationCertificateResult>
+        certificates;
+    const bool is_success =
+        tester.cspace_free_box().FindSeparationCertificateGivenBox(
+            q_box_lower, q_box_upper, ignored_collision_pairs, options,
+            &certificates);
+    EXPECT_TRUE(is_success);
+    EXPECT_EQ(certificates.size(),
+              tester.cspace_free_box().separating_planes().size() -
+                  ignored_collision_pairs.size());
+  }
+}
+
+TEST_F(CIrisToyRobotTest, FindSeparationCertificateGivenBoxFailure) {
+  // Test FindSeparationCertificateGivenBox but fails.
+  CspaceFreeBoxTester tester(plant_, scene_graph_,
+                             SeparatingPlaneOrder::kAffine);
+  const Eigen::VectorXd q_position_lower = plant_->GetPositionLowerLimits();
+  const Eigen::VectorXd q_position_upper = plant_->GetPositionUpperLimits();
+  const Eigen::VectorXd q_box_lower =
+      0.8 * q_position_lower + 0.2 * q_position_upper;
+  const Eigen::VectorXd q_box_upper =
+      0.1 * q_position_lower + 0.9 * q_position_upper;
+  FindSeparationCertificateOptions options;
+  const CspaceFreeBox::IgnoredCollisionPairs ignored_collision_pairs{
+      SortedPair<geometry::GeometryId>(world_box_, body2_sphere_)};
+  Eigen::VectorXd s_box_lower;
+  Eigen::VectorXd s_box_upper;
+  Eigen::VectorXd q_star;
+  tester.ComputeSBox(q_box_lower, q_box_upper, &s_box_lower, &s_box_upper,
+                     &q_star);
+  const Eigen::MatrixXd q_samples =
+      CalcBoxGrid(q_box_lower, q_box_upper, {2, 3, 4});
+  std::cout << fmt::format("q_samples\n{}\n", fmt_eigen(q_samples));
+  for (int num_threads : {1, kTestConcurrency}) {
+    options.num_threads = num_threads;
+    options.terminate_at_failure = false;
+    const auto certificates_result = tester.FindSeparationCertificateGivenBox(
+        ignored_collision_pairs, q_box_lower, q_box_upper, options);
+    // At least one certificate is empty
+    EXPECT_TRUE(std::any_of(
+        certificates_result.begin(), certificates_result.end(),
+        [](const std::optional<CspaceFreeBox::SeparationCertificateResult>&
+               certificate) {
+          return !certificate.has_value();
+        }));
+    for (const auto& certificate_result : certificates_result) {
+      if (certificate_result.has_value()) {
+        const auto& separating_plane =
+            tester.cspace_free_box()
+                .separating_planes()[certificate_result->plane_index];
+        CheckSeparationBySamples(
+            tester, *(this->diagram_), q_samples, certificate_result->a,
+            certificate_result->b, q_star,
+            SortedPair<geometry::GeometryId>(
+                separating_plane.positive_side_geometry->id(),
+                separating_plane.negative_side_geometry->id()));
+      }
     }
   }
 }

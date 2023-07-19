@@ -133,8 +133,9 @@ class CspaceFreePolytopeBase {
                          const Options& options = Options{});
 
   /** Computes s-s_lower and s_upper - s as polynomials of s. */
+  template <typename T>
   void CalcSBoundsPolynomial(
-      const Eigen::VectorXd& s_lower, const Eigen::VectorXd& s_upper,
+      const VectorX<T>& s_lower, const VectorX<T>& s_upper,
       VectorX<symbolic::Polynomial>* s_minus_s_lower,
       VectorX<symbolic::Polynomial>* s_upper_minus_s) const;
 
@@ -218,6 +219,25 @@ class CspaceFreePolytopeBase {
       const std::vector<int>& active_plane_indices,
       const std::function<std::pair<bool, int>(int)>& solve_plane_sos,
       int num_threads, bool verbose, bool terminate_at_failure) const;
+
+  /**
+   Get the total size of all the decision variables for the Gram matrices, so as
+   to search for the polytope with given Lagrangian multipliers.
+   @param plane_geometries_vec This struct contains the information on the
+   rationals that we need to certify, so as to prove the existence of separating
+   planes.
+   @param ignored_collision_pairs The collision pairs that we ignore.
+   @param count_gram_per_rational We will impose the sos condition that certain
+   rational is always non-negative within a semialgebraic set. This function
+   returns the number of variables in the Gram matrices for this rational.
+   */
+  [[nodiscard]] int GetGramVarSizeForPolytopeSearchProgram(
+      const std::vector<PlaneSeparatesGeometries>& plane_geometries_vec,
+      const IgnoredCollisionPairs& ignored_collision_pairs,
+      const std::function<int(const symbolic::RationalFunction& rational,
+                              const std::array<VectorX<symbolic::Monomial>, 4>&
+                                  monomial_basis_array)>&
+          count_gram_per_rational) const;
 
  private:
   // Forward declare the tester class to test the private members.

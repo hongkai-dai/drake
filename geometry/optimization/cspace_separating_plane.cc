@@ -114,7 +114,7 @@ int ToPlaneDegree(SeparatingPlaneOrder plane_order) {
     }
   }
   DRAKE_UNREACHABLE();
-}
+};
 
 namespace internal {
 

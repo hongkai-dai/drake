@@ -240,15 +240,16 @@ class CspaceFreeBoxTester {
         plane_geometries, s_minus_s_lower, s_upper_minus_s);
   }
 
-  [[nodiscard]] std::vector<
-      std::optional<CspaceFreeBox::SeparationCertificateResult>>
-  FindSeparationCertificateGivenBox(
+  void FindSeparationCertificateGivenBox(
       const CspaceFreeBox::IgnoredCollisionPairs& ignored_collision_pairs,
       const Eigen::Ref<const Eigen::VectorXd>& q_box_lower,
       const Eigen::Ref<const Eigen::VectorXd>& q_box_upper,
-      const FindSeparationCertificateOptions& options) const {
+      const FindSeparationCertificateOptions& options, Eigen::VectorXd* q_star,
+      std::vector<std::optional<CspaceFreeBox::SeparationCertificateResult>>*
+          certificates_vec) const {
     return cspace_free_box_.FindSeparationCertificateGivenBox(
-        ignored_collision_pairs, q_box_lower, q_box_upper, options);
+        ignored_collision_pairs, q_box_lower, q_box_upper, options, q_star,
+        certificates_vec);
   }
 
  private:

@@ -73,7 +73,7 @@ void CheckSeparationBySamples(
       plant.GetMyMutableContextFromRoot(diagram_context.get());
 
   for (int i = 0; i < q_samples.rows(); ++i) {
-    const Eigen::Vector3d s_val =
+    const Eigen::VectorXd s_val =
         tester.cspace_free_box().rational_forward_kin().ComputeSValue(
             q_samples.row(i).transpose(), q_star);
     symbolic::Environment env;
@@ -318,8 +318,13 @@ TEST_F(CIrisToyRobotTest, FindSeparationCertificateGivenBoxSuccess) {
   for (int num_threads : {1, kTestConcurrency}) {
     options.num_threads = num_threads;
     options.terminate_at_failure = false;
-    const auto certificates_result = tester.FindSeparationCertificateGivenBox(
-        ignored_collision_pairs, q_box_lower, q_box_upper, options);
+    std::vector<std::optional<CspaceFreeBox::SeparationCertificateResult>>
+        certificates_result;
+    Eigen::VectorXd q_star_ret;
+    tester.FindSeparationCertificateGivenBox(ignored_collision_pairs,
+                                             q_box_lower, q_box_upper, options,
+                                             &q_star_ret, &certificates_result);
+    EXPECT_TRUE(CompareMatrices(q_star, q_star_ret));
     EXPECT_EQ(certificates_result.size(),
               tester.cspace_free_box().separating_planes().size() -
                   ignored_collision_pairs.size());
@@ -355,8 +360,9 @@ TEST_F(CIrisToyRobotTest, FindSeparationCertificateGivenBoxSuccess) {
     const bool is_success =
         tester.cspace_free_box().FindSeparationCertificateGivenBox(
             q_box_lower, q_box_upper, ignored_collision_pairs, options,
-            &certificates);
+            &q_star_ret, &certificates);
     EXPECT_TRUE(is_success);
+    EXPECT_TRUE(CompareMatrices(q_star, q_star_ret));
     EXPECT_EQ(certificates.size(),
               tester.cspace_free_box().separating_planes().size() -
                   ignored_collision_pairs.size());
@@ -389,11 +395,13 @@ TEST_F(CIrisToyRobotTest, FindSeparationCertificateGivenBoxFailure) {
     std::unordered_map<SortedPair<geometry::GeometryId>,
                        CspaceFreeBox::SeparationCertificateResult>
         certificates;
+    Eigen::VectorXd q_star_ret;
     const bool success =
         tester.cspace_free_box().FindSeparationCertificateGivenBox(
             q_box_lower, q_box_upper, ignored_collision_pairs, options,
-            &certificates);
+            &q_star_ret, &certificates);
     EXPECT_FALSE(success);
+    EXPECT_TRUE(CompareMatrices(q_star, q_star_ret));
     EXPECT_LT(certificates.size(),
               tester.cspace_free_box().separating_planes().size() -
                   ignored_collision_pairs.size());
@@ -427,6 +435,98 @@ TEST_F(CIrisToyRobotTest, FindSeparationCertificateGivenBoxFailure) {
     }
   }
 }
+
+TEST_F(CIrisToyRobotTest, InitializeBoxSearchProgram) {
+  CspaceFreeBoxTester tester(plant_, scene_graph_,
+                             SeparatingPlaneOrder::kAffine);
+  const Eigen::VectorXd q_position_lower = plant_->GetPositionLowerLimits();
+  const Eigen::VectorXd q_position_upper = plant_->GetPositionUpperLimits();
+  const Eigen::VectorXd q_box_lower =
+      0.8 * q_position_lower + 0.2 * q_position_upper;
+  const Eigen::VectorXd q_box_upper =
+      0.7 * q_position_lower + 0.3 * q_position_upper;
+  FindSeparationCertificateOptions options;
+  CspaceFreeBox::IgnoredCollisionPairs ignored_collision_pairs;
+  for (int i = 0; i < ssize(tester.cspace_free_box().separating_planes());
+       ++i) {
+    const auto& plane = tester.cspace_free_box().separating_planes()[i];
+    // TODO(hongkai.dai): I am not sure why, but when one of the collision
+    // geometry is world_cylinder_, and the other is not a cylinder, then Mosek
+    // says the problem is infeasible when searching for the box given the
+    // Lagrangian multiplier. I remember that in the CspaceFreePolytope we had
+    // similar problems. I will look into this separately.
+    if ((plane.positive_side_geometry->type() == CIrisGeometryType::kCylinder &&
+         plane.positive_side_geometry->body_index() ==
+             multibody::world_index()) ||
+        (plane.negative_side_geometry->type() == CIrisGeometryType::kCylinder &&
+         plane.negative_side_geometry->body_index() ==
+             multibody::world_index())) {
+      ignored_collision_pairs.insert(plane.geometry_pair());
+    }
+  }
+
+  std::unordered_map<SortedPair<geometry::GeometryId>,
+                     CspaceFreeBox::SeparationCertificateResult>
+      certificates;
+  Eigen::VectorXd q_star;
+  const bool success =
+      tester.cspace_free_box().FindSeparationCertificateGivenBox(
+          q_box_lower, q_box_upper, ignored_collision_pairs, options, &q_star,
+          &certificates);
+  ASSERT_TRUE(success);
+
+  VectorX<symbolic::Variable> s_box_lower;
+  VectorX<symbolic::Variable> s_box_upper;
+  std::unique_ptr<solvers::MathematicalProgram> prog =
+      tester.cspace_free_box().InitializeBoxSearchProgram(
+          ignored_collision_pairs, q_star, certificates, &s_box_lower,
+          &s_box_upper);
+  solvers::MosekSolver mosek_solver;
+  if (mosek_solver.available()) {
+    solvers::SolverOptions solver_options;
+    solver_options.SetOption(solvers::CommonSolverOption::kPrintToConsole,
+                             false);
+    auto result = mosek_solver.Solve(*prog, std::nullopt, solver_options);
+    ASSERT_TRUE(result.is_success());
+    const Eigen::VectorXd s_box_lower_sol = result.GetSolution(s_box_lower);
+    const Eigen::VectorXd s_box_upper_sol = result.GetSolution(s_box_upper);
+    const Eigen::VectorXd q_box_lower_sol =
+        tester.cspace_free_box().rational_forward_kin().ComputeQValue(
+            s_box_lower_sol, q_star);
+    const Eigen::VectorXd q_box_upper_sol =
+        tester.cspace_free_box().rational_forward_kin().ComputeQValue(
+            s_box_upper_sol, q_star);
+    EXPECT_TRUE((q_box_upper_sol.array() >= q_box_lower_sol.array()).all());
+    EXPECT_TRUE(
+        (q_box_upper_sol.array() <= plant_->GetPositionUpperLimits().array())
+            .all());
+    EXPECT_TRUE(
+        (q_box_lower_sol.array() >= plant_->GetPositionLowerLimits().array())
+            .all());
+    // Now check if the separating planes are valid.
+    const Eigen::MatrixXd q_samples =
+        CalcBoxGrid(q_box_lower_sol, q_box_upper_sol, {10, 10, 5, 5});
+    for (const auto& plane : tester.cspace_free_box().separating_planes()) {
+      if (ignored_collision_pairs.count(plane.geometry_pair()) == 0) {
+        Vector3<symbolic::Polynomial> a_sol;
+        for (int i = 0; i < 3; ++i) {
+          a_sol(i) = result.GetSolution(plane.a(i));
+        }
+        const symbolic::Polynomial b_sol = result.GetSolution(plane.b);
+        CheckSeparationBySamples(tester, *diagram_, q_samples, a_sol, b_sol,
+                                 q_star, plane.geometry_pair());
+        auto diagram_context = diagram_->CreateDefaultContext();
+        systems::Context<double>& plant_context =
+            plant_->GetMyMutableContextFromRoot(diagram_context.get());
+        EXPECT_FALSE(FindInCollisionPosture(*plant_, plane.geometry_pair(),
+                                            &plant_context, q_box_lower_sol,
+                                            q_box_upper_sol, std::nullopt)
+                         .has_value());
+      }
+    }
+  }
+}
+
 }  // namespace
 }  // namespace optimization
 }  // namespace geometry

@@ -220,8 +220,9 @@ void CspaceFreePolytopeBase::CalcMonomialBasis() {
   }
 }
 
+template <typename T>
 void CspaceFreePolytopeBase::CalcSBoundsPolynomial(
-    const Eigen::VectorXd& s_lower, const Eigen::VectorXd& s_upper,
+    const VectorX<T>& s_lower, const VectorX<T>& s_upper,
     VectorX<symbolic::Polynomial>* s_minus_s_lower,
     VectorX<symbolic::Polynomial>* s_upper_minus_s) const {
   const int s_size = rational_forward_kin().s().rows();
@@ -389,6 +390,40 @@ int CspaceFreePolytopeBase::GetSeparatingPlaneIndex(
              : map_geometries_to_separating_planes_.at(pair);
 }
 
+int CspaceFreePolytopeBase::GetGramVarSizeForPolytopeSearchProgram(
+    const std::vector<PlaneSeparatesGeometries>& plane_geometries_vec,
+    const IgnoredCollisionPairs& ignored_collision_pairs,
+    const std::function<int(const symbolic::RationalFunction& rational,
+                            const std::array<VectorX<symbolic::Monomial>, 4>&
+                                monomial_basis_array)>& count_gram_per_rational)
+    const {
+  int ret = 0;
+  for (const auto& plane_geometries : plane_geometries_vec) {
+    const auto& plane = separating_planes()[plane_geometries.plane_index];
+    if (ignored_collision_pairs.count(plane.geometry_pair()) == 0) {
+      const auto& monomial_basis_array_positive_side =
+          this->map_body_to_monomial_basis_array().at(
+              SortedPair<multibody::BodyIndex>(
+                  plane.expressed_body,
+                  plane.positive_side_geometry->body_index()));
+      for (const auto& rational : plane_geometries.positive_side_rationals) {
+        ret += count_gram_per_rational(rational,
+                                       monomial_basis_array_positive_side);
+      }
+      const auto& monomial_basis_array_negative_side =
+          this->map_body_to_monomial_basis_array().at(
+              SortedPair<multibody::BodyIndex>(
+                  plane.expressed_body,
+                  plane.negative_side_geometry->body_index()));
+      for (const auto& rational : plane_geometries.negative_side_rationals) {
+        ret += count_gram_per_rational(rational,
+                                       monomial_basis_array_negative_side);
+      }
+    }
+  }
+  return ret;
+}
+
 namespace internal {
 int GetGramVarSize(
     const std::array<VectorX<symbolic::Monomial>, 4>& monomial_basis_array,
@@ -496,6 +531,17 @@ void GramAndMonomialBasis::AddSos(
   }
 }
 }  // namespace internal
+
+// Explicit instantiation.
+template void CspaceFreePolytopeBase::CalcSBoundsPolynomial<double>(
+    const Eigen::VectorXd& s_lower, const Eigen::VectorXd& s_upper,
+    VectorX<symbolic::Polynomial>* s_minus_s_lower,
+    VectorX<symbolic::Polynomial>* s_upper_minus_s) const;
+template void CspaceFreePolytopeBase::CalcSBoundsPolynomial<symbolic::Variable>(
+    const VectorX<symbolic::Variable>& s_lower,
+    const VectorX<symbolic::Variable>& s_upper,
+    VectorX<symbolic::Polynomial>* s_minus_s_lower,
+    VectorX<symbolic::Polynomial>* s_upper_minus_s) const;
 }  // namespace optimization
 }  // namespace geometry
 }  // namespace drake

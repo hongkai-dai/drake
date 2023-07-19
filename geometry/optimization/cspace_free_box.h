@@ -163,6 +163,8 @@ class CspaceFreeBox : public CspaceFreePolytopeBase {
    * @param q_box_upper The upper bound of the C-space box.
    * @param ignored_collision_pairs We ignore the pair of geometries in
    * `ignored_collision_pairs`.
+   * @param[out] q_star The tangent-configuration variable s is defined as s =
+   * tan((q - q_star)/2) for the revolute joint.
    * @param[out] certificates Contains the certificate we successfully found for
    * each pair of geometries. Notice that depending on `options`, the program
    * could search for the certificate for each geometry pair in parallel, and
@@ -177,9 +179,31 @@ class CspaceFreeBox : public CspaceFreePolytopeBase {
       const Eigen::Ref<const Eigen::VectorXd>& q_box_lower,
       const Eigen::Ref<const Eigen::VectorXd>& q_box_upper,
       const IgnoredCollisionPairs& ignored_collision_pairs,
-      const FindSeparationCertificateOptions& options,
+      const FindSeparationCertificateOptions& options, Eigen::VectorXd* q_star,
       std::unordered_map<SortedPair<geometry::GeometryId>,
                          SeparationCertificateResult>* certificates) const;
+
+  /**
+   Constructs a program to search for the C-space box {s | s_box_lower <= s <=
+   s_box_upper} such that this box is collision free. This program treats
+   s_box_lower and s_box_upper as decision variables, and searches for the
+   separating planes between each pair of geometries.
+   Note that this program doesn't contain any cost yet.
+   @param certificates The return of
+   FindSeparationCertificateGivenBox().
+   @param[out] s_box_lower The C-space box is parameterized as {s | s_box_lower
+   <= s <= s_box_upper}.
+   @param[out] s_box_upper The C-space box is parameterized as {s | s_box_lower
+   <= s <= s_box_upper}.
+   */
+  [[nodiscard]] std::unique_ptr<solvers::MathematicalProgram>
+  InitializeBoxSearchProgram(
+      const IgnoredCollisionPairs& ignored_collision_pairs,
+      const Eigen::Ref<const Eigen::VectorXd>& q_star,
+      const std::unordered_map<SortedPair<geometry::GeometryId>,
+                               SeparationCertificateResult>& certificates,
+      VectorX<symbolic::Variable>* s_box_lower,
+      VectorX<symbolic::Variable>* s_box_upper) const;
 
  private:
   // Forward declare the tester class that will test the private members.
@@ -226,6 +250,14 @@ class CspaceFreeBox : public CspaceFreePolytopeBase {
       PolynomialsToCertify* certify_polynomials) const;
 
   /*
+   Generates all the PlaneSeparatesGeometries structs that we need to verify.
+   */
+  void GeneratePlaneGeometriesVec(
+      const Eigen::Ref<const Eigen::VectorXd>& q_star,
+      const IgnoredCollisionPairs& ignored_collision_pairs,
+      std::vector<PlaneSeparatesGeometries>* plane_geometries_vec) const;
+
+  /*
    Constructs the program which searches for the plane separating a pair of
    geometries, for all configuration in the box {q | q_box_lower <= q <=
    q_box_upper}.
@@ -254,12 +286,13 @@ class CspaceFreeBox : public CspaceFreePolytopeBase {
    The geometry pair which certificates[i] certifies is given by
    separating_planes()[certificates[i].plane_index].geometry_pair().
    */
-  [[nodiscard]] std::vector<std::optional<SeparationCertificateResult>>
-  FindSeparationCertificateGivenBox(
+  void FindSeparationCertificateGivenBox(
       const IgnoredCollisionPairs& ignored_collision_pairs,
       const Eigen::Ref<const Eigen::VectorXd>& q_box_lower,
       const Eigen::Ref<const Eigen::VectorXd>& q_box_upper,
-      const FindSeparationCertificateOptions& options) const;
+      const FindSeparationCertificateOptions& options, Eigen::VectorXd* q_star,
+      std::vector<std::optional<SeparationCertificateResult>>* certificates_vec)
+      const;
 
   /*
    Adds the constraint that each column of s_inner_pts is in the box s_box_lower
@@ -269,6 +302,52 @@ class CspaceFreeBox : public CspaceFreePolytopeBase {
                                const VectorX<symbolic::Variable>& s_box_lower,
                                const VectorX<symbolic::Variable>& s_box_upper,
                                const Eigen::MatrixXd& s_inner_pts) const;
+
+  /* When we fix the Lagrangian multipliers and search for the C-space box { s |
+   * s_box_lower <= s <= s_box_upper}, we count the total size of all Gram
+   * matrices in the SOS program. */
+  [[nodiscard]] int GetGramVarSizeForBoxSearchProgram(
+      const std::vector<PlaneSeparatesGeometries>& plane_geometries_vec) const;
+
+  /**
+   Overload InitializeBoxSearchProgram.
+   This overloaded function use input arguments that are constructed in other
+   private functions. Some of these input arguments can be re-used if we call
+   this InitializeBoxSearchProgram repeatedly (for example in bilinear search).
+   @param polynoials_to_certify Check the output argument of
+   GeneratePolynomialsToCertify.
+   @param certificates_vec This is the output of
+   FindSeparationCertificateGivenBox. It contains the Lagrangian multipliers
+   which will be fixed when we search for the C-space box.
+   @param s_box_lower The decision variables for the box lower corner.
+   @param s_box_upper The decision variables for the box upper corner.
+   @param s_minus_s_box_lower The polynomial representing s - s_box_lower.
+   @param s_box_upper_minus_s The polynomial representing s_box_upper - s.
+   @param gram_total_size The output of GetGramVarSizeForBoxSearchProgram.
+   */
+  [[nodiscard]] std::unique_ptr<solvers::MathematicalProgram>
+  InitializeBoxSearchProgram(
+      const Eigen::Ref<const Eigen::VectorXd>& q_star,
+      const std::vector<PlaneSeparatesGeometries>& plane_geometries_vec,
+      const std::vector<std::optional<SeparationCertificateResult>>&
+          certificates_vec,
+      const Eigen::Ref<const VectorX<symbolic::Variable>>& s_box_lower,
+      const Eigen::Ref<const VectorX<symbolic::Variable>>& s_box_upper,
+      const Eigen::Ref<const VectorX<symbolic::Polynomial>>&
+          s_minus_s_box_lower,
+      const Eigen::Ref<const VectorX<symbolic::Polynomial>>&
+          s_box_upper_minus_s,
+      int gram_total_size) const;
+
+  /*
+   Adds the constraint s_joint_limit_lower <= s_box_lower <= s_box_upper <=
+   s_joint_limit_upper.
+   */
+  void AddBoxInJointLimitConstraint(
+      solvers::MathematicalProgram* prog,
+      const Eigen::Ref<const Eigen::VectorXd>& q_star,
+      const VectorX<symbolic::Variable>& s_box_lower,
+      const VectorX<symbolic::Variable>& s_box_upper) const;
 };
 }  // namespace optimization
 }  // namespace geometry

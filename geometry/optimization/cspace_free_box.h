@@ -162,6 +162,70 @@ class CspaceFreeBox : public CspaceFreePolytopeBase {
      to contain some sampled q. Each column of q_inner_pts is a sample of q.
      */
     std::optional<Eigen::MatrixXd> q_inner_pts;
+
+    /** Refer to AddMaximizeBoxVolumeCost.
+     Use std::nullopt for a 0-vector.
+     */
+    std::optional<Eigen::VectorXd> box_volume_delta;
+  };
+
+  /** Options for bilinear alternation. */
+  struct BilinearAlternationOptions {
+    /** The maximum number of bilinear alternation iterations. Must be
+     * non-negative.
+     */
+    int max_iter{10};
+
+    /** When the change of the cost function between two consecutive
+     iterations in bilinear alternation is no larger than this number, stop the
+     bilinear alternation. Must be non-negative.
+     */
+    double convergence_tol{1E-3};
+
+    FindBoxGivenLagrangianOptions find_box_options;
+    FindSeparationCertificateOptions find_lagrangian_options;
+  };
+
+  /** Result on searching the C-space box and separating planes. */
+  class SearchResult {
+   public:
+    SearchResult() {}
+
+    [[nodiscard]] const Eigen::VectorXd& q_box_lower() const {
+      return q_box_lower_;
+    }
+
+    [[nodiscard]] const Eigen::VectorXd& q_box_upper() const {
+      return q_box_upper_;
+    }
+
+    [[nodiscard]] const Eigen::VectorXd& q_star() const { return q_star_; }
+
+    [[nodiscard]] const std::unordered_map<int, Vector3<symbolic::Polynomial>>&
+    a() const {
+      return separating_planes_.a();
+    }
+
+    [[nodiscard]] const std::unordered_map<int, symbolic::Polynomial>& b()
+        const {
+      return separating_planes_.b();
+    }
+
+    [[nodiscard]] int num_iter() const { return num_iter_; }
+
+   private:
+    friend class CspaceFreeBox;
+    void SetBox(const Eigen::Ref<const Eigen::VectorXd>& q_box_lower,
+                const Eigen::Ref<const Eigen::VectorXd>& q_box_upper,
+                const Eigen::Ref<const Eigen::VectorXd>& q_star);
+
+    Eigen::VectorXd q_box_lower_;
+    Eigen::VectorXd q_box_upper_;
+    Eigen::VectorXd q_star_;
+
+    CspaceFreePolytopeBase::SeparatingPlanesResult separating_planes_;
+    // The number of iterations at termination.
+    int num_iter_{};
   };
 
   /**
@@ -231,6 +295,23 @@ class CspaceFreeBox : public CspaceFreePolytopeBase {
                                SeparationCertificateResult>& certificates,
       VectorX<symbolic::Variable>* s_box_lower,
       VectorX<symbolic::Variable>* s_box_upper) const;
+
+  /** Searches for a collision-free C-space box {q | q_box_lower <= q <=
+   q_box_upper} through bilinear alternation.
+   The goal is to maximize certain measure on volume of the C-space box.
+   @param ignored_collision_pairs The paris of geometries that we ignore when
+   searching for separation certificates.
+   @param q_box_lower_init The initial value of q_box_lower.
+   @param q_box_upper_init The initial value of q_box_upper.
+   @param options The options for the bilinear alternation.
+   @retval results Stores the certification result in each iteration of the
+   bilinear alternation.
+   */
+  [[nodiscard]] std::vector<SearchResult> SearchWithBilinearAlternation(
+      const IgnoredCollisionPairs& ignored_collision_pairs,
+      const Eigen::Ref<const Eigen::VectorXd>& q_box_lower_init,
+      const Eigen::Ref<const Eigen::VectorXd>& q_box_upper_init,
+      const BilinearAlternationOptions& options) const;
 
  private:
   // Forward declare the tester class that will test the private members.
@@ -406,8 +487,7 @@ class CspaceFreeBox : public CspaceFreePolytopeBase {
           s_minus_s_box_lower,
       const Eigen::Ref<const VectorX<symbolic::Polynomial>>&
           s_box_upper_minus_s,
-      int gram_total_size, const Eigen::VectorXd& box_volume_delta,
-      const FindBoxGivenLagrangianOptions& options) const;
+      int gram_total_size, const FindBoxGivenLagrangianOptions& options) const;
 };
 
 /*

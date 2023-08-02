@@ -281,12 +281,12 @@ class CspaceFreeBoxTester {
           s_minus_s_box_lower,
       const Eigen::Ref<const VectorX<symbolic::Polynomial>>&
           s_box_upper_minus_s,
-      int gram_total_size, const Eigen::VectorXd& box_volume_delta,
+      int gram_total_size,
       const CspaceFreeBox::FindBoxGivenLagrangianOptions& options) const {
     const auto result = cspace_free_box_.FindBoxGivenLagrangian(
         q_star, plane_geometries_vec, certificates_vec, s_box_lower,
         s_box_upper, s_minus_s_box_lower, s_box_upper_minus_s, gram_total_size,
-        box_volume_delta, options);
+        options);
     std::optional<FindBoxGivenLagrangianResult> ret;
     if (result.has_value()) {
       ret.emplace(FindBoxGivenLagrangianResult());

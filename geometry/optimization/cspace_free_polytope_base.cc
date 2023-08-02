@@ -87,6 +87,19 @@ void FindMonomialBasisArray(
 
 }  // namespace
 
+CspaceFreePolytopeBase::SeparatingPlanesResult::SeparatingPlanesResult() {}
+
+void CspaceFreePolytopeBase::SeparatingPlanesResult::Set(
+    std::unordered_map<int, Vector3<symbolic::Polynomial>> a,
+    std::unordered_map<int, symbolic::Polynomial> b) {
+  a_ = std::move(a);
+  b_ = std::move(b);
+  DRAKE_THROW_UNLESS(a_.size() == b_.size());
+  for (const auto& [plane_index, a_poly] : a_) {
+    DRAKE_THROW_UNLESS(b_.count(plane_index) > 0);
+  }
+}
+
 CspaceFreePolytopeBase::CspaceFreePolytopeBase(
     const multibody::MultibodyPlant<double>* plant,
     const geometry::SceneGraph<double>* scene_graph,

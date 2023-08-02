@@ -81,6 +81,53 @@ class CspaceFreePolytopeBase {
     bool with_cross_y{false};
   };
 
+  class SeparatingPlanesResult {
+   public:
+    DRAKE_DEFAULT_COPY_AND_MOVE_AND_ASSIGN(SeparatingPlanesResult)
+
+    SeparatingPlanesResult();
+
+    const std::unordered_map<int, Vector3<symbolic::Polynomial>>& a() const {
+      return a_;
+    }
+
+    const std::unordered_map<int, symbolic::Polynomial>& b() const {
+      return b_;
+    }
+
+    void Set(std::unordered_map<int, Vector3<symbolic::Polynomial>> a,
+             std::unordered_map<int, symbolic::Polynomial> b);
+
+    template <typename SeparationCertificateResultType>
+    void Set(const std::vector<std::optional<SeparationCertificateResultType>>&
+                 certificates_result) {
+      a_.clear();
+      b_.clear();
+      for (const auto& certificate : certificates_result) {
+        DRAKE_THROW_UNLESS(certificate.has_value());
+        a_.emplace(certificate->plane_index, certificate->a);
+        b_.emplace(certificate->plane_index, certificate->b);
+      }
+    }
+
+    template <typename SeparationCertificateResultType>
+    void Update(
+        const std::vector<std::optional<SeparationCertificateResultType>>&
+            certificates_result) {
+      for (const auto& certificate : certificates_result) {
+        if (certificate.has_value()) {
+          a_.insert_or_assign(certificate->plane_index, certificate->a);
+          b_.insert_or_assign(certificate->plane_index, certificate->b);
+        }
+      }
+    }
+
+   private:
+    // a[i].dot(x) + b[i]=0 is the separation plane for separating_planes()[i].
+    std::unordered_map<int, Vector3<symbolic::Polynomial>> a_;
+    std::unordered_map<int, symbolic::Polynomial> b_;
+  };
+
   /** Getter for the rational forward kinematics object that computes the
    * forward kinematics as rational functions. */
   [[nodiscard]] const multibody::RationalForwardKinematics&

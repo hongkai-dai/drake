@@ -618,41 +618,6 @@ void CspaceFreePolytope::SearchResult::SetPolytope(
   certified_polytope_ = cspace_free_polytope.GetPolyhedronWithJointLimits(C, d);
 }
 
-void CspaceFreePolytope::SearchResult::SetSeparatingPlanes(
-    std::unordered_map<int, Vector3<symbolic::Polynomial>> a,
-    std::unordered_map<int, symbolic::Polynomial> b) {
-  // Check that a and b have the same keys.
-  DRAKE_THROW_UNLESS(a.size() == b.size());
-  for (const auto& [plane_index, a_poly] : a) {
-    DRAKE_THROW_UNLESS(b.count(plane_index) > 0);
-  }
-  a_ = std::move(a);
-  b_ = std::move(b);
-}
-
-void CspaceFreePolytope::SearchResult::SetSeparatingPlanes(
-    const std::vector<std::optional<SeparationCertificateResult>>&
-        certificates_result) {
-  a_.clear();
-  b_.clear();
-  for (const auto& certificate : certificates_result) {
-    DRAKE_THROW_UNLESS(certificate.has_value());
-    a_.emplace(certificate->plane_index, certificate->a);
-    b_.emplace(certificate->plane_index, certificate->b);
-  }
-}
-
-void CspaceFreePolytope::SearchResult::UpdateSeparatingPlanes(
-    const std::vector<std::optional<SeparationCertificateResult>>&
-        certificates_result) {
-  for (const auto& certificate : certificates_result) {
-    if (certificate.has_value()) {
-      a_.insert_or_assign(certificate->plane_index, certificate->a);
-      b_.insert_or_assign(certificate->plane_index, certificate->b);
-    }
-  }
-}
-
 std::vector<CspaceFreePolytope::SearchResult>
 CspaceFreePolytope::SearchWithBilinearAlternation(
     const IgnoredCollisionPairs& ignored_collision_pairs,
@@ -715,7 +680,7 @@ CspaceFreePolytope::SearchWithBilinearAlternation(
     ret.emplace_back();
     ret.back().SetPolytope(C, d, *this);
     ret.back().num_iter_ = iter;
-    ret.back().SetSeparatingPlanes(certificates_result);
+    ret.back().separating_planes_.Set(certificates_result);
 
     // Now fix the Lagrangian and search for C-space polytope and separating
     // planes.
@@ -729,8 +694,8 @@ CspaceFreePolytope::SearchWithBilinearAlternation(
       C = polytope_result->C;
       d = polytope_result->d;
       ret.back().SetPolytope(polytope_result->C, polytope_result->d, *this);
-      ret.back().SetSeparatingPlanes(std::move(polytope_result->a),
-                                     std::move(polytope_result->b));
+      ret.back().separating_planes_.Set(std::move(polytope_result->a),
+                                        std::move(polytope_result->b));
       ret.back().num_iter_ = iter;
       // Now find the inscribed ellipsoid.
       ellipsoid =
@@ -836,11 +801,11 @@ CspaceFreePolytope::BinarySearch(
       // We might have found the certificates for some (but not all) geometry
       // pairs, so we still update the separation planes for these certified
       // pairs.
-      ret.UpdateSeparatingPlanes(certificates_result);
+      ret.separating_planes_.Update(certificates_result);
       return false;
     } else {
       ret.SetPolytope(C, d, *this);
-      ret.UpdateSeparatingPlanes(certificates_result);
+      ret.separating_planes_.Update(certificates_result);
       return true;
     }
   };

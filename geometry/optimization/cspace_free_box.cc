@@ -15,6 +15,26 @@ namespace geometry {
 namespace optimization {
 namespace {
 const double kInf = std::numeric_limits<double>::infinity();
+
+// Compute the volume of the elongated box in the TC space {s | s_box_lower <= s
+// <= s_box_upper + box_volume_delta}.
+[[nodiscard]] double ComputeTCBoxVolume(
+    const Eigen::Ref<const Eigen::VectorXd>& s_box_lower,
+    const Eigen::Ref<const Eigen::VectorXd>& s_box_upper,
+    const std::optional<Eigen::VectorXd>& box_volume_delta) {
+  DRAKE_DEMAND((s_box_upper.array() >= s_box_lower.array()).all());
+  return (s_box_upper - s_box_lower +
+          box_volume_delta.value_or(Eigen::VectorXd::Zero(s_box_lower.rows())))
+      .prod();
+}
+
+// Compute the volume of the C-space box {q | q_box_lower <= q <= q_box_upper}.
+[[nodiscard]] double ComputeCBoxVolume(
+    const Eigen::Ref<const Eigen::VectorXd>& q_box_lower,
+    const Eigen::Ref<const Eigen::VectorXd>& q_box_upper) {
+  DRAKE_DEMAND((q_box_upper.array() >= q_box_lower.array()).all());
+  return (q_box_upper - q_box_lower).prod();
+}
 }  // namespace
 
 CspaceFreeBox::SeparationCertificateResult
@@ -47,6 +67,18 @@ CspaceFreeBox::SeparationCertificate::GetSolution(
 
   ret.plane_decision_var_vals = result.GetSolution(plane_decision_vars);
   return ret;
+}
+
+void CspaceFreeBox::SearchResult::SetBox(
+    const Eigen::Ref<const Eigen::VectorXd>& q_box_lower,
+    const Eigen::Ref<const Eigen::VectorXd>& q_box_upper,
+    const Eigen::Ref<const Eigen::VectorXd>& q_star) {
+  DRAKE_DEMAND(q_box_lower.rows() == q_box_upper.rows());
+  DRAKE_DEMAND(q_box_lower.rows() == q_star.rows());
+  DRAKE_DEMAND((q_box_lower.array() <= q_box_upper.array()).all());
+  q_box_lower_ = q_box_lower;
+  q_box_upper_ = q_box_upper;
+  q_star_ = q_star;
 }
 
 CspaceFreeBox::CspaceFreeBox(const multibody::MultibodyPlant<double>* plant,
@@ -537,12 +569,14 @@ CspaceFreeBox::FindBoxGivenLagrangian(
     const Eigen::Ref<const VectorX<symbolic::Variable>>& s_box_upper,
     const Eigen::Ref<const VectorX<symbolic::Polynomial>>& s_minus_s_box_lower,
     const Eigen::Ref<const VectorX<symbolic::Polynomial>>& s_box_upper_minus_s,
-    int gram_total_size, const Eigen::VectorXd& box_volume_delta,
-    const FindBoxGivenLagrangianOptions& options) const {
+    int gram_total_size, const FindBoxGivenLagrangianOptions& options) const {
   auto prog = this->InitializeBoxSearchProgram(
       q_star, plane_geometries_vec, certificates_vec, s_box_lower, s_box_upper,
       s_minus_s_box_lower, s_box_upper_minus_s, gram_total_size);
 
+  const int s_size = this->rational_forward_kin().s().rows();
+  const Eigen::VectorXd box_volume_delta =
+      options.box_volume_delta.value_or(Eigen::VectorXd::Zero(s_size));
   AddMaximizeBoxVolumeCost(prog.get(), s_box_lower, s_box_upper,
                            box_volume_delta);
   if (options.q_inner_pts.has_value()) {
@@ -575,6 +609,116 @@ CspaceFreeBox::FindBoxGivenLagrangian(
       ret->a.emplace(plane_index, a);
       ret->b.emplace(plane_index, result.GetSolution(plane.b));
     }
+  }
+  return ret;
+}
+
+std::vector<CspaceFreeBox::SearchResult>
+CspaceFreeBox::SearchWithBilinearAlternation(
+    const IgnoredCollisionPairs& ignored_collision_pairs,
+    const Eigen::Ref<const Eigen::VectorXd>& q_box_lower_init,
+    const Eigen::Ref<const Eigen::VectorXd>& q_box_upper_init,
+    const BilinearAlternationOptions& options) const {
+  const int nq = this->rational_forward_kin().plant().num_positions();
+  DRAKE_THROW_UNLESS(q_box_lower_init.rows() == nq);
+  DRAKE_THROW_UNLESS(q_box_upper_init.rows() == nq);
+  DRAKE_THROW_UNLESS(
+      (q_box_lower_init.array() <= q_box_upper_init.array()).all());
+  DRAKE_THROW_UNLESS(options.max_iter >= 0);
+  DRAKE_THROW_UNLESS(options.convergence_tol >= 0);
+  std::vector<CspaceFreeBox::SearchResult> ret{};
+  int iter = 0;
+  // Create symbolic variables for s_box_lower and s_box_upper.
+  const int s_size = rational_forward_kin().s().rows();
+  const VectorX<symbolic::Variable> s_box_lower_var =
+      symbolic::MakeVectorContinuousVariable(s_size, "s_box_lower");
+  const VectorX<symbolic::Variable> s_box_upper_var =
+      symbolic::MakeVectorContinuousVariable(s_size, "s_box_upper");
+  VectorX<symbolic::Polynomial> s_minus_s_box_lower;
+  VectorX<symbolic::Polynomial> s_box_upper_minus_s;
+  this->CalcSBoundsPolynomial<symbolic::Variable>(
+      s_box_lower_var, s_box_upper_var, &s_minus_s_box_lower,
+      &s_box_upper_minus_s);
+  Eigen::VectorXd q_box_lower = q_box_lower_init;
+  Eigen::VectorXd q_box_upper = q_box_upper_init;
+  Eigen::VectorXd s_box_lower_val;
+  Eigen::VectorXd s_box_upper_val;
+  Eigen::VectorXd q_star;
+  while (iter < options.max_iter) {
+    this->ComputeSBox(q_box_lower, q_box_upper, &s_box_lower_val,
+                      &s_box_upper_val, &q_star);
+    double tc_box_volume_prev =
+        ComputeTCBoxVolume(s_box_lower_val, s_box_upper_val,
+                           options.find_box_options.box_volume_delta);
+    PolynomialsToCertify polynomials_to_certify;
+    this->GeneratePolynomialsToCertify(s_box_lower_val, s_box_upper_val, q_star,
+                                       ignored_collision_pairs,
+                                       &polynomials_to_certify);
+    std::vector<std::optional<SeparationCertificateResult>> certificates_vec;
+    this->FindSeparationCertificateGivenBoxImpl(polynomials_to_certify,
+                                                options.find_lagrangian_options,
+                                                &certificates_vec);
+
+    if (std::any_of(
+            certificates_vec.begin(), certificates_vec.end(),
+            [](const std::optional<SeparationCertificateResult>& certificate) {
+              return !certificate.has_value();
+            })) {
+      drake::log()->debug(
+          "Cannot find the separation certificate at iteration {} given the "
+          "box",
+          iter);
+      break;
+    }
+    ret.emplace_back();
+    ret.back().SetBox(q_box_lower, q_box_upper, q_star);
+    ret.back().num_iter_ = iter;
+    ret.back().separating_planes_.Set(certificates_vec);
+
+    // Now fix the Lagrangian and search for C-space box and separating planes.
+    const int gram_total_size_in_box_program =
+        this->GetGramVarSizeForBoxSearchProgram(
+            polynomials_to_certify.plane_geometries);
+    const std::optional<FindBoxGivenLagrangianResult> box_result =
+        this->FindBoxGivenLagrangian(
+            q_star, polynomials_to_certify.plane_geometries, certificates_vec,
+            s_box_lower_var, s_box_upper_var, s_minus_s_box_lower,
+            s_box_upper_minus_s, gram_total_size_in_box_program,
+            options.find_box_options);
+    if (box_result.has_value()) {
+      const Eigen::VectorXd q_box_lower_sol =
+          this->rational_forward_kin().ComputeQValue(box_result->s_box_lower,
+                                                     q_star);
+      const Eigen::VectorXd q_box_upper_sol =
+          this->rational_forward_kin().ComputeQValue(box_result->s_box_upper,
+                                                     q_star);
+      ret.back().SetBox(q_box_lower_sol, q_box_upper_sol, q_star);
+      ret.back().separating_planes_.Set(box_result->a, box_result->b);
+      ret.back().num_iter_ = iter;
+
+      // Compute the cost function value.
+      const double tc_box_volume =
+          ComputeTCBoxVolume(box_result->s_box_lower, box_result->s_box_upper,
+                             options.find_box_options.box_volume_delta);
+      const double c_box_volume =
+          ComputeCBoxVolume(q_box_lower_sol, q_box_upper_sol);
+      drake::log()->debug(
+          "Iteration {}: TC-space inflated box volume={}, C-space box "
+          "volume={}",
+          iter, tc_box_volume, c_box_volume);
+      if ((tc_box_volume - tc_box_volume_prev) / tc_box_volume_prev <
+          options.convergence_tol) {
+        // Converged.
+        break;
+      }
+    } else {
+      drake::log()->debug(
+          "SearchWithBilinearAlternation: cannot find the separation "
+          "certificate at iteration {} given the Lagrangians.",
+          iter);
+      break;
+    }
+    ++iter;
   }
   return ret;
 }

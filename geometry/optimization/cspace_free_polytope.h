@@ -287,13 +287,13 @@ class CspaceFreePolytope : public CspaceFreePolytopeBase {
     /** Each plane index is mapped to a vector of polynomials. */
     [[nodiscard]] const std::unordered_map<int, Vector3<symbolic::Polynomial>>&
     a() const {
-      return a_;
+      return separating_planes_.a();
     }
 
     /** Each plane index is mapped to a polynomial, */
     [[nodiscard]] const std::unordered_map<int, symbolic::Polynomial>& b()
         const {
-      return b_;
+      return separating_planes_.b();
     }
 
     /** The number of iterations taken to search for the result. */
@@ -305,30 +305,13 @@ class CspaceFreePolytope : public CspaceFreePolytopeBase {
                      const Eigen::Ref<const Eigen::VectorXd>& d,
                      const CspaceFreePolytope& cspace_free_polytope);
 
-    void SetSeparatingPlanes(
-        std::unordered_map<int, Vector3<symbolic::Polynomial>> a,
-        std::unordered_map<int, symbolic::Polynomial> b);
-
-    // Clear this->a and this->b and reset their values.
-    // Each entry in certificates_result should have a value (cannot be
-    // nullopt).
-    void SetSeparatingPlanes(
-        const std::vector<std::optional<SeparationCertificateResult>>&
-            certificates_result);
-
-    // Update this->a and this->b with the values in certificates_result.
-    void UpdateSeparatingPlanes(
-        const std::vector<std::optional<SeparationCertificateResult>>&
-            certificates_results);
-
     Eigen::MatrixXd C_;
     Eigen::VectorXd d_;
     // This is the certified C-space polytope {s | C * s <= d, s_lower <= s <=
     // s_upper}.
     HPolyhedron certified_polytope_;
-    // a[i].dot(x) + b[i]=0 is the separation plane for separating_planes()[i].
-    std::unordered_map<int, Vector3<symbolic::Polynomial>> a_;
-    std::unordered_map<int, symbolic::Polynomial> b_;
+
+    CspaceFreePolytopeBase::SeparatingPlanesResult separating_planes_;
     // The number of iterations at termination.
     int num_iter_{};
   };
@@ -376,8 +359,8 @@ class CspaceFreePolytope : public CspaceFreePolytopeBase {
 
   /** Options for binary search. */
   struct BinarySearchOptions {
-    /** The maximal value of the scaling factor.
-     Must be finite and no less than scale_min. */
+    /** The maximal value of the scaling factor. Must be finite and no less than
+     * scale_min. */
     double scale_max{1};
     /** The minimal value of the scaling factor.
      Must be non-negative. */

@@ -130,6 +130,27 @@ std::optional<Eigen::VectorXd> FindInCollisionPosture(
   }
 }
 
+[[nodiscard]] CspaceFreeBox::IgnoredCollisionPairs IgnoreWorldCylinder(
+    const CspaceFreePolytopeBase& cspace_free_polytope_base) {
+  CspaceFreeBox::IgnoredCollisionPairs ignored_collision_pairs;
+  for (const auto& plane : cspace_free_polytope_base.separating_planes()) {
+    // TODO(hongkai.dai): I am not sure why, but when one of the collision
+    // geometry is world_cylinder_, and the other is not a cylinder, then Mosek
+    // says the problem is infeasible when searching for the box given the
+    // Lagrangian multiplier. I remember that in the CspaceFreePolytope we had
+    // similar problems. I will look into this separately.
+    if ((plane.positive_side_geometry->type() == CIrisGeometryType::kCylinder &&
+         plane.positive_side_geometry->body_index() ==
+             multibody::world_index()) ||
+        (plane.negative_side_geometry->type() == CIrisGeometryType::kCylinder &&
+         plane.negative_side_geometry->body_index() ==
+             multibody::world_index())) {
+      ignored_collision_pairs.insert(plane.geometry_pair());
+    }
+  }
+  return ignored_collision_pairs;
+}
+
 TEST_F(CIrisToyRobotTest, ConstructPlaneSearchProgram) {
   CspaceFreeBoxTester tester(plant_, scene_graph_,
                              SeparatingPlaneOrder::kAffine);
@@ -448,24 +469,8 @@ TEST_F(CIrisToyRobotTest, InitializeBoxSearchProgram) {
   const Eigen::VectorXd q_box_upper =
       0.7 * q_position_lower + 0.3 * q_position_upper;
   FindSeparationCertificateOptions options;
-  CspaceFreeBox::IgnoredCollisionPairs ignored_collision_pairs;
-  for (int i = 0; i < ssize(tester.cspace_free_box().separating_planes());
-       ++i) {
-    const auto& plane = tester.cspace_free_box().separating_planes()[i];
-    // TODO(hongkai.dai): I am not sure why, but when one of the collision
-    // geometry is world_cylinder_, and the other is not a cylinder, then Mosek
-    // says the problem is infeasible when searching for the box given the
-    // Lagrangian multiplier. I remember that in the CspaceFreePolytope we had
-    // similar problems. I will look into this separately.
-    if ((plane.positive_side_geometry->type() == CIrisGeometryType::kCylinder &&
-         plane.positive_side_geometry->body_index() ==
-             multibody::world_index()) ||
-        (plane.negative_side_geometry->type() == CIrisGeometryType::kCylinder &&
-         plane.negative_side_geometry->body_index() ==
-             multibody::world_index())) {
-      ignored_collision_pairs.insert(plane.geometry_pair());
-    }
-  }
+  CspaceFreeBox::IgnoredCollisionPairs ignored_collision_pairs =
+      IgnoreWorldCylinder(tester.cspace_free_box());
 
   std::unordered_map<SortedPair<geometry::GeometryId>,
                      CspaceFreeBox::SeparationCertificateResult>
@@ -565,24 +570,8 @@ TEST_F(CIrisToyRobotTest, FindBoxGivenLagrangian) {
   const Eigen::VectorXd q_box_upper =
       0.7 * q_position_lower + 0.3 * q_position_upper;
   FindSeparationCertificateOptions options;
-  CspaceFreeBox::IgnoredCollisionPairs ignored_collision_pairs;
-  for (int i = 0; i < ssize(tester.cspace_free_box().separating_planes());
-       ++i) {
-    const auto& plane = tester.cspace_free_box().separating_planes()[i];
-    // TODO(hongkai.dai): I am not sure why, but when one of the collision
-    // geometry is world_cylinder_, and the other is not a cylinder, then Mosek
-    // says the problem is infeasible when searching for the box given the
-    // Lagrangian multiplier. I remember that in the CspaceFreePolytope we had
-    // similar problems. I will look into this separately.
-    if ((plane.positive_side_geometry->type() == CIrisGeometryType::kCylinder &&
-         plane.positive_side_geometry->body_index() ==
-             multibody::world_index()) ||
-        (plane.negative_side_geometry->type() == CIrisGeometryType::kCylinder &&
-         plane.negative_side_geometry->body_index() ==
-             multibody::world_index())) {
-      ignored_collision_pairs.insert(plane.geometry_pair());
-    }
-  }
+  CspaceFreeBox::IgnoredCollisionPairs ignored_collision_pairs =
+      IgnoreWorldCylinder(tester.cspace_free_box());
 
   Eigen::VectorXd s_box_lower;
   Eigen::VectorXd s_box_upper;
@@ -621,19 +610,18 @@ TEST_F(CIrisToyRobotTest, FindBoxGivenLagrangian) {
   const int gram_total_size = tester.GetGramVarSizeForBoxSearchProgram(
       polynomials_to_certify.data.plane_geometries);
 
-  const Eigen::Vector3d box_volume_delta(0.1, 0.2, 0.3);
-
   CspaceFreeBox::FindBoxGivenLagrangianOptions find_box_options;
   find_box_options.backoff_scale.emplace(0.01);
   find_box_options.solver_options.emplace(solvers::SolverOptions());
   find_box_options.solver_options->SetOption(
       solvers::CommonSolverOption::kPrintToConsole, false);
+  find_box_options.box_volume_delta.emplace(Eigen::Vector3d(0.1, 0.2, 0.3));
   std::optional<CspaceFreeBoxTester::FindBoxGivenLagrangianResult>
       find_box_result = tester.FindBoxGivenLagrangian(
           q_star, polynomials_to_certify.data.plane_geometries,
           certificates_vec, s_box_lower_sym, s_box_upper_sym,
           s_minus_s_box_lower_sym, s_box_upper_minus_s_sym, gram_total_size,
-          box_volume_delta, find_box_options);
+          find_box_options);
   ASSERT_TRUE(find_box_result.has_value());
 
   // Now check the certificate separating planes.
@@ -661,6 +649,58 @@ TEST_F(CIrisToyRobotTest, FindBoxGivenLagrangian) {
                        .has_value());
     }
   }
+}
+
+TEST_F(CIrisToyRobotTest, SearchWithBilinearAlternation) {
+  CspaceFreeBoxTester tester(plant_, scene_graph_,
+                             SeparatingPlaneOrder::kAffine);
+  const Eigen::VectorXd q_position_lower = plant_->GetPositionLowerLimits();
+  const Eigen::VectorXd q_position_upper = plant_->GetPositionUpperLimits();
+  const Eigen::VectorXd q_box_lower =
+      0.8 * q_position_lower + 0.2 * q_position_upper;
+  const Eigen::VectorXd q_box_upper =
+      0.7 * q_position_lower + 0.3 * q_position_upper;
+  CspaceFreeBox::IgnoredCollisionPairs ignored_collision_pairs =
+      IgnoreWorldCylinder(tester.cspace_free_box());
+
+  CspaceFreeBox::BilinearAlternationOptions options;
+  options.max_iter = 5;
+  options.convergence_tol = 1E-5;
+  options.find_box_options.backoff_scale = 0.02;
+  options.find_lagrangian_options.num_threads = kTestConcurrency;
+
+  auto bilinear_alternation_results =
+      tester.cspace_free_box().SearchWithBilinearAlternation(
+          ignored_collision_pairs, q_box_lower, q_box_upper, options);
+  ASSERT_FALSE(bilinear_alternation_results.empty());
+  ASSERT_EQ(bilinear_alternation_results.size(),
+            bilinear_alternation_results.back().num_iter() + 1);
+  // Check if the box we find is really collision free.
+  const Eigen::MatrixXd q_samples = CalcBoxGrid(
+      bilinear_alternation_results.back().q_box_lower(),
+      bilinear_alternation_results.back().q_box_upper(), {10, 10, 10});
+  for (int plane_index = 0;
+       plane_index < ssize(tester.cspace_free_box().separating_planes());
+       ++plane_index) {
+    const auto& plane =
+        tester.cspace_free_box().separating_planes()[plane_index];
+    if (ignored_collision_pairs.count(plane.geometry_pair()) == 0) {
+      CheckSeparationBySamples(
+          tester, *diagram_, q_samples,
+          bilinear_alternation_results.back().a().at(plane_index),
+          bilinear_alternation_results.back().b().at(plane_index),
+          bilinear_alternation_results.back().q_star(), plane.geometry_pair());
+    }
+  }
+
+  // Test the case that bilinear alternation fails.
+  // The initial C-space box is too huge.
+  const Eigen::VectorXd q_box_upper_failure =
+      0.1 * q_position_lower + 0.9 * q_position_upper;
+  auto bilinear_alternation_results_failure =
+      tester.cspace_free_box().SearchWithBilinearAlternation(
+          ignored_collision_pairs, q_box_lower, q_box_upper_failure, options);
+  EXPECT_TRUE(bilinear_alternation_results_failure.empty());
 }
 
 }  // namespace

@@ -71,14 +71,16 @@ CspaceFreeBox::SeparationCertificate::GetSolution(
 
 void CspaceFreeBox::SearchResult::SetBox(
     const Eigen::Ref<const Eigen::VectorXd>& q_box_lower,
-    const Eigen::Ref<const Eigen::VectorXd>& q_box_upper,
-    const Eigen::Ref<const Eigen::VectorXd>& q_star) {
+    const Eigen::Ref<const Eigen::VectorXd>& q_box_upper) {
   DRAKE_DEMAND(q_box_lower.rows() == q_box_upper.rows());
-  DRAKE_DEMAND(q_box_lower.rows() == q_star.rows());
   DRAKE_DEMAND((q_box_lower.array() <= q_box_upper.array()).all());
   q_box_lower_ = q_box_lower;
   q_box_upper_ = q_box_upper;
-  q_star_ = q_star;
+}
+
+void CspaceFreeBox::SearchResult::UpdateQStar(
+    int i, const Eigen::Ref<const Eigen::VectorXd>& q_star) {
+  q_star_.insert_or_assign(i, q_star);
 }
 
 CspaceFreeBox::CspaceFreeBox(const multibody::MultibodyPlant<double>* plant,
@@ -98,6 +100,16 @@ bool CspaceFreeBox::FindSeparationCertificateGivenBox(
     const FindSeparationCertificateOptions& options, Eigen::VectorXd* q_star,
     std::unordered_map<SortedPair<geometry::GeometryId>,
                        SeparationCertificateResult>* certificates) const {
+  DRAKE_DEMAND(q_star != nullptr);
+  DRAKE_DEMAND(certificates != nullptr);
+  DRAKE_DEMAND(
+      (q_box_lower.array() >=
+       this->rational_forward_kin().plant().GetPositionLowerLimits().array())
+          .all());
+  DRAKE_DEMAND(
+      (q_box_upper.array() <=
+       this->rational_forward_kin().plant().GetPositionUpperLimits().array())
+          .all());
   std::vector<std::optional<SeparationCertificateResult>> certificates_vec;
   Eigen::VectorXd s_box_lower;
   Eigen::VectorXd s_box_upper;
@@ -116,10 +128,7 @@ bool CspaceFreeBox::FindSeparationCertificateGivenBox(
   for (const auto& certificate : certificates_vec) {
     if (certificate.has_value()) {
       const auto& plane = separating_planes()[certificate->plane_index];
-      certificates->emplace(
-          SortedPair<geometry::GeometryId>(plane.positive_side_geometry->id(),
-                                           plane.negative_side_geometry->id()),
-          std::move(certificate.value()));
+      certificates->emplace(plane.geometry_pair(), certificate.value());
     } else {
       is_success = false;
     }
@@ -292,8 +301,10 @@ void CspaceFreeBox::ComputeSBox(
   const Eigen::VectorXd q_upper =
       q_box_upper.array().min(q_position_upper.array()).matrix();
   *q_star = 0.5 * (q_lower + q_upper);
-  *s_box_lower = this->rational_forward_kin().ComputeSValue(q_lower, *q_star);
-  *s_box_upper = this->rational_forward_kin().ComputeSValue(q_upper, *q_star);
+  *s_box_lower = this->rational_forward_kin().ComputeSValue(
+      q_lower, *q_star, true /* angles_wrap_to_inf */);
+  *s_box_upper = this->rational_forward_kin().ComputeSValue(
+      q_upper, *q_star, true /* angles_wrap_to_inf */);
 }
 
 void CspaceFreeBox::GeneratePolynomialsToCertify(
@@ -671,9 +682,14 @@ CspaceFreeBox::SearchWithBilinearAlternation(
       break;
     }
     ret.emplace_back();
-    ret.back().SetBox(q_box_lower, q_box_upper, q_star);
+    ret.back().SetBox(q_box_lower, q_box_upper);
     ret.back().num_iter_ = iter;
     ret.back().separating_planes_.Set(certificates_vec);
+    for (int i = 0; i < ssize(certificates_vec); ++i) {
+      if (certificates_vec[i].has_value()) {
+        ret.back().UpdateQStar(i, q_star);
+      }
+    }
 
     // Now fix the Lagrangian and search for C-space box and separating planes.
     const int gram_total_size_in_box_program =
@@ -692,8 +708,11 @@ CspaceFreeBox::SearchWithBilinearAlternation(
       const Eigen::VectorXd q_box_upper_sol =
           this->rational_forward_kin().ComputeQValue(box_result->s_box_upper,
                                                      q_star);
-      ret.back().SetBox(q_box_lower_sol, q_box_upper_sol, q_star);
+      ret.back().SetBox(q_box_lower_sol, q_box_upper_sol);
       ret.back().separating_planes_.Set(box_result->a, box_result->b);
+      for (const auto& [plane_index, a_result]: box_result->a) {
+        ret.back().UpdateQStar(plane_index, q_star);
+      }
       ret.back().num_iter_ = iter;
 
       // Compute the cost function value.
@@ -720,6 +739,105 @@ CspaceFreeBox::SearchWithBilinearAlternation(
     }
     ++iter;
   }
+  return ret;
+}
+
+std::optional<CspaceFreeBox::SearchResult> CspaceFreeBox::BinarySearch(
+    const IgnoredCollisionPairs& ignored_collision_pairs,
+    const Eigen::Ref<const Eigen::VectorXd>& q_box_lower_init,
+    const Eigen::Ref<const Eigen::VectorXd>& q_box_upper_init,
+    const Eigen::Ref<const Eigen::VectorXd>& q_center,
+    const BinarySearchOptions& options) const {
+  const int nq = this->rational_forward_kin().plant().num_positions();
+  DRAKE_THROW_UNLESS(q_box_lower_init.rows() == nq);
+  DRAKE_THROW_UNLESS((q_box_lower_init.array() <= q_center.array()).all());
+  DRAKE_THROW_UNLESS((q_center.array() <= q_box_upper_init.array()).all());
+  const Eigen::VectorXd q_joint_limit_lower =
+      this->rational_forward_kin().plant().GetPositionLowerLimits();
+  DRAKE_THROW_UNLESS((q_joint_limit_lower.array() <= q_center.array()).all());
+  const Eigen::VectorXd q_joint_limit_upper =
+      this->rational_forward_kin().plant().GetPositionUpperLimits();
+  DRAKE_THROW_UNLESS((q_joint_limit_upper.array() >= q_center.array()).all());
+  DRAKE_THROW_UNLESS(options.scale_min >= 0);
+  DRAKE_THROW_UNLESS(std::isfinite(options.scale_max));
+  DRAKE_THROW_UNLESS(options.scale_min <= options.scale_max);
+  DRAKE_THROW_UNLESS(options.max_iter >= 0);
+  DRAKE_THROW_UNLESS(options.convergence_tol > 0);
+
+  CspaceFreeBox::SearchResult ret;
+
+  // geometry_pair_scale_lower_bounds[i] stores the certified lower bound on
+  // the scaling factor for the i'th pair of geometries (the geometries in
+  // this->separating_planes()[i]).
+  std::vector<double> geometry_pair_scale_lower_bounds(
+      this->separating_planes().size(), 0);
+
+  // Determins if we can certify the scaled C-space box { q | q_box_lower <= q
+  // <= q_box_upper} is collision free or not. Also update `ret` if `scale` is
+  // feasible.
+  auto is_scale_feasible =
+      [this, &ignored_collision_pairs, &q_box_lower_init, &q_box_upper_init,
+       &q_center, &options, &q_joint_limit_lower, &q_joint_limit_upper,
+       &geometry_pair_scale_lower_bounds, &ret](double scale) -> bool {
+    // First compute the scaled box.
+    const Eigen::VectorXd q_box_lower = q_joint_limit_lower.cwiseMax(
+        (q_box_lower_init - q_center) * scale + q_center);
+    const Eigen::VectorXd q_box_upper = q_joint_limit_upper.cwiseMin(
+        (q_box_upper_init - q_center) * scale + q_center);
+
+    // If `scale` is smaller than geometry_pair_scale_lower_bounds[plane_index],
+    // then it means that in the previous iteration of the binary search, we
+    // have already certified this pair of geometries is separated for a larger
+    // scale (hence a larger C-space free region), and we don't need to certify
+    // the separation for this `scale` (hence we add the pair to
+    // `ignored_collision_pairs_for_scale`). Only attempt to certify the
+    // separating plane for this pair of geometries, if `scale` is larger than
+    // geometry_pair_scale_lower_bounds[plane_index].
+    CspaceFreeBox::IgnoredCollisionPairs ignored_collision_pairs_for_scale =
+        ignored_collision_pairs;
+    for (int i = 0; i < static_cast<int>(separating_planes().size()); ++i) {
+      const auto& plane = separating_planes()[i];
+      const SortedPair<geometry::GeometryId> geometry_pair =
+          plane.geometry_pair();
+      if (ignored_collision_pairs.count(geometry_pair) == 0 &&
+          geometry_pair_scale_lower_bounds[i] >= scale) {
+        ignored_collision_pairs_for_scale.insert(geometry_pair);
+      }
+    }
+    Eigen::VectorXd q_star;
+    std::unordered_map<SortedPair<geometry::GeometryId>,
+                       CspaceFreeBox::SeparationCertificateResult>
+        certificates;
+    const bool success = this->FindSeparationCertificateGivenBox(
+        q_box_lower, q_box_upper, ignored_collision_pairs_for_scale,
+        options.find_lagrangian_options, &q_star, &certificates);
+    for (const auto& [geometry_pair, certificate_result] : certificates) {
+      // If `scale` is feasible for this pair of geometries, then update the
+      // lower bound stored in geometry_pair_scale_lower_bounds.
+      geometry_pair_scale_lower_bounds[certificate_result.plane_index] = scale;
+    }
+    if (success) {
+      ret.SetBox(q_box_lower, q_box_upper);
+    }
+    ret.separating_planes_.Update(certificates);
+    for (int plane_index = 0; plane_index < ssize(this->separating_planes());
+         ++plane_index) {
+      if (certificates.count(
+              this->separating_planes()[plane_index].geometry_pair()) > 0) {
+        ret.UpdateQStar(plane_index, q_star);
+      }
+    }
+
+    return success;
+  };
+
+  const int iter = internal::BinarySearch(options.scale_min, options.scale_max,
+                                          options.convergence_tol,
+                                          options.max_iter, is_scale_feasible);
+  if (iter < 0) {
+    return std::nullopt;
+  }
+  ret.num_iter_ = iter;
   return ret;
 }
 

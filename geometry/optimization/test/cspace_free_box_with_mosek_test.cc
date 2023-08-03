@@ -135,8 +135,8 @@ std::optional<Eigen::VectorXd> FindInCollisionPosture(
   CspaceFreeBox::IgnoredCollisionPairs ignored_collision_pairs;
   for (const auto& plane : cspace_free_polytope_base.separating_planes()) {
     // TODO(hongkai.dai): I am not sure why, but when one of the collision
-    // geometry is world_cylinder_, and the other is not a cylinder, then Mosek
-    // says the problem is infeasible when searching for the box given the
+    // geometry is world_cylinder_, and the other is not a cylinder, then
+    // Mosek says the problem is infeasible when searching for the box given the
     // Lagrangian multiplier. I remember that in the CspaceFreePolytope we had
     // similar problems. I will look into this separately.
     if ((plane.positive_side_geometry->type() == CIrisGeometryType::kCylinder &&
@@ -274,8 +274,8 @@ TEST_F(CIrisToyRobotTest, ConstructPlaneSearchProgram) {
             polynomials_to_certify.data.plane_geometries[plane_index2],
             polynomials_to_certify.data.s_minus_s_box_lower,
             polynomials_to_certify.data.s_box_upper_minus_s);
-    // s(0) s(1) and y should be the indeterminate in the program since that is
-    // the only s on the kinematics chain.
+    // s(0) s(1) and y should be the indeterminate in the program since that
+    // is the only s on the kinematics chain.
     EXPECT_EQ(separation_certificate_program.prog->indeterminates().rows(), 5);
     for (int i = 0;
          i < separation_certificate_program.prog->indeterminates().size();
@@ -689,7 +689,8 @@ TEST_F(CIrisToyRobotTest, SearchWithBilinearAlternation) {
           tester, *diagram_, q_samples,
           bilinear_alternation_results.back().a().at(plane_index),
           bilinear_alternation_results.back().b().at(plane_index),
-          bilinear_alternation_results.back().q_star(), plane.geometry_pair());
+          bilinear_alternation_results.back().q_star().at(plane_index),
+          plane.geometry_pair());
     }
   }
 
@@ -701,6 +702,59 @@ TEST_F(CIrisToyRobotTest, SearchWithBilinearAlternation) {
       tester.cspace_free_box().SearchWithBilinearAlternation(
           ignored_collision_pairs, q_box_lower, q_box_upper_failure, options);
   EXPECT_TRUE(bilinear_alternation_results_failure.empty());
+}
+
+TEST_F(CIrisToyRobotTest, BinarySearch) {
+  CspaceFreeBoxTester tester(plant_, scene_graph_,
+                             SeparatingPlaneOrder::kAffine);
+  const Eigen::VectorXd q_position_lower = plant_->GetPositionLowerLimits();
+  const Eigen::VectorXd q_position_upper = plant_->GetPositionUpperLimits();
+  const Eigen::VectorXd q_box_lower =
+      0.8 * q_position_lower + 0.2 * q_position_upper;
+  const Eigen::VectorXd q_box_upper =
+      0.7 * q_position_lower + 0.3 * q_position_upper;
+  CspaceFreeBox::IgnoredCollisionPairs ignored_collision_pairs;
+  ignored_collision_pairs.emplace(world_box_, body3_box_);
+
+  CspaceFreeBox::BinarySearchOptions options;
+  options.scale_min = 1;
+  options.scale_max = 100;
+  options.convergence_tol = 1E-1;
+  options.find_lagrangian_options.num_threads = kTestConcurrency;
+
+  const Eigen::VectorXd q_center =
+      0.77 * q_position_lower + 0.23 * q_position_upper;
+  auto result = tester.cspace_free_box().BinarySearch(
+      ignored_collision_pairs, q_box_lower, q_box_upper, q_center, options);
+  ASSERT_TRUE(result.has_value());
+  EXPECT_GT(result->num_iter(), 0);
+
+  ASSERT_TRUE(
+      (result->q_box_lower().array() >= q_position_lower.array()).all());
+  ASSERT_TRUE(
+      (result->q_box_upper().array() <= q_position_upper.array()).all());
+
+  const Eigen::MatrixXd q_samples =
+      CalcBoxGrid(result->q_box_lower(), result->q_box_upper(), {10, 10, 10});
+  auto diagram_context = diagram_->CreateDefaultContext();
+  auto plant_context =
+      &(plant_->GetMyMutableContextFromRoot(diagram_context.get()));
+  for (int plane_index = 0;
+       plane_index < ssize(tester.cspace_free_box().separating_planes());
+       ++plane_index) {
+    const auto geometry_pair = tester.cspace_free_box()
+                                   .separating_planes()[plane_index]
+                                   .geometry_pair();
+    if (ignored_collision_pairs.count(geometry_pair) == 0) {
+      EXPECT_FALSE(FindInCollisionPosture(*plant_, geometry_pair, plant_context,
+                                          result->q_box_lower(),
+                                          result->q_box_upper(), std::nullopt));
+      CheckSeparationBySamples(tester, *diagram_, q_samples,
+                               result->a().at(plane_index),
+                               result->b().at(plane_index),
+                               result->q_star().at(plane_index), geometry_pair);
+    }
+  }
 }
 
 }  // namespace

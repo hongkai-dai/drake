@@ -750,12 +750,11 @@ CspaceFreePolytope::BinarySearch(
       this->separating_planes().size(), 0);
 
   // Determines if we can certify the scaled C-space polytope {s |C*s<=d,
-  // s_lower<=s<=s_upper} is collision free or not. Also update `ret` if eps
+  // s_lower<=s<=s_upper} is collision free or not. Also update `ret` if scale
   // is feasible.
-  auto is_scale_feasible = [this, &ignored_collision_pairs, &C, &d_init,
-                            &s_center, &options,
-                            &geometry_pair_scale_lower_bounds,
-                            &ret](double scale) {
+  auto is_scale_feasible =
+      [this, &ignored_collision_pairs, &C, &d_init, &s_center, &options,
+       &geometry_pair_scale_lower_bounds, &ret](double scale) -> bool {
     // (d - C*s_center) / |C| = scale * (d_init - C*s_center) / |C|, hence d =
     // scale * d_init + (1-scale) * C * s_center.
     const Eigen::VectorXd d = scale * d_init + (1 - scale) * C * s_center;
@@ -772,9 +771,8 @@ CspaceFreePolytope::BinarySearch(
         ignored_collision_pairs_for_scale = ignored_collision_pairs;
     for (int i = 0; i < static_cast<int>(separating_planes().size()); ++i) {
       const auto& plane = separating_planes()[i];
-      const SortedPair<geometry::GeometryId> geometry_pair(
-          plane.positive_side_geometry->id(),
-          plane.negative_side_geometry->id());
+      const SortedPair<geometry::GeometryId> geometry_pair =
+          plane.geometry_pair();
       if (ignored_collision_pairs.count(geometry_pair) == 0 &&
           geometry_pair_scale_lower_bounds[i] >= scale) {
         ignored_collision_pairs_for_scale.insert(geometry_pair);
@@ -810,35 +808,11 @@ CspaceFreePolytope::BinarySearch(
     }
   };
 
-  if (!is_scale_feasible(options.scale_min)) {
-    drake::log()->debug(
-        "CspaceFreePolytope::BinarySearch(): scale_min={} is infeasible.",
-        options.scale_min);
+  const int iter = internal::BinarySearch(options.scale_min, options.scale_max,
+                                          options.convergence_tol,
+                                          options.max_iter, is_scale_feasible);
+  if (iter < 0) {
     return std::nullopt;
-  }
-  if (is_scale_feasible(options.scale_max)) {
-    drake::log()->debug(
-        "CspaceFreePolytope::BinarySearch(): scale_max={} is feasible.",
-        options.scale_max);
-    ret.num_iter_ = 0;
-    return ret;
-  }
-  double scale_min = options.scale_min;
-  double scale_max = options.scale_max;
-  int iter = 0;
-  while (scale_max - scale_min > options.convergence_tol &&
-         iter < options.max_iter) {
-    const double scale = (scale_max + scale_min) / 2;
-    if (is_scale_feasible(scale)) {
-      drake::log()->debug(
-          "CspaceFreePolytope::BinarySearch(): scale={} is feasible", scale);
-      scale_min = scale;
-    } else {
-      drake::log()->debug(
-          "CspaceFreePolytope::BinarySearch(): scale={} is infeasible", scale);
-      scale_max = scale;
-    }
-    ++iter;
   }
   ret.num_iter_ = iter;
   return ret;

@@ -471,6 +471,35 @@ solvers::MathematicalProgramResult SolveWithBackoff(
   return result;
 }
 
+int BinarySearch(double scale_min, double scale_max, double convergence_tol,
+                 int iter_max, std::function<bool(double)> is_scale_feasible) {
+  DRAKE_DEMAND(scale_min <= scale_max);
+  DRAKE_DEMAND(convergence_tol >= 0);
+  DRAKE_DEMAND(iter_max >= 0);
+  if (!is_scale_feasible(scale_min)) {
+    drake::log()->debug("BinarySearch(): scale_min={} is infeasible.",
+                        scale_min);
+    return -1;
+  }
+  if (is_scale_feasible(scale_max)) {
+    drake::log()->debug("BinarySearch(): scale_max={} is feasible.", scale_max);
+    return 0;
+  }
+  int iter = 0;
+  while (scale_max - scale_min > convergence_tol && iter < iter_max) {
+    const double scale = (scale_max + scale_min) / 2;
+    if (is_scale_feasible(scale)) {
+      drake::log()->debug("BinarySearch(): scale={} is feasible.", scale);
+      scale_min = scale;
+    } else {
+      drake::log()->debug("BinarySearch(): scale={} is infeasible.", scale);
+      scale_max = scale;
+    }
+    ++iter;
+  }
+  return iter;
+}
+
 }  // namespace internal
 }  // namespace optimization
 }  // namespace geometry

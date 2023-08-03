@@ -168,6 +168,14 @@ solvers::MathematicalProgramResult SolveWithBackoff(
     const std::optional<solvers::SolverOptions>& solver_options,
     const solvers::SolverId& solver_id);
 
+// Binary search on a scale.
+// @param is_scale_feasible is_scale_feasible(rho) returns if the scale rho is
+// feasible or not.
+// @ret iter The number of iterations that the binary search terminates.
+// If scale_min is infeasible, then returns -1.
+// If scale_max is feasible, then returns 0.
+int BinarySearch(double scale_min, double scale_max, double convergence_tol,
+                 int iter_max, std::function<bool(double)> is_scale_feasible);
 }  // namespace internal
 }  // namespace optimization
 }  // namespace geometry

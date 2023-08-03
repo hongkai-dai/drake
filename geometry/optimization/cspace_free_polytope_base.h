@@ -87,10 +87,12 @@ class CspaceFreePolytopeBase {
 
     SeparatingPlanesResult();
 
+    /** Maps each plane_index to a(s) of the separating plane. */
     const std::unordered_map<int, Vector3<symbolic::Polynomial>>& a() const {
       return a_;
     }
 
+    /** Maps each plane_index to b(s) of the separating plane. */
     const std::unordered_map<int, symbolic::Polynomial>& b() const {
       return b_;
     }
@@ -119,6 +121,16 @@ class CspaceFreePolytopeBase {
           a_.insert_or_assign(certificate->plane_index, certificate->a);
           b_.insert_or_assign(certificate->plane_index, certificate->b);
         }
+      }
+    }
+
+    template <typename SeparationCertificateResultType>
+    void Update(const std::unordered_map<SortedPair<geometry::GeometryId>,
+                                         SeparationCertificateResultType>&
+                    certificates_result) {
+      for (const auto& [geometry_pair, certificate] : certificates_result) {
+        a_.insert_or_assign(certificate.plane_index, certificate.a);
+        b_.insert_or_assign(certificate.plane_index, certificate.b);
       }
     }
 

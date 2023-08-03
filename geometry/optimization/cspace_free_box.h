@@ -199,13 +199,20 @@ class CspaceFreeBox : public CspaceFreePolytopeBase {
       return q_box_upper_;
     }
 
-    [[nodiscard]] const Eigen::VectorXd& q_star() const { return q_star_; }
+    /** Maps each plane_index to q*. Note that we might certify a different box
+     * for each plane, hence q* will be different. */
+    [[nodiscard]] const std::unordered_map<int, Eigen::VectorXd>& q_star()
+        const {
+      return q_star_;
+    }
 
+    /** Maps each plane_index to a(s) of that separating plane. */
     [[nodiscard]] const std::unordered_map<int, Vector3<symbolic::Polynomial>>&
     a() const {
       return separating_planes_.a();
     }
 
+    /** Maps each plane_index to a(s) of that separating plane. */
     [[nodiscard]] const std::unordered_map<int, symbolic::Polynomial>& b()
         const {
       return separating_planes_.b();
@@ -216,16 +223,40 @@ class CspaceFreeBox : public CspaceFreePolytopeBase {
    private:
     friend class CspaceFreeBox;
     void SetBox(const Eigen::Ref<const Eigen::VectorXd>& q_box_lower,
-                const Eigen::Ref<const Eigen::VectorXd>& q_box_upper,
-                const Eigen::Ref<const Eigen::VectorXd>& q_star);
+                const Eigen::Ref<const Eigen::VectorXd>& q_box_upper);
+
+    // Updates q_star_[i] to `q_star`.
+    void UpdateQStar(int i, const Eigen::Ref<const Eigen::VectorXd>& q_star);
 
     Eigen::VectorXd q_box_lower_;
     Eigen::VectorXd q_box_upper_;
-    Eigen::VectorXd q_star_;
+    // Note that the separating plane parameters a and b are polyomials of s,
+    // which depends on q_star. It is possible to have different q_star for each
+    // plane.
+    std::unordered_map<int, Eigen::VectorXd> q_star_;
 
     CspaceFreePolytopeBase::SeparatingPlanesResult separating_planes_;
     // The number of iterations at termination.
     int num_iter_{};
+  };
+
+  struct BinarySearchOptions {
+    /** The maximal value of the scaling factor. Must be finite and no less than
+     * scale_min. */
+    double scale_max{1};
+    /** The minimal value of the scaling factor.
+     Must be non-negative. */
+    double scale_min{0.01};
+    /** The maximal number of iterations in binary search.
+     Must be non-negative. */
+    int max_iter{10};
+    /** When the gap between the upper bound and the lower bound of the scaling
+     factor is below this `convergence_tol`, stops the binary search.
+     Must be strictly positive.
+     */
+    double convergence_tol{1E-3};
+
+    FindSeparationCertificateOptions find_lagrangian_options;
   };
 
   /**
@@ -312,6 +343,20 @@ class CspaceFreeBox : public CspaceFreePolytopeBase {
       const Eigen::Ref<const Eigen::VectorXd>& q_box_lower_init,
       const Eigen::Ref<const Eigen::VectorXd>& q_box_upper_init,
       const BilinearAlternationOptions& options) const;
+
+  /** Binary search to find the C-space box {q | q_box_lower <= q <=
+   q_box_upper} being collision free.
+   We scale the box {q | q_box_lower_init <= q <= q_box_upper_init} about
+   `q_center` and search the scalaring factor.
+   @pre q_center is inside the box {q | q_box_lower_init <= q_box_upper_init}.
+   Also `q_center` is within the robot joint limits.
+   */
+  [[nodiscard]] std::optional<CspaceFreeBox::SearchResult> BinarySearch(
+      const IgnoredCollisionPairs& ignored_collision_pairs,
+      const Eigen::Ref<const Eigen::VectorXd>& q_box_lower_init,
+      const Eigen::Ref<const Eigen::VectorXd>& q_box_upper_init,
+      const Eigen::Ref<const Eigen::VectorXd>& q_center,
+      const BinarySearchOptions& options) const;
 
  private:
   // Forward declare the tester class that will test the private members.

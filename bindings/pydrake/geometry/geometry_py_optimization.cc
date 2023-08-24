@@ -17,6 +17,7 @@
 #include "drake/geometry/optimization/affine_subspace.h"
 #include "drake/geometry/optimization/c_iris_collision_geometry.h"
 #include "drake/geometry/optimization/cartesian_product.h"
+#include "drake/geometry/optimization/cspace_free_box.h"
 #include "drake/geometry/optimization/cspace_free_polytope.h"
 #include "drake/geometry/optimization/cspace_free_polytope_base.h"
 #include "drake/geometry/optimization/cspace_free_structs.h"
@@ -877,10 +878,12 @@ void DefineGeometryOptimization(py::module m) {
         cspace_free_polytope_base_cls, "Options", base_cls_doc.Options.doc)
         .def(py::init<>())
         .def_readwrite("with_cross_y", &BaseClass::Options::with_cross_y);
+  }
 
+  {
     using Class = CspaceFreePolytope;
     const auto& cls_doc = doc.CspaceFreePolytope;
-    py::class_<Class, BaseClass> cspace_free_polytope_cls(
+    py::class_<Class, CspaceFreePolytopeBase> cspace_free_polytope_cls(
         m, "CspaceFreePolytope", cls_doc.doc);
     cspace_free_polytope_cls
         .def(py::init<const multibody::MultibodyPlant<double>*,
@@ -1063,6 +1066,172 @@ void DefineGeometryOptimization(py::module m) {
             "convergence_tol", &Class::BinarySearchOptions::convergence_tol)
         .def_readonly("find_lagrangian_options",
             &Class::BinarySearchOptions::find_lagrangian_options);
+  }
+
+  {
+    using Class = CspaceFreeBox;
+    const auto& cls_doc = doc.CspaceFreeBox;
+    py::class_<Class, CspaceFreePolytopeBase> cspace_free_box_cls(
+        m, "CspaceFreeBox", cls_doc.doc);
+
+    py::class_<Class::SeparationCertificateResult>(cspace_free_box_cls,
+        "SeparationCertificateResult", cls_doc.SeparationCertificateResult.doc)
+        .def_readonly(
+            "plane_index", &Class::SeparationCertificateResult::plane_index)
+        .def_readonly("positive_side_rational_lagrangians",
+            &Class::SeparationCertificateResult::
+                positive_side_rational_lagrangians,
+            cls_doc.SeparationCertificateResult
+                .positive_side_rational_lagrangians.doc)
+        .def_readonly("negative_side_rational_lagrangians",
+            &Class::SeparationCertificateResult::
+                negative_side_rational_lagrangians,
+            cls_doc.SeparationCertificateResult
+                .negative_side_rational_lagrangians.doc)
+        // Use py_rvp::copy here because numpy.ndarray with dtype=object
+        // arrays must be copied, and cannot be referenced.
+        .def_readonly("a", &Class::SeparationCertificateResult::a, py_rvp::copy,
+            doc.SeparationCertificateResultBase.a.doc)
+        .def_readonly("b", &Class::SeparationCertificateResult::b,
+            doc.SeparationCertificateResultBase.b.doc)
+        .def_readonly("result", &Class::SeparationCertificateResult::result)
+        // Use py_rvp::copy here because numpy.ndarray with dtype=object
+        // arrays must be copied, and cannot be referenced.
+        .def_readonly("plane_decision_var_vals",
+            &Class::SeparationCertificateResult::plane_decision_var_vals,
+            py_rvp::copy);
+
+    py::class_<Class::SeparationCertificate>(cspace_free_box_cls,
+        "SeparationCertificate", cls_doc.SeparationCertificate.doc)
+        .def("GetSolution", &Class::SeparationCertificate::GetSolution,
+            py::arg("plane_index"), py::arg("a"), py::arg("b"),
+            py::arg("plane_decision_vars"), py::arg("result"),
+            cls_doc.SeparationCertificate.GetSolution.doc)
+        .def_readonly("positive_side_rational_lagrangians",
+            &Class::SeparationCertificate::positive_side_rational_lagrangians)
+        .def_readonly("negative_side_rational_lagrangians",
+            &Class::SeparationCertificate::negative_side_rational_lagrangians);
+
+    py::class_<Class::FindBoxGivenLagrangianOptions>(cspace_free_box_cls,
+        "FindBoxGivenLagrangianOptions",
+        cls_doc.FindBoxGivenLagrangianOptions.doc)
+        .def(py::init<>())
+        .def_readwrite("backoff_scale",
+            &Class::FindBoxGivenLagrangianOptions::backoff_scale,
+            cls_doc.FindBoxGivenLagrangianOptions.backoff_scale.doc)
+        .def_readwrite("solver_id",
+            &Class::FindBoxGivenLagrangianOptions::solver_id,
+            cls_doc.FindBoxGivenLagrangianOptions.solver_id.doc)
+        .def_readwrite("solver_options",
+            &Class::FindBoxGivenLagrangianOptions::solver_options,
+            cls_doc.FindBoxGivenLagrangianOptions.solver_options.doc)
+        .def_readwrite("q_inner_pts",
+            &Class::FindBoxGivenLagrangianOptions::q_inner_pts,
+            cls_doc.FindBoxGivenLagrangianOptions.q_inner_pts.doc)
+        .def_readwrite("box_volume_delta",
+            &Class::FindBoxGivenLagrangianOptions::box_volume_delta,
+            cls_doc.FindBoxGivenLagrangianOptions.box_volume_delta.doc);
+
+    py::class_<Class::BilinearAlternationOptions>(cspace_free_box_cls,
+        "BilinearAlternationOptions", cls_doc.BilinearAlternationOptions.doc)
+        .def(py::init<>())
+        .def_readwrite("max_iter", &Class::BilinearAlternationOptions::max_iter,
+            cls_doc.BilinearAlternationOptions.max_iter.doc)
+        .def_readwrite("convergence_tol",
+            &Class::BilinearAlternationOptions::convergence_tol,
+            cls_doc.BilinearAlternationOptions.convergence_tol.doc)
+        .def_readwrite("find_box_options",
+            &Class::BilinearAlternationOptions::find_box_options,
+            cls_doc.BilinearAlternationOptions.find_box_options.doc)
+        .def_readonly("find_lagrangian_options",
+            &Class::BilinearAlternationOptions::find_lagrangian_options,
+            cls_doc.BilinearAlternationOptions.find_lagrangian_options.doc);
+
+    py::class_<Class::SearchResult>(
+        cspace_free_box_cls, "SearchResult", cls_doc.SearchResult.doc)
+        .def("q_box_lower", &Class::SearchResult::q_box_lower,
+            cls_doc.SearchResult.q_box_lower.doc)
+        .def("q_box_upper", &Class::SearchResult::q_box_upper,
+            cls_doc.SearchResult.q_box_upper.doc)
+        .def("q_star", &Class::SearchResult::q_star,
+            cls_doc.SearchResult.q_star.doc)
+        .def("a", &Class::SearchResult::a, cls_doc.SearchResult.a.doc)
+        .def("b", &Class::SearchResult::b, cls_doc.SearchResult.b.doc)
+        .def("num_iter", &Class::SearchResult::num_iter,
+            cls_doc.SearchResult.num_iter.doc);
+
+    py::class_<Class::BinarySearchOptions>(cspace_free_box_cls,
+        "BinarySearchOptions", cls_doc.BinarySearchOptions.doc)
+        .def(py::init<>())
+        .def_readwrite("scale_max", &Class::BinarySearchOptions::scale_max,
+            cls_doc.BinarySearchOptions.scale_max.doc)
+        .def_readwrite("scale_min", &Class::BinarySearchOptions::scale_min,
+            cls_doc.BinarySearchOptions.scale_min.doc)
+        .def_readwrite("max_iter", &Class::BinarySearchOptions::max_iter,
+            cls_doc.BinarySearchOptions.max_iter.doc)
+        .def_readwrite("convergence_tol",
+            &Class::BinarySearchOptions::convergence_tol,
+            cls_doc.BinarySearchOptions.convergence_tol.doc)
+        .def_readonly("find_lagrangian_options",
+            &Class::BinarySearchOptions::find_lagrangian_options,
+            cls_doc.BinarySearchOptions.find_lagrangian_options.doc);
+
+    cspace_free_box_cls
+        .def(py::init<const multibody::MultibodyPlant<double>*,
+                 const geometry::SceneGraph<double>*, SeparatingPlaneOrder,
+                 const Class::Options&>(),
+            py::arg("plant"), py::arg("scene_graph"), py::arg("plane_order"),
+            py::arg("options") = Class::Options(),
+            // Keep alive, reference: `self` keeps `plant` alive.
+            py::keep_alive<1, 2>(),
+            // Keep alive, reference: `self` keeps `scene_graph` alive.
+            py::keep_alive<1, 3>(), cls_doc.ctor.doc)
+        .def(
+            "FindSeparationCertificateGivenBox",
+            [](const CspaceFreeBox& self,
+                const Eigen::Ref<const Eigen::VectorXd>& q_box_lower,
+                const Eigen::Ref<const Eigen::VectorXd>& q_box_upper,
+                const CspaceFreeBox::IgnoredCollisionPairs&
+                    ignored_collision_pairs,
+                const FindSeparationCertificateOptions& options) {
+              Eigen::VectorXd q_star;
+              std::unordered_map<SortedPair<geometry::GeometryId>,
+                  CspaceFreeBox::SeparationCertificateResult>
+                  certificates;
+              const bool success = self.FindSeparationCertificateGivenBox(
+                  q_box_lower, q_box_upper, ignored_collision_pairs, options,
+                  &q_star, &certificates);
+              return std::make_tuple(success, q_star, certificates);
+            },
+            py::arg("q_box_lower"), py::arg("q_box_upper"),
+            py::arg("ignored_collision_pairs"), py::arg("options"),
+            cls_doc.FindSeparationCertificateGivenBox.doc)
+        .def(
+            "InitializeBoxSearchProgram",
+            [](const CspaceFreeBox& self,
+                const CspaceFreeBox::IgnoredCollisionPairs&
+                    ignored_collision_pairs,
+                const Eigen::Ref<const Eigen::VectorXd>& q_star,
+                const std::unordered_map<SortedPair<geometry::GeometryId>,
+                    CspaceFreeBox::SeparationCertificateResult>& certificates) {
+              VectorX<symbolic::Variable> s_box_lower;
+              VectorX<symbolic::Variable> s_box_upper;
+              std::unique_ptr<solvers::MathematicalProgram> prog =
+                  self.InitializeBoxSearchProgram(ignored_collision_pairs,
+                      q_star, certificates, &s_box_lower, &s_box_upper);
+              return std::make_tuple(std::move(prog), s_box_lower, s_box_upper);
+            },
+            py::arg("ignored_collision_pairs"), py::arg("q_star"),
+            py::arg("certificates"), cls_doc.InitializeBoxSearchProgram.doc)
+        .def("SearchWithBilinearAlternation",
+            &Class::SearchWithBilinearAlternation,
+            py::arg("ignored_collision_pairs"), py::arg("q_box_lower_init"),
+            py::arg("q_box_upper_init"), py::arg("options"),
+            cls_doc.SearchWithBilinearAlternation.doc)
+        .def("BinarySearch", &Class::BinarySearch,
+            py::arg("ignored_collision_pairs"), py::arg("q_box_lower_init"),
+            py::arg("q_box_upper_init"), py::arg("q_center"),
+            py::arg("options"), cls_doc.BinarySearch.doc);
   }
   // NOLINTNEXTLINE(readability/fn_size)
 }

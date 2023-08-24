@@ -1117,3 +1117,87 @@ class TestCspaceFreePolytope(unittest.TestCase):
                          C_init.shape[0])
         self.assertEqual(len(negative_test_lagrangian.s_lower()), 1)
         self.assertEqual(len(negative_test_lagrangian.s_upper()), 1)
+
+
+class TestCspaceFreeBox(unittest.TestCase):
+    def setUp(self):
+        unittest.TestCase.setUp(self)
+        limits_urdf = """
+                 <robot name="limits">
+                   <link name="movable">
+                     <collision>
+                       <geometry><box size="0.1 0.1 0.1"/></geometry>
+                     </collision>
+                     <geometry>
+                          <capsule length="0.1" radius="0.2"/>
+                     </geometry>
+                     <geometry>
+                          <sphere radius="0.2"/>
+                     </geometry>
+                   </link>
+                   <link name="unmovable">
+                     <collision>
+                       <geometry><box size="1 1 1"/></geometry>
+                     </collision>
+                   </link>
+                   <joint name="movable" type="prismatic">
+                     <axis xyz="1 0 0"/>
+                     <limit lower="-2" upper="2"/>
+                     <parent link="world"/>
+                     <child link="movable"/>
+                   </joint>
+                   <joint name="unmovable" type = "fixed">
+                         <parent link="world"/>
+                         <child link="unmovable"/>
+                         <origin xyz="1 0 0"/>
+                   </joint>
+                 </robot>"""
+
+        builder = DiagramBuilder()
+        self.plant, self.scene_graph = AddMultibodyPlantSceneGraph(
+            builder, 0.01)
+        Parser(self.plant).AddModelsFromString(limits_urdf, "urdf")
+
+        self.plant.Finalize()
+
+        diagram = builder.Build()
+
+        # Tests the constructor
+        options = mut.CspaceFreeBox.Options()
+        options.with_cross_y = False
+        self.cspace_free_box = mut.CspaceFreeBox(
+            plant=self.plant,
+            scene_graph=self.scene_graph,
+            plane_order=mut.SeparatingPlaneOrder.kAffine,
+            options=options)
+
+    @unittest.skipUnless(MosekSolver().available(), "Requires Mosek")
+    def test_binary_search(self):
+        q_box_lower = np.array([0.5])
+        q_box_upper = np.array([10.])
+        q_center = np.array([1.])
+        options = mut.CspaceFreeBox.BinarySearchOptions()
+        options.max_iter = 2
+
+        binary_search_result = self.cspace_free_box.BinarySearch(
+            ignored_collision_pairs=set(),
+            q_box_lower_init=q_box_lower,
+            q_box_upper_init=q_box_upper,
+            q_center=q_center,
+            options=options)
+
+    def test_bilinear_alternation(self):
+        q_box_lower_init = np.array([1.5])
+        q_box_upper_init = np.array([2.])
+
+        options = mut.CspaceFreeBox.BilinearAlternationOptions()
+        options.max_iter = 2
+        search_results = self.cspace_free_box.SearchWithBilinearAlternation(
+            ignored_collision_pairs=set(),
+            q_box_lower_init=q_box_lower_init,
+            q_box_upper_init=q_box_upper_init,
+            options=options)
+        self.assertIsInstance(search_results, list)
+
+
+

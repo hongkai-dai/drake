@@ -4,6 +4,7 @@ import pickle
 
 import matplotlib.pyplot as plt
 import matplotlib
+from mpl_toolkits.mplot3d import axes3d
 
 import clf_cbf_utils
 
@@ -12,6 +13,7 @@ import pydrake.symbolic as sym
 import pydrake.systems.analysis as analysis
 from pydrake.solvers import mathematicalprogram as mp
 from pydrake.solvers.mosek import MosekSolver
+
 
 matplotlib.rcParams["text.usetex"] = True
 
@@ -30,6 +32,21 @@ def synthesize_lqr(Q, R):
     B = np.array([[1], [-1.]])
     K, S = controllers.LinearQuadraticRegulator(A, B, Q, R)
     return K, S
+
+def draw_clf_3d(V, rho_val, x, contour_color):
+    xs = np.arange(-3, 3, 0.01)
+    ys = np.arange(-3, 3, 0.01)
+    X, Y = np.meshgrid(xs, ys)
+    V_val = V.EvaluateIndeterminates(x, np.vstack((X.reshape((1, -1)), Y.reshape((1, -1))))).reshape(X.shape)
+    fig = plt.figure()
+    ax = fig.add_subplot(projection="3d")
+    ax.plot_surface(X, Y, V_val)
+    contour_handle = ax.contour3D(X, Y, V_val, [rho_val])
+    contour_handle.collections[0].set_edgecolor(contour_color)
+    ax.set_xlabel(r"$x_1$")
+    ax.set_ylabel(r"$x_2$")
+    ax.set_zlabel("V")
+    return fig, ax
 
 
 class SearchControllerResult:
@@ -156,9 +173,6 @@ def draw_clf_contour(fig, ax, V, rho_vals, x):
     ax.set_ylabel(r"$x_2$", fontsize=20)
     return contour_handle
 
-
-
-
 def draw_contours(V, x, V_init, rho_init):
     def draw_contours_fun(V, x, V_init, rho_init, rho_vals, edge_colors, contour_labels):
         fig = plt.figure()
@@ -178,14 +192,14 @@ def draw_contours(V, x, V_init, rho_init):
 
     fig, ax = draw_contours_fun(V, x, V_init, rho_init, [], [], [])
     for fig_format in ["pdf", "png"]:
-        fig.savefig(f"/home/hongkaidai/Dropbox/talks/pictures/sos_clf_cbf/packard/packard_V8_2_contours0."+fig_format, format=fig_format)
+        fig.savefig(f"/home/hongkaidai/Dropbox/talks/pictures/sos_clf_cbf/packard/packard_V8_2_contours0."+fig_format, format=fig_format, bbox_inches="tight")
     rho_vals = [0.0002, 0.00025, 0.005, 0.0065, 0.14, 0.4]
     edge_colors = ["slategrey", "tan", "cyan", "plum", "black", "r"]
     contour_labels = ["degree(u)=1", "degree(u)=3", "degree(u)=5", "degree(u)=7", "degree(u)=9", "CLF"]
     for i in range(6):
         fig, ax = draw_contours_fun(V, x, V_init, rho_init, rho_vals[:i] + [rho_vals[-1]], edge_colors[:i] + [edge_colors[-1]], contour_labels[:i] + [contour_labels[-1]])
         for fig_format in ["pdf", "png"]:
-            fig.savefig(f"/home/hongkaidai/Dropbox/talks/pictures/sos_clf_cbf/packard/packard_V8_2_contours{i+1}."+fig_format, format=fig_format)
+            fig.savefig(f"/home/hongkaidai/Dropbox/talks/pictures/sos_clf_cbf/packard/packard_V8_2_contours{i+1}."+fig_format, format=fig_format, bbox_inches="tight")
 
 def simulate_u(x, u, V, kappa, u_max, x0, duration):
     def calc_xdot(x_val):
@@ -263,6 +277,13 @@ def search(u_max, kappa):
     #        "u_max": u_max,
     #        "lambda0_degree": lambda0_degree,
     #        "l_degrees": l_degrees}, handle)
+
+    fig, ax = draw_clf_3d(V_init, rho_init, x, "r")
+    for fig_format in ("pdf", "png"):
+        fig.savefig(f"/home/hongkaidai/Dropbox/talks/pictures/sos_clf_cbf/packard/clf_init_3d.{fig_format}", format=fig_format, bbox_inches="tight")
+    fig, ax = draw_clf_3d(search_result.V, 0.4, x, "r")
+    for fig_format in ("pdf", "png"):
+        fig.savefig(f"/home/hongkaidai/Dropbox/talks/pictures/sos_clf_cbf/packard/clf_3d.{fig_format}", format=fig_format, bbox_inches="tight")
 
     fig, ax, contour_handle = draw_contours(search_result.V, x, V_init, rho_init)
 

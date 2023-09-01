@@ -104,6 +104,7 @@ drake_cc_library(
     deps = [
         ":cspace_free_polytope_base",
         "//multibody/inverse_kinematics:inverse_kinematics",
+        "//solvers:snopt_solver",
     ],
 )
 
@@ -263,6 +264,7 @@ drake_cc_googletest(
         "//common/test_utilities:eigen_matrix_compare",
         "//common/test_utilities:symbolic_test_util",
         "//geometry/optimization:cspace_free_internal",
+        "//geometry:meshcat_visualizer",
     ],
 )
 

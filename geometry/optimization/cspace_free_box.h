@@ -10,6 +10,7 @@
 #include "drake/geometry/optimization/cspace_free_structs.h"
 #include "drake/multibody/inverse_kinematics/inverse_kinematics.h"
 #include "drake/solvers/mathematical_program_result.h"
+#include "drake/multibody/inverse_kinematics/minimum_distance_constraint.h"
 
 namespace drake {
 namespace geometry {
@@ -602,6 +603,7 @@ class ScaleCspaceBoxNonlinearProgram {
   const multibody::MultibodyPlant<double>* plant_;
   solvers::MathematicalProgram prog_;
   VectorX<symbolic::Variable> q_;
+  std::shared_ptr<multibody::MinimumDistanceConstraint> min_dist_constraint_;
   // The scaling factor of the box.
   symbolic::Variable t_;
   Eigen::VectorXd q_box_lower_;

@@ -13,6 +13,7 @@
 #include "drake/solvers/solve.h"
 #include "drake/solvers/sos_basis_generator.h"
 #include "drake/systems/framework/diagram_builder.h"
+#include "drake/geometry/meshcat_visualizer.h"
 
 namespace drake {
 namespace geometry {
@@ -33,11 +34,11 @@ CIrisToyRobotTest::CIrisToyRobotTest() {
       plant_->world_body(),
       math::RigidTransform(math::RollPitchYawd(0.5, 0.2, -0.3),
                            Eigen::Vector3d(0.2, -0.5, 0.1)),
-      geometry::Box(0.02, 0.03, 0.01), "world_box", proximity_properties);
+      geometry::Sphere(0.02), /*geometry::Box(0.02, 0.03, 0.01),*/ "world_box", proximity_properties);
   world_cylinder_ = plant_->RegisterCollisionGeometry(
       plant_->world_body(),
       math::RigidTransform(Eigen::Vector3d(-0.1, -0.1, 0.2)),
-      Cylinder(0.02, 0.1), "world_cylinder", proximity_properties);
+      Sphere(0.05) /*Cylinder(0.02, 0.1)*/, "world_cylinder", proximity_properties);
 
   // C-IRIS only considers robot kinematics, not dynamics. So we use an
   // arbitrary inertia.
@@ -57,7 +58,7 @@ CIrisToyRobotTest::CIrisToyRobotTest() {
       math::RigidTransformd(Eigen::Vector3d(0.05, 0.1, 0.05)));
   body0_box_ = plant_->RegisterCollisionGeometry(
       body0, math::RigidTransform(Eigen::Vector3d(0.1, 0.05, -0.05)),
-      Box(0.05, 0.1, 0.04), "body0_box", proximity_properties);
+      Sphere(0.06) /*Box(0.05, 0.1, 0.04)*/, "body0_box", proximity_properties);
   body0_sphere_ = plant_->RegisterCollisionGeometry(
       body0, math::RigidTransform(Eigen::Vector3d(0.01, -0.02, 0)),
       Sphere(0.08), "body0_sphere", proximity_properties);
@@ -76,14 +77,14 @@ CIrisToyRobotTest::CIrisToyRobotTest() {
       .set_position_limits(Vector1d(-0.8 * M_PI), Vector1d(0.7 * M_PI));
   body1_capsule_ = plant_->RegisterCollisionGeometry(
       body1, math::RigidTransformd(Eigen::Vector3d(0.02, -0.1, 0.05)),
-      Capsule(0.08, 0.2), "body1_capsule", proximity_properties);
+      Sphere(0.1) /*Capsule(0.08, 0.2)*/, "body1_capsule", proximity_properties);
   const std::string convex_obj =
       FindResourceOrThrow("drake/geometry/optimization/test/convex.obj");
   body1_convex_ = plant_->RegisterCollisionGeometry(
       body1,
       math::RigidTransformd(math::RollPitchYawd(0.05, -0.03, 0),
                             Eigen::Vector3d(0.04, 0.02, 0.05)),
-      Convex(convex_obj), "body1_convex", proximity_properties);
+      Sphere(0.2)/*Convex(convex_obj)*/, "body1_convex", proximity_properties);
 
   // body2
   body_indices_.push_back(
@@ -98,7 +99,7 @@ CIrisToyRobotTest::CIrisToyRobotTest() {
       .set_position_limits(Vector1d(-2.4), Vector1d(2.9));
   body2_capsule_ = plant_->RegisterCollisionGeometry(
       body2, math::RigidTransform(Eigen::Vector3d(0.02, 0.05, 0)),
-      Capsule(0.06, 0.1), "body2_capsule", proximity_properties);
+      Sphere(0.08) /*Capsule(0.06, 0.1)*/, "body2_capsule", proximity_properties);
   body2_sphere_ = plant_->RegisterCollisionGeometry(
       body2, math::RigidTransform(Eigen::Vector3d(0.01, 0.04, 0.02)),
       Sphere(0.07), "body2_sphere", proximity_properties);
@@ -117,12 +118,18 @@ CIrisToyRobotTest::CIrisToyRobotTest() {
       .set_position_limits(Vector1d(-0.7 * M_PI), Vector1d(0.6 * M_PI));
   body3_box_ = plant_->RegisterCollisionGeometry(
       body3, math::RigidTransformd(Eigen::Vector3d(-0.1, -0.1, 0.02)),
-      Box(0.02, 0.05, 0.02), "body3_box", proximity_properties);
+      Sphere(0.05)/*Box(0.02, 0.05, 0.02)*/, "body3_box", proximity_properties);
   body3_cylinder_ = plant_->RegisterCollisionGeometry(
       body3, math::RigidTransformd(Eigen::Vector3d(0.1, 0.02, 0.2)),
-      Cylinder(0.04, 0.05), "body3_cylinder", proximity_properties);
+      Sphere(0.05) /*Cylinder(0.04, 0.05)*/, "body3_cylinder", proximity_properties);
 
   plant_->Finalize();
+
+  auto meshcat = std::make_shared<Meshcat>();
+  MeshcatVisualizerParams meshcat_visualizer_params;
+  meshcat_visualizer_params.role = Role::kProximity;
+  MeshcatVisualizer<double>::AddToBuilder(
+      &builder, *scene_graph_, meshcat, meshcat_visualizer_params);
   diagram_ = builder.Build();
 }
 
@@ -148,23 +155,23 @@ CIrisRobotPolytopicGeometryTest::CIrisRobotPolytopicGeometryTest() {
       plant_->world_body(),
       math::RigidTransform(math::RollPitchYawd(0.5, 0.2, -0.3),
                            Eigen::Vector3d(0.2, -0.5, 0.1)),
-      geometry::Box(0.02, 0.03, 0.01), "world_box0", proximity_properties));
+      Sphere(0.1) /*geometry::Box(0.02, 0.03, 0.01)*/, "world_box0", proximity_properties));
   world_boxes_.push_back(plant_->RegisterCollisionGeometry(
       plant_->world_body(),
       math::RigidTransform(math::RollPitchYawd(0.1, 0.2, -0.),
                            Eigen::Vector3d(0.2, 0.3, 0.1)),
-      geometry::Box(0.02, 0.1, 0.05), "world_box1", proximity_properties));
+      Sphere(0.1) /*geometry::Box(0.02, 0.1, 0.05)*/, "world_box1", proximity_properties));
   world_boxes_.push_back(plant_->RegisterCollisionGeometry(
       plant_->world_body(),
       math::RigidTransform(math::RollPitchYawd(0.1, 0.2, -0.),
                            Eigen::Vector3d(0.2, 0.2, 0.1)),
-      geometry::Box(0.04, 0.1, 0.05), "world_box2", proximity_properties));
+      Sphere(0.1) /*geometry::Box(0.04, 0.1, 0.05)*/, "world_box2", proximity_properties));
   const std::string convex_obj =
       FindResourceOrThrow("drake/geometry/optimization/test/convex.obj");
   world_convex_ = plant_->RegisterCollisionGeometry(
       plant_->world_body(),
       math::RigidTransform(Eigen::Vector3d(-0.1, -0.5, 0.2)),
-      Convex(convex_obj), "world_convex", proximity_properties);
+      Sphere(0.05) /*Convex(convex_obj)*/, "world_convex", proximity_properties);
 
   // C-IRIS only considers robot kinematics, not dynamics. So we use an
   // arbitrary inertia.

@@ -1,5 +1,6 @@
 #include "drake/geometry/optimization/cspace_free_box.h"
 
+#include <iostream>
 #include "drake/common/test_utilities/eigen_matrix_compare.h"
 #include "drake/common/test_utilities/expect_throws_message.h"
 #include "drake/common/test_utilities/symbolic_test_util.h"
@@ -158,12 +159,17 @@ TEST_F(CIrisToyRobotTest, ScaleCspaceBoxNonlinearProgram) {
   const Eigen::VectorXd q_box_lower = q_joint_limit_lower;
   const Eigen::VectorXd q_box_upper = q_joint_limit_upper;
   ScaleCspaceBoxNonlinearProgram::Options options;
-  options.influence_distance = 0.1;
+  options.influence_distance = 1;
+  options.num_nlp_trials = 1;
   ScaleCspaceBoxNonlinearProgram dut(*plant_, plant_context, q_box_lower,
                                      q_box_upper, q_scale_center, options);
   unsigned int seed = 1;
   const auto result = dut.Solve(seed);
   EXPECT_TRUE(result.is_success());
+  //const Eigen::VectorXd q_sol = result.GetSolution(dut.q());
+  diagram_->ForcedPublish(*diagram_context);
+  int tmp;
+  std::cin >> tmp;
 }
 
 }  // namespace optimization

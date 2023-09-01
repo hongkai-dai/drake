@@ -1,5 +1,7 @@
 #include "drake/geometry/optimization/cspace_free_box.h"
 
+#include <iostream>
+
 #include <array>
 #include <limits>
 #include <map>
@@ -11,6 +13,7 @@
 #include "drake/geometry/optimization/cspace_free_internal.h"
 #include "drake/multibody/inverse_kinematics/minimum_distance_constraint.h"
 #include "drake/solvers/solve.h"
+#include "drake/solvers/snopt_solver.h"
 
 namespace drake {
 namespace geometry {
@@ -880,30 +883,30 @@ ScaleCspaceBoxNonlinearProgram::ScaleCspaceBoxNonlinearProgram(
   t_ = prog_.NewContinuousVariables<1>("t")(0);
   prog_.AddBoundingBoxConstraint(plant.GetPositionLowerLimits(),
                                  plant.GetPositionUpperLimits(), q_);
-  prog_.AddBoundingBoxConstraint(0, kInf, t_);
-  // Minimize t
-  prog_.AddLinearCost(Vector1d(1), Vector1<symbolic::Variable>(t_));
+  //prog_.AddBoundingBoxConstraint(0, kInf, t_);
+  //// Minimize t
+  //prog_.AddLinearCost(Vector1d(1), Vector1<symbolic::Variable>(t_));
   // Add the constraint that q is in collision.
   multibody::MinimumDistancePenaltyFunction penalty_function{};
-  auto in_collision_constraint =
+  min_dist_constraint_ =
       std::make_shared<multibody::MinimumDistanceConstraint>(
           &plant, -kInf /* minimum_distance_lower */,
           0.0 /* minimum_distance_upper*/, plant_context,
           penalty_function /* penalty_function */, options_.influence_distance);
-  prog_.AddConstraint(in_collision_constraint, q_);
-  // Add the constraint that q is in the scaled box, namely
-  // q_scale_center + t * (q_box_lower - q_scale_center) <= q <=
-  // q_scale_center + t * (q_box_upper - q_scale_center)
-  Eigen::MatrixXd A(nq, nq + 1);
-  A.leftCols(nq) = Eigen::MatrixXd::Identity(nq, nq);
-  A.rightCols<1>() = q_scale_center_ - q_box_lower_;
-  prog_.AddLinearConstraint(A, q_scale_center_,
-                            Eigen::VectorXd::Constant(nq, kInf),
-                            {q_, Vector1<symbolic::Variable>(t_)});
-  A.rightCols<1>() = q_scale_center_ - q_box_upper_;
-  prog_.AddLinearConstraint(A, Eigen::VectorXd::Constant(nq, -kInf),
-                            q_scale_center,
-                            {q_, Vector1<symbolic::Variable>(t_)});
+  prog_.AddConstraint(min_dist_constraint_, q_);
+  //// Add the constraint that q is in the scaled box, namely
+  //// q_scale_center + t * (q_box_lower - q_scale_center) <= q <=
+  //// q_scale_center + t * (q_box_upper - q_scale_center)
+  //Eigen::MatrixXd A(nq, nq + 1);
+  //A.leftCols(nq) = Eigen::MatrixXd::Identity(nq, nq);
+  //A.rightCols<1>() = q_scale_center_ - q_box_lower_;
+  //prog_.AddLinearConstraint(A, q_scale_center_,
+  //                          Eigen::VectorXd::Constant(nq, kInf),
+  //                          {q_, Vector1<symbolic::Variable>(t_)});
+  //A.rightCols<1>() = q_scale_center_ - q_box_upper_;
+  //prog_.AddLinearConstraint(A, Eigen::VectorXd::Constant(nq, -kInf),
+  //                          q_scale_center,
+  //                          {q_, Vector1<symbolic::Variable>(t_)});
 }
 
 solvers::MathematicalProgramResult ScaleCspaceBoxNonlinearProgram::Solve(
@@ -912,6 +915,7 @@ solvers::MathematicalProgramResult ScaleCspaceBoxNonlinearProgram::Solve(
   double t_min = kInf;
   Eigen::VectorXd initial_guess = Eigen::VectorXd::Zero(prog_.num_vars());
   solvers::MathematicalProgramResult result;
+  int success_count = 0;
   for (int i = 0; i < options_.num_nlp_trials; ++i) {
     prog_.SetDecisionVariableValueInVector(
         q_,
@@ -924,11 +928,32 @@ solvers::MathematicalProgramResult ScaleCspaceBoxNonlinearProgram::Solve(
     prog_.SetDecisionVariableValueInVector(t_, 1, &initial_guess);
     const auto result_trial =
         solvers::Solve(prog_, initial_guess, options_.solver_options);
-    if (result.is_success() && result_trial.get_optimal_cost() < t_min) {
+    if (result_trial.is_success()) {
+      success_count++;
+    } else {
+      if (result_trial.get_solver_id() == solvers::SnoptSolver::id()) {
+        std::cout << result_trial.get_solver_details<solvers::SnoptSolver>().info << "\n";
+      }
+      const Eigen::VectorXd q_sol = result_trial.GetSolution(q_);
+      std::cout << fmt::format(
+          "min distance constraint eval {}\n",
+          fmt_eigen(result_trial.EvalBinding(prog_.generic_constraints()[0])
+                        .transpose()));
+      std::cout << fmt::format(
+          "distances: {}\n",
+          fmt_eigen(
+              min_dist_constraint_->minimum_value_constraint()
+                  .value_function_double()(q_sol, options_.influence_distance)
+                  .transpose()));
+    }
+    if (result_trial.is_success() && result_trial.get_optimal_cost() < t_min) {
       result = result_trial;
       t_min = result_trial.get_optimal_cost();
+    } else {
+      std::cout << result_trial.get_solution_result() << "\n";
     }
   }
+  std::cout << "success rate: " << static_cast<double>(success_count) / options_.num_nlp_trials << "\n";
   return result;
 }
 }  // namespace optimization

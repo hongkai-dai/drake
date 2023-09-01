@@ -5,8 +5,10 @@
 #include <unordered_map>
 #include <vector>
 
+#include "drake/common/random.h"
 #include "drake/geometry/optimization/cspace_free_polytope_base.h"
 #include "drake/geometry/optimization/cspace_free_structs.h"
+#include "drake/multibody/inverse_kinematics/inverse_kinematics.h"
 #include "drake/solvers/mathematical_program_result.h"
 
 namespace drake {
@@ -548,6 +550,127 @@ void AddMaximizeBoxVolumeCost(solvers::MathematicalProgram* prog,
                               const VectorX<symbolic::Variable>& s_box_lower,
                               const VectorX<symbolic::Variable>& s_box_upper,
                               const Eigen::VectorXd& delta);
+
+/**
+ Given a C-space box {q | q_box_lower <= q <= q_box_upper}, find the minimal
+ scaling factor, such the box scaled about a point q_scale_center touches the
+ C-space obstacle region.
+
+ Mathematically we solve the optimization problem
+ min t
+ s.t q is in collision
+     q in ScaledBox(t)
+
+ Where ScaledBox is to scale the box {q | q_box_lower <= q <= q_box_upper}
+ about q_scale_center by a factor of t.
+ */
+class ScaleCspaceBoxNonlinearProgram {
+ public:
+  struct Options {
+    /** See MinimumDistanceConstraint for more explanation.*/
+    double influence_distance{0.1};
+    /** Solve the NLP with multiple trials, each one takes a different initial
+     guess*/
+    int num_nlp_trials{10};
+
+    std::optional<solvers::SolverOptions> solver_options;
+  };
+
+  ScaleCspaceBoxNonlinearProgram(
+      const multibody::MultibodyPlant<double>& plant,
+      systems::Context<double>* plant_context,
+      const Eigen::Ref<const Eigen::VectorXd>& q_box_lower,
+      const Eigen::Ref<const Eigen::VectorXd>& q_box_upper,
+      const Eigen::Ref<const Eigen::VectorXd>& q_scale_center, Options options);
+
+  solvers::MathematicalProgram* get_mutable_prog() { return &prog_; }
+
+  const solvers::MathematicalProgram& prog() const { return prog_; }
+
+  const VectorX<symbolic::Variable>& q() const { return q_; }
+
+  /** The scaling factor of the box. */
+  const symbolic::Variable& t() const { return t_; }
+
+  /** Solve the nonlinear program with multiple trials with different initial
+   guess.
+   */
+  [[nodiscard]] solvers::MathematicalProgramResult Solve(
+      unsigned int seed = 0) const;
+
+ private:
+  const multibody::MultibodyPlant<double>* plant_;
+  solvers::MathematicalProgram prog_;
+  VectorX<symbolic::Variable> q_;
+  // The scaling factor of the box.
+  symbolic::Variable t_;
+  Eigen::VectorXd q_box_lower_;
+  Eigen::VectorXd q_box_upper_;
+  Eigen::VectorXd q_scale_center_;
+  Options options_;
+};
+
+/**
+ Finds the C-space collision-free box region {q | q_box_lower <= q <=
+ q_box_upper} through nonlinear optimization.
+
+ We solve several optimization programs to find in-collision configurations, as
+ the corners of the C-space collision-free box.
+
+ Given a seed configuration q_seed, we solve an
+ optimization program
+
+ min dist(q, q_seed)
+ s.t q is in collision
+
+ to find the first corner q_corner1. We get an initial box that centered at
+ q_seed, with q_corner1 as one of its vertices. We denote this box as
+ box_corner1.
+
+ We then solve an optimization program to scale box_corner1 about its vertex
+ q_corner1, to find the minimal scaling until the scaled box touches the
+ in-collision C-space at a point different from q_corner1.
+
+ min s
+ s.t q in ScaleBox(box_corner1, s)
+     q is in collision.
+
+ We return this scaled box.
+ */
+class CspaceFreeBoxNonlinearOptimization {
+ public:
+  struct Options {
+    int num_nlp_trials{10};
+    double influence_distance{0.1};
+    // After we find a corner through optimization program, we will add a
+    // constraint to cut that corner from the feasible set of q in the next
+    // optimization program. We add a constraint sum_i w(i)*q(i) <= sum_i w(i) *
+    // q_corner(i) - cut_corner_radius where w(i) = 1 if q_corner(i) >
+    // q_seed(i), and w(i) = -1 if q_corner(i) < q_seed(i)
+    double cut_corner_radius_{1E-3};
+
+    // We measure the distance dist(q, q_seed) as (q-q_seed)' * diag(q_dist_Q) *
+    // (q - q_seed). If q_dist_Q is nullopt, then we regard diag(q_dist_Q) as
+    // the identity matrix.
+    std::optional<Eigen::VectorXd> q_dist_Q{std::nullopt};
+  };
+
+  CspaceFreeBoxNonlinearOptimization(
+      const multibody::MultibodyPlant<double>& plant,
+      systems::Context<double>* plant_context, Options options);
+
+  multibody::InverseKinematics* get_mutable_ik() { return &ik_; }
+
+  const multibody::InverseKinematics& ik() const { return ik_; }
+
+  void Solve(const Eigen::Ref<const Eigen::VectorXd>& q_seed,
+             Eigen::VectorXd* q_box_lower, Eigen::VectorXd* q_box_upper);
+
+ private:
+  const multibody::MultibodyPlant<double>* plant_;
+  multibody::InverseKinematics ik_;
+  Options options_;
+};
 }  // namespace optimization
 }  // namespace geometry
 }  // namespace drake

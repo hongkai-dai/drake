@@ -147,6 +147,25 @@ TEST_F(CIrisToyRobotTest, GeneratePolynomialsToCertify) {
   }
 }
 
+TEST_F(CIrisToyRobotTest, ScaleCspaceBoxNonlinearProgram) {
+  auto diagram_context = diagram_->CreateDefaultContext();
+  auto plant_context =
+      &(plant_->GetMyMutableContextFromRoot(diagram_context.get()));
+  const Eigen::VectorXd q_joint_limit_lower = plant_->GetPositionLowerLimits();
+  const Eigen::VectorXd q_joint_limit_upper = plant_->GetPositionUpperLimits();
+  const Eigen::VectorXd q_scale_center =
+      0.5 * (q_joint_limit_lower + q_joint_limit_upper);
+  const Eigen::VectorXd q_box_lower = q_joint_limit_lower;
+  const Eigen::VectorXd q_box_upper = q_joint_limit_upper;
+  ScaleCspaceBoxNonlinearProgram::Options options;
+  options.influence_distance = 0.1;
+  ScaleCspaceBoxNonlinearProgram dut(*plant_, plant_context, q_box_lower,
+                                     q_box_upper, q_scale_center, options);
+  unsigned int seed = 1;
+  const auto result = dut.Solve(seed);
+  EXPECT_TRUE(result.is_success());
+}
+
 }  // namespace optimization
 }  // namespace geometry
 }  // namespace drake

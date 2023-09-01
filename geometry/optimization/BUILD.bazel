@@ -103,6 +103,7 @@ drake_cc_library(
     hdrs = ["cspace_free_box.h"],
     deps = [
         ":cspace_free_polytope_base",
+        "//multibody/inverse_kinematics:inverse_kinematics",
     ],
 )
 

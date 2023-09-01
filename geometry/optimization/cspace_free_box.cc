@@ -9,6 +9,8 @@
 
 #include "drake/common/fmt_eigen.h"
 #include "drake/geometry/optimization/cspace_free_internal.h"
+#include "drake/multibody/inverse_kinematics/minimum_distance_constraint.h"
+#include "drake/solvers/solve.h"
 
 namespace drake {
 namespace geometry {
@@ -710,7 +712,7 @@ CspaceFreeBox::SearchWithBilinearAlternation(
                                                      q_star);
       ret.back().SetBox(q_box_lower_sol, q_box_upper_sol);
       ret.back().separating_planes_.Set(box_result->a, box_result->b);
-      for (const auto& [plane_index, a_result]: box_result->a) {
+      for (const auto& [plane_index, a_result] : box_result->a) {
         ret.back().UpdateQStar(plane_index, q_star);
       }
       ret.back().num_iter_ = iter;
@@ -858,6 +860,77 @@ void AddMaximizeBoxVolumeCost(solvers::MathematicalProgram* prog,
   prog->AddMaximizeGeometricMeanCost(A, delta, vars);
 }
 
+ScaleCspaceBoxNonlinearProgram::ScaleCspaceBoxNonlinearProgram(
+    const multibody::MultibodyPlant<double>& plant,
+    systems::Context<double>* plant_context,
+    const Eigen::Ref<const Eigen::VectorXd>& q_box_lower,
+    const Eigen::Ref<const Eigen::VectorXd>& q_box_upper,
+    const Eigen::Ref<const Eigen::VectorXd>& q_scale_center, Options options)
+    : plant_{&plant},
+      prog_{},
+      q_box_lower_{q_box_lower},
+      q_box_upper_{q_box_upper},
+      q_scale_center_(q_scale_center),
+      options_{std::move(options)} {
+  DRAKE_DEMAND((q_box_lower.array() <= q_box_upper.array()).all());
+  DRAKE_DEMAND((q_scale_center.array() <= q_box_upper.array()).all());
+  DRAKE_DEMAND((q_scale_center.array() >= q_box_lower.array()).all());
+  const int nq = plant.num_positions();
+  q_ = prog_.NewContinuousVariables(nq, "q");
+  t_ = prog_.NewContinuousVariables<1>("t")(0);
+  prog_.AddBoundingBoxConstraint(plant.GetPositionLowerLimits(),
+                                 plant.GetPositionUpperLimits(), q_);
+  prog_.AddBoundingBoxConstraint(0, kInf, t_);
+  // Minimize t
+  prog_.AddLinearCost(Vector1d(1), Vector1<symbolic::Variable>(t_));
+  // Add the constraint that q is in collision.
+  multibody::MinimumDistancePenaltyFunction penalty_function{};
+  auto in_collision_constraint =
+      std::make_shared<multibody::MinimumDistanceConstraint>(
+          &plant, -kInf /* minimum_distance_lower */,
+          0.0 /* minimum_distance_upper*/, plant_context,
+          penalty_function /* penalty_function */, options_.influence_distance);
+  prog_.AddConstraint(in_collision_constraint, q_);
+  // Add the constraint that q is in the scaled box, namely
+  // q_scale_center + t * (q_box_lower - q_scale_center) <= q <=
+  // q_scale_center + t * (q_box_upper - q_scale_center)
+  Eigen::MatrixXd A(nq, nq + 1);
+  A.leftCols(nq) = Eigen::MatrixXd::Identity(nq, nq);
+  A.rightCols<1>() = q_scale_center_ - q_box_lower_;
+  prog_.AddLinearConstraint(A, q_scale_center_,
+                            Eigen::VectorXd::Constant(nq, kInf),
+                            {q_, Vector1<symbolic::Variable>(t_)});
+  A.rightCols<1>() = q_scale_center_ - q_box_upper_;
+  prog_.AddLinearConstraint(A, Eigen::VectorXd::Constant(nq, -kInf),
+                            q_scale_center,
+                            {q_, Vector1<symbolic::Variable>(t_)});
+}
+
+solvers::MathematicalProgramResult ScaleCspaceBoxNonlinearProgram::Solve(
+    unsigned int seed) const {
+  std::srand(seed);
+  double t_min = kInf;
+  Eigen::VectorXd initial_guess = Eigen::VectorXd::Zero(prog_.num_vars());
+  solvers::MathematicalProgramResult result;
+  for (int i = 0; i < options_.num_nlp_trials; ++i) {
+    prog_.SetDecisionVariableValueInVector(
+        q_,
+        (Eigen::ArrayXd::Random(q_.rows()) *
+         (plant_->GetPositionUpperLimits() - plant_->GetPositionLowerLimits())
+             .array())
+                .matrix() +
+            plant_->GetPositionLowerLimits(),
+        &initial_guess);
+    prog_.SetDecisionVariableValueInVector(t_, 1, &initial_guess);
+    const auto result_trial =
+        solvers::Solve(prog_, initial_guess, options_.solver_options);
+    if (result.is_success() && result_trial.get_optimal_cost() < t_min) {
+      result = result_trial;
+      t_min = result_trial.get_optimal_cost();
+    }
+  }
+  return result;
+}
 }  // namespace optimization
 }  // namespace geometry
 }  // namespace drake

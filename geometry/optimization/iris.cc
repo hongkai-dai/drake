@@ -432,6 +432,23 @@ struct GeometryPairWithDistance {
   }
 };
 
+void CheckIrisSeedAndOptions(const Eigen::Ref<const Eigen::VectorXd>& seed,
+                             const IrisOptions& options) {
+  const int nc = static_cast<int>(options.configuration_obstacles.size());
+  const int nq = seed.rows();
+  DRAKE_DEMAND(options.num_collision_infeasible_samples >= 0);
+  for (int i = 0; i < nc; ++i) {
+    DRAKE_DEMAND(options.configuration_obstacles[i]->ambient_dimension() == nq);
+    if (options.configuration_obstacles[i]->PointInSet(seed)) {
+      throw std::runtime_error(
+          fmt::format("The seed point is in configuration obstacle {}", i));
+    }
+  }
+  if (options.prog_with_additional_constraints) {
+    DRAKE_DEMAND(options.prog_with_additional_constraints->num_vars() == nq);
+    DRAKE_DEMAND(options.num_additional_constraint_infeasible_samples >= 0);
+  }
+}
 }  // namespace
 
 HPolyhedron IrisInConfigurationSpace(const MultibodyPlant<double>& plant,
@@ -446,19 +463,8 @@ HPolyhedron IrisInConfigurationSpace(const MultibodyPlant<double>& plant,
   // IRIS algorithm.
   DRAKE_DEMAND(plant.GetPositionLowerLimits().array().isFinite().all());
   DRAKE_DEMAND(plant.GetPositionUpperLimits().array().isFinite().all());
-  DRAKE_DEMAND(options.num_collision_infeasible_samples >= 0);
-  for (int i = 0; i < nc; ++i) {
-    DRAKE_DEMAND(options.configuration_obstacles[i]->ambient_dimension() == nq);
-    if (options.configuration_obstacles[i]->PointInSet(seed)) {
-      throw std::runtime_error(
-          fmt::format("The seed point is in configuration obstacle {}", i));
-    }
-  }
 
-  if (options.prog_with_additional_constraints) {
-    DRAKE_DEMAND(options.prog_with_additional_constraints->num_vars() == nq);
-    DRAKE_DEMAND(options.num_additional_constraint_infeasible_samples >= 0);
-  }
+  CheckIrisSeedAndOptions(seed, options);
 
   // Make the polytope and ellipsoid.
   HPolyhedron P = HPolyhedron::MakeBox(plant.GetPositionLowerLimits(),

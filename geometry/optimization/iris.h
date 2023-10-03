@@ -11,6 +11,7 @@
 #include "drake/geometry/optimization/convex_set.h"
 #include "drake/geometry/optimization/hpolyhedron.h"
 #include "drake/multibody/plant/multibody_plant.h"
+#include "drake/planning/collision_checker.h"
 
 namespace drake {
 namespace geometry {
@@ -200,6 +201,20 @@ run-time of the algorithm. The same goes for
 HPolyhedron IrisInConfigurationSpace(
     const multibody::MultibodyPlant<double>& plant,
     const systems::Context<double>& context,
+    const IrisOptions& options = IrisOptions());
+
+/**
+ Overloads IrisInConfigurationSpace, but use a CollisionChecker for distance
+ queries.
+ @param collision_checker The collision checker for distance queries.
+ @param q_seed The positions used as the initialIRIS seed configuration.
+ @param options provides additional configuration options. See the overloaded
+ IrisInConfigurationSpace for more details.
+ @ingroup geometry_optimization
+ */
+HPolyhedron IrisInConfigurationSpace(
+    const planning::CollisionChecker& collision_checker,
+    const Eigen::Ref<const Eigen::VectorXd>& q_seed,
     const IrisOptions& options = IrisOptions());
 
 /** Defines a standardized representation for (named) IrisRegions, which can be

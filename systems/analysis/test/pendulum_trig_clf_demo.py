@@ -495,8 +495,8 @@ def plot_results():
 def main():
     u_max = 4 
     kappa = 0.01
-    #search(u_max, kappa)
-    plot_results()
+    search(u_max, kappa)
+    #plot_results()
 
 
 if __name__ == "__main__":

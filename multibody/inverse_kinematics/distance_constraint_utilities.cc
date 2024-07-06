@@ -1,6 +1,7 @@
 #include "drake/multibody/inverse_kinematics/distance_constraint_utilities.h"
 
 #include <vector>
+#include <iostream>
 
 #include "drake/math/autodiff_gradient.h"
 #include "drake/multibody/inverse_kinematics/kinematic_evaluator_utilities.h"
@@ -93,6 +94,7 @@ VectorX<S> Distances(const MultibodyPlant<T>& plant,
         inspector.GetFrameId(signed_distance_pairs[i].id_A);
     const geometry::FrameId frame_B_id =
         inspector.GetFrameId(signed_distance_pairs[i].id_B);
+    std::cout << fmt::format("i={}, frame_A_id={}, frame_B_id={}, frame_A name={}, frame_B name={}\n", i, frame_A_id.get_value(), frame_B_id.get_value(), inspector.GetName(frame_A_id), inspector.GetName(frame_B_id));
     const Frame<T>& frameA = plant.GetBodyFromFrameId(frame_A_id)->body_frame();
     const Frame<T>& frameB = plant.GetBodyFromFrameId(frame_B_id)->body_frame();
     internal::CalcDistanceDerivatives(
@@ -105,6 +107,11 @@ VectorX<S> Distances(const MultibodyPlant<T>& plant,
             signed_distance_pairs[i].p_ACa,
         signed_distance_pairs[i].distance, signed_distance_pairs[i].nhat_BA_W,
         q, &distances(i));
+  }
+  if constexpr  (std::is_same_v<S, AutoDiffXd>) {
+    for (int i = 0; i < static_cast<int>(distances.size()); ++i) {
+      std::cout << fmt::format("distances[{}]={:.20f}, grad[25]={:.20f}, grad[31]={:.20f}\n", i, distances(i).value(), distances(i).derivatives()(25), distances(i).derivatives()(31));
+    }
   }
   return distances;
 }

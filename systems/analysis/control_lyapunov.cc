@@ -582,6 +582,7 @@ ControlLyapunov::SearchWithEllipsoidResult ControlLyapunov::Search(
   return search_result;
 }
 
+namespace {
 double EvaluateClfCost(const symbolic::Polynomial& V,
                        const VectorX<symbolic::Variable>& x,
                        const Eigen::Ref<const Eigen::MatrixXd>& x_samples,
@@ -593,6 +594,7 @@ double EvaluateClfCost(const symbolic::Polynomial& V,
     return V_samples.mean();
   }
 }
+}  // namespace
 
 ControlLyapunov::SearchResult ControlLyapunov::Search(
     const symbolic::Polynomial& V_init, int lambda0_degree,
@@ -857,6 +859,7 @@ Eigen::VectorXd VdotCalculator::CalcMin(
   return ret;
 }
 
+namespace {
 void CheckDynamicsInput(const symbolic::Polynomial& V,
                         const VectorX<symbolic::Polynomial>& f,
                         const MatrixX<symbolic::Polynomial>& G,
@@ -871,6 +874,7 @@ void CheckDynamicsInput(const symbolic::Polynomial& V,
     }
   }
 }
+}  // namespace
 
 namespace {
 // For a specific i

@@ -17,11 +17,13 @@
 #include "drake/systems/controllers/linear_quadratic_regulator.h"
 #include "drake/systems/framework/diagram_builder.h"
 #include "drake/systems/primitives/vector_log_sink.h"
+#include "drake/common/fmt_eigen.h"
 
 namespace drake {
 namespace systems {
 namespace analysis {
 
+namespace {
 const double kInf = std::numeric_limits<double>::infinity();
 
 [[maybe_unused]] controllers::LinearQuadraticRegulatorResult TrigDynamicsLQR() {
@@ -31,8 +33,8 @@ const double kInf = std::numeric_limits<double>::infinity();
   const Eigen::Matrix2d lqr_R = 10 * Eigen::Matrix2d::Identity();
   const auto lqr_result = SynthesizeQuadrotor2dTrigLqr(lqr_Q, lqr_R);
   Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(lqr_result.S);
-  std::cout << "minimal eigenvalue of LQR S: " << es.eigenvalues().minCoeff()
-            << "\n";
+  //std::cout << "minimal eigenvalue of LQR S: " << fmt_eigen(es.eigenvalues().minCoeff())
+  //          << "\n";
   return lqr_result;
 }
 
@@ -226,7 +228,7 @@ const double kInf = std::numeric_limits<double>::infinity();
   return V_init_sol;
 }
 
-void ValidateTrigClfInit(
+[[maybe_unused]] void ValidateTrigClfInit(
     const Eigen::Ref<const Eigen::Matrix<symbolic::Variable, 7, 1>>& x,
     const symbolic::Polynomial& V_init, const VectorX<symbolic::Polynomial>& f,
     const MatrixX<symbolic::Polynomial>& G,
@@ -253,16 +255,16 @@ void ValidateTrigClfInit(
     dVdx_validate.row(i) =
         dVdx(i).EvaluateIndeterminates(x, x_validate).transpose();
   }
-  std::cout << "Vdot with lqr controller by samples: "
-            << (dVdx_validate.array() * xdot_lqr_validate.array())
-                   .colwise()
-                   .sum()
-                   .maxCoeff()
-            << "\n";
+  //std::cout << "Vdot with lqr controller by samples: "
+  //          << (dVdx_validate.array() * xdot_lqr_validate.array())
+  //                 .colwise()
+  //                 .sum()
+  //                 .maxCoeff()
+  //          << "\n";
   VdotCalculator vdot_calculator(
       x, V_init, f, G, std::nullopt /* dynamics numerator */, u_vertices);
   const Eigen::VectorXd Vdot_validate = vdot_calculator.CalcMin(x_validate);
-  std::cout << "Vdot CLF max by sample: " << Vdot_validate.maxCoeff() << "\n";
+  //std::cout << "Vdot CLF max by sample: " << Vdot_validate.maxCoeff() << "\n";
   symbolic::Variable max_Vdot;
   auto prog_validate =
       ConstructMaxVdotProgram(x, V_init, f, G, u_vertices, &max_Vdot);
@@ -286,8 +288,8 @@ void ValidateTrigClfInit(
       max_Vdot_x = result_validate.GetSolution(x);
     }
   }
-  std::cout << "max Vdot: " << max_Vdot_val << " at " << max_Vdot_x.transpose()
-            << "\n";
+  //std::cout << "max Vdot: " << max_Vdot_val << " at " << max_Vdot_x.transpose()
+  //          << "\n";
 }
 
 [[maybe_unused]] void SearchWTrigDynamics() {
@@ -380,10 +382,10 @@ void ValidateTrigClfInit(
                    positivity_d, positivity_eq_lagrangian_degrees, p_degrees,
                    kappa, x_samples, std::nullopt /* in_roa_samples */,
                    minimize_max, search_options);
-    std::cout
-        << "V(x_samples): "
-        << search_result.V.EvaluateIndeterminates(x, x_samples).transpose()
-        << "\n";
+    //std::cout
+    //    << "V(x_samples): "
+    //    << search_result.V.EvaluateIndeterminates(x, x_samples).transpose()
+    //    << "\n";
   }
 }
 
@@ -391,6 +393,7 @@ int DoMain() {
   SearchWTrigDynamics();
   return 0;
 }
+}  // namespace
 }  // namespace analysis
 }  // namespace systems
 }  // namespace drake

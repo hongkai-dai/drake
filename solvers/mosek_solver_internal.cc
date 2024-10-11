@@ -1285,46 +1285,54 @@ MSKrescodee MosekSolverProgram::SpecifyVariableType(
 
 MapDecisionVariableToMosekVariable::MapDecisionVariableToMosekVariable(
     const MathematicalProgram& prog) {
-  // Each PositiveSemidefiniteConstraint will add one matrix variable to Mosek.
+  // Each PositiveSemidefiniteConstraint (with >=2 rows in its psd matrix) will
+  // add one matrix variable to Mosek.
+  // TODO(hongkai.dai): do not add the psd variable with 2 rows, use second
+  // order cone constraint instead.
   int psd_constraint_count = 0;
   for (const auto& psd_constraint : prog.positive_semidefinite_constraints()) {
     // The bounded variables of a psd constraint is the "flat" version of the
     // symmetrix matrix variables, stacked column by column. We only need to
     // store the lower triangular part of this symmetric matrix in Mosek.
     const int matrix_rows = psd_constraint.evaluator()->matrix_rows();
-    for (int j = 0; j < matrix_rows; ++j) {
-      for (int i = j; i < matrix_rows; ++i) {
-        const MatrixVariableEntry matrix_variable_entry(psd_constraint_count, i,
-                                                        j, matrix_rows);
-        const int decision_variable_index = prog.FindDecisionVariableIndex(
-            psd_constraint.variables()(j * matrix_rows + i));
-        auto it = decision_variable_to_mosek_matrix_variable.find(
-            decision_variable_index);
-        if (it == decision_variable_to_mosek_matrix_variable.end()) {
-          // This variable has not been registered as a mosek matrix variable
-          // before.
-          decision_variable_to_mosek_matrix_variable.emplace_hint(
-              it, decision_variable_index, matrix_variable_entry);
-        } else {
-          // This variable has been registered as a mosek matrix variable
-          // already. This matrix variable entry will be registered into
-          // matrix_variable_entries_for_same_decision_variable.
-          auto it_same_decision_variable =
-              matrix_variable_entries_for_same_decision_variable.find(
-                  decision_variable_index);
-          if (it_same_decision_variable !=
-              matrix_variable_entries_for_same_decision_variable.end()) {
-            it_same_decision_variable->second.push_back(matrix_variable_entry);
+    if (matrix_rows > 1) {
+      // TODO(hongkai.dai): also handle matrix_rows == 2, by imposing a second
+      // order cone constraint instead of a PSD constraint.
+      for (int j = 0; j < matrix_rows; ++j) {
+        for (int i = j; i < matrix_rows; ++i) {
+          const MatrixVariableEntry matrix_variable_entry(psd_constraint_count,
+                                                          i, j, matrix_rows);
+          const int decision_variable_index = prog.FindDecisionVariableIndex(
+              psd_constraint.variables()(j * matrix_rows + i));
+          auto it = decision_variable_to_mosek_matrix_variable.find(
+              decision_variable_index);
+          if (it == decision_variable_to_mosek_matrix_variable.end()) {
+            // This variable has not been registered as a mosek matrix variable
+            // before.
+            decision_variable_to_mosek_matrix_variable.emplace_hint(
+                it, decision_variable_index, matrix_variable_entry);
           } else {
-            matrix_variable_entries_for_same_decision_variable.emplace_hint(
-                it_same_decision_variable, decision_variable_index,
-                std::vector<MatrixVariableEntry>(
-                    {it->second, matrix_variable_entry}));
+            // This variable has been registered as a mosek matrix variable
+            // already. This matrix variable entry will be registered into
+            // matrix_variable_entries_for_same_decision_variable.
+            auto it_same_decision_variable =
+                matrix_variable_entries_for_same_decision_variable.find(
+                    decision_variable_index);
+            if (it_same_decision_variable !=
+                matrix_variable_entries_for_same_decision_variable.end()) {
+              it_same_decision_variable->second.push_back(
+                  matrix_variable_entry);
+            } else {
+              matrix_variable_entries_for_same_decision_variable.emplace_hint(
+                  it_same_decision_variable, decision_variable_index,
+                  std::vector<MatrixVariableEntry>(
+                      {it->second, matrix_variable_entry}));
+            }
           }
         }
       }
+      psd_constraint_count++;
     }
-    psd_constraint_count++;
   }
   // All the non-matrix variables in @p prog is stored in another vector inside
   // Mosek.

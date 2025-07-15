@@ -1,5 +1,6 @@
 #include "drake/multibody/plant/sap_driver.h"
 
+#include <iostream>
 #include <algorithm>
 #include <limits>
 #include <map>
@@ -9,6 +10,7 @@
 #include <vector>
 
 #include "drake/common/unused.h"
+#include "drake/common/fmt_eigen.h"
 #include "drake/multibody/contact_solvers/contact_configuration.h"
 #include "drake/multibody/contact_solvers/contact_solver_utils.h"
 #include "drake/multibody/contact_solvers/sap/sap_ball_constraint.h"
@@ -765,6 +767,9 @@ void SapDriver<T>::AddPdControllerConstraints(
           const double effort_limit = actuator.effort_limit();
           const T& qd = instance_qd[a];
           const T& vd = instance_vd[a];
+          if constexpr (std::is_same_v<T, double>) {
+          std::cout << fmt::format("actuator {} qd={}\n", actuator.name(), qd);
+          }
           const T& u0 = feed_forward_actuation[actuator.input_start()];
 
           const T& q0 = joint.GetOnePosition(context);
@@ -944,6 +949,7 @@ void SapDriver<T>::CalcContactProblemCache(
   CalcLinearDynamicsMatrix(context, &A);
   VectorX<T> v_star;
   CalcFreeMotionVelocities(context, &v_star);
+  
   const int num_rigid_bodies = plant().num_bodies();
   const int num_deformable_bodies =
       (manager().deformable_driver() == nullptr)

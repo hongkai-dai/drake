@@ -7,9 +7,11 @@
 #include <set>
 #include <stdexcept>
 #include <vector>
+#include <iostream>
 
 #include <fmt/ranges.h>
 
+#include "drake/common/fmt_eigen.h"
 #include "drake/common/drake_throw.h"
 #include "drake/common/ssize.h"
 #include "drake/common/text_logging.h"
@@ -2878,6 +2880,9 @@ internal::DesiredStateInput<T> MultibodyPlant<T>::AssembleDesiredStateInput(
         this->get_desired_state_input_port(model_instance_index);
     if (xd_input_port.HasValue(context)) {
       const auto& xd_instance = xd_input_port.Eval(context);
+      if constexpr (std::is_same_v<T, double>) {
+        std::cout << fmt::format("model {}, xd_instance={}\n", this->GetModelInstanceName(model_instance_index), fmt_eigen(xd_instance.transpose()));
+      }
       if (has_nans_unless_ignored(model_instance_index, xd_instance)) {
         throw std::runtime_error(
             fmt::format("Desired state input port for model "
@@ -3274,6 +3279,9 @@ systems::EventStatus MultibodyPlant<T>::CalcStepUnrestricted(
   this->ValidateContext(context0);
   systems::DiscreteValues<T>& next_discrete_state =
       next_state->get_mutable_discrete_state();
+  //if constexpr (std::is_same_v<T, double>) {
+  //  std::cout << fmt::format("t={}, next discrete state={}\n", context0.get_time(), fmt_eigen(next_discrete_state.get_value().transpose()));
+  //}
   DiscreteStepMemory::Data<T>& next_memory =
       next_state->template get_mutable_abstract_state<DiscreteStepMemory>(0)
           .template Allocate<T>(internal_tree().get_topology());

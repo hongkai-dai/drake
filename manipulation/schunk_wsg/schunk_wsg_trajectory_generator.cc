@@ -1,6 +1,9 @@
 #include "drake/manipulation/schunk_wsg/schunk_wsg_trajectory_generator.h"
 
 #include <limits>
+#include <iostream>
+
+#include "drake/common/fmt_eigen.h"
 
 #include "drake/common/trajectories/piecewise_polynomial.h"
 #include "drake/manipulation/schunk_wsg/schunk_wsg_trajectory_generator_state_vector.h"
@@ -57,9 +60,11 @@ void SchunkWsgTrajectoryGenerator::OutputTarget(
   if (trajectory_) {
     output->get_mutable_value() = trajectory_->value(
         context.get_time() - traj_state->trajectory_start_time());
+    std::cout << fmt::format("schunk trajectory_ {}\n", fmt_eigen(output->get_value()));
   } else {
     output->get_mutable_value() =
         Eigen::Vector2d(traj_state->last_position(), 0);
+    std::cout << fmt::format("schunk no trajectory_ {}\n", fmt_eigen(output->get_value()));
   }
 }
 

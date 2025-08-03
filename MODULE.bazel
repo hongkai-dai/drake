@@ -295,3 +295,12 @@ use_repo(
     "crate__wasm-bindgen-shared-0.2.100",
     "crate__web-time-0.2.4",
 )
+
+# Hedron's Compile Commands Extractor for Bazel
+# https://github.com/hedronvision/bazel-compile-commands-extractor
+bazel_dep(name = "hedron_compile_commands", dev_dependency = True)
+git_override(
+    module_name = "hedron_compile_commands",
+    commit = "ec85b6ceee216b3c9b06e030a92fde6fed9b654d",
+    remote = "https://github.com/hongkai-dai/bazel-compile-commands-extractor.git",
+)

@@ -312,12 +312,17 @@ struct DifferentialInverseKinematicsSystem::CallbackDetails {
   /** The current poses of the goal frames. */
   const std::vector<math::RigidTransformd>& X_TGlist;
 
+  /**The desired poses of the goal frames. */
+  const std::vector<std::optional<math::RigidTransformd>> X_TG_desired_list;
+
   /** The desired velocities of the goal frames. */
   const std::vector<SpatialVelocity<double>> Vd_TGlist;
 
   /** The jacobian relating spatial velocities to generalized velocities, i.e.,
   V_TGs (rows) with respect to v_active (cols). */
   const Eigen::MatrixXd& Jv_TGs;
+
+  const FrameIndex task_frame_index;
 };
 
 /** (Internal use only) A user-provided set of constraint(s) and/or cost(s) for

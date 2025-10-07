@@ -113,7 +113,6 @@ void DifferentialInverseKinematicsSystem::LeastSquaresCost::SetConfig(
   DRAKE_THROW_UNLESS(config.cartesian_qp_weight >= 0);
   for (const auto& [_, mask] : config.cartesian_axis_masks) {
     DRAKE_THROW_UNLESS(((mask.array() == 1.0) || (mask.array() == 0.0)).all());
-    DRAKE_THROW_UNLESS((mask.array() == 1.0).any());
   }
   config_ = config;
 }
@@ -400,7 +399,6 @@ void DifferentialInverseKinematicsSystem::JointCenteringCost::SetConfig(
   DRAKE_THROW_UNLESS(config.posture_gain >= 0);
   for (const auto& [_, mask] : config.cartesian_axis_masks) {
     DRAKE_THROW_UNLESS(((mask.array() == 1.0) || (mask.array() == 0.0)).all());
-    DRAKE_THROW_UNLESS((mask.array() == 1.0).any());
   }
   config_ = config;
 }
@@ -511,6 +509,8 @@ struct DifferentialInverseKinematicsSystem::CartesianDesires {
   std::vector<const Frame<double>*> frame_list;
   /* The current pose of the controlled frame. */
   std::vector<RigidTransformd> X_TGlist;
+  /* The desired pose of the controlled frame. */
+  std::vector<std::optional<RigidTransformd>> X_TG_desired_list;
   /* The commanded velocity of the controlled frame. */
   std::vector<SpatialVelocity<double>> Vd_TGlist;
 };
@@ -602,6 +602,7 @@ void DifferentialInverseKinematicsSystem::PrepareCartesianDesires(
     const Context<double>& context, CartesianDesires* cartesian_desires) const {
   cartesian_desires->frame_list.clear();
   cartesian_desires->X_TGlist.clear();
+  cartesian_desires->X_TG_desired_list.clear();
   cartesian_desires->Vd_TGlist.clear();
 
   // Check that exactly one of the two cartesian desire ports is connected.
@@ -627,6 +628,7 @@ void DifferentialInverseKinematicsSystem::PrepareCartesianDesires(
     const Frame<double>* frame_i = &GetScopedFrameByName(plant(), frame_name);
     const RigidTransformd X_TGi =
         plant().CalcRelativeTransform(plant_context, *task_frame_, *frame_i);
+    std::optional<RigidTransformd> X_TGi_desired{std::nullopt};
     SpatialVelocity<double> Vd_TGi;
     if (has_cartesian_velocities_input) {
       Vd_TGi = abstract_value.template get_value<SpatialVelocity<double>>();
@@ -636,6 +638,7 @@ void DifferentialInverseKinematicsSystem::PrepareCartesianDesires(
     } else {
       const auto& desired_pose =
           abstract_value.template get_value<RigidTransformd>();
+      X_TGi_desired = desired_pose;
       const Vector6d dX_TGi = ComputePoseDiffInCommonFrame(X_TGi, desired_pose);
       Vd_TGi.get_coeffs() = K_VX_ * dX_TGi / time_step_;
       const VectorXd& limit = Vd_TG_limit_.get_coeffs();
@@ -646,6 +649,7 @@ void DifferentialInverseKinematicsSystem::PrepareCartesianDesires(
     }
     cartesian_desires->frame_list.push_back(frame_i);
     cartesian_desires->X_TGlist.push_back(X_TGi);
+    cartesian_desires->X_TG_desired_list.push_back(X_TGi_desired);
     cartesian_desires->Vd_TGlist.push_back(Vd_TGi);
   }
 }
@@ -697,8 +701,10 @@ void DifferentialInverseKinematicsSystem::CalcCommandedVelocity(
       .nominal_posture = nominal_posture,
       .frame_list = cartesian_desires.frame_list,
       .X_TGlist = cartesian_desires.X_TGlist,
+      .X_TG_desired_list = cartesian_desires.X_TG_desired_list,
       .Vd_TGlist = cartesian_desires.Vd_TGlist,
       .Jv_TGs = Jv_TGs,
+      .task_frame_index = task_frame_->index(),
   };
   recipe_->AddToProgram(&details);
 

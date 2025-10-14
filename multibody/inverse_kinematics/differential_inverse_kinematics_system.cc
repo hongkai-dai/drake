@@ -551,6 +551,11 @@ DifferentialInverseKinematicsSystem::DifferentialInverseKinematicsSystem(
                                      Value<BusValue>{})
           .get_index();
 
+  input_port_index_desired_position_ =
+      this->DeclareAbstractInputPort("desired_position",
+                                     Value<std::optional<Eigen::VectorXd>>{})
+          .get_index();
+
   // Declare cache entry for the multibody plant context.
   auto plant_context = plant().CreateDefaultContext();
   plant_context_cache_index_ =
@@ -605,13 +610,16 @@ void DifferentialInverseKinematicsSystem::PrepareCartesianDesires(
   cartesian_desires->X_TG_desired_list.clear();
   cartesian_desires->Vd_TGlist.clear();
 
-  // Check that exactly one of the two cartesian desire ports is connected.
+  // Check that at most one of the two cartesian desire ports is connected.
   const bool has_cartesian_positions_input =
       get_input_port_desired_cartesian_poses().HasValue(context);
   const bool has_cartesian_velocities_input =
       get_input_port_desired_cartesian_velocities().HasValue(context);
-  DRAKE_THROW_UNLESS(has_cartesian_positions_input !=
-                     has_cartesian_velocities_input);
+  DRAKE_THROW_UNLESS(
+      has_cartesian_positions_input + has_cartesian_velocities_input <= 1);
+  if (!has_cartesian_positions_input && !has_cartesian_velocities_input) {
+    return;
+  }
 
   // Evaluate the connected input.
   const BusValue& desired = (has_cartesian_velocities_input
@@ -688,6 +696,14 @@ void DifferentialInverseKinematicsSystem::CalcCommandedVelocity(
   const VectorXd& nominal_posture =
       get_input_port_nominal_posture().Eval(context);
 
+  const std::optional<VectorXd>& desired_position =
+      get_input_port_desired_position().Eval<std::optional<Eigen::VectorXd>>(
+          context);
+  std::optional<VectorXd> q_active_desired{std::nullopt};
+  if (desired_position.has_value()) {
+    q_active_desired = active_dof_.GetFromArray(*desired_position);
+  }
+
   MathematicalProgram prog;
   VectorXDecisionVariable v_next =
       prog.NewContinuousVariables(active_dof_.count(), "v_next");
@@ -704,6 +720,7 @@ void DifferentialInverseKinematicsSystem::CalcCommandedVelocity(
       .X_TG_desired_list = cartesian_desires.X_TG_desired_list,
       .Vd_TGlist = cartesian_desires.Vd_TGlist,
       .Jv_TGs = Jv_TGs,
+      .q_active_desired = q_active_desired,
       .task_frame_index = task_frame_->index(),
   };
   recipe_->AddToProgram(&details);

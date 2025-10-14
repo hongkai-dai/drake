@@ -59,12 +59,13 @@ input_ports:
 - nominal_posture
 - desired_cartesian_velocities (optional)
 - desired_cartesian_poses (optional)
+- desired_position (optional)
 output_ports:
 - commanded_velocity
 @endsystem
 
-Port `position` accepts the current generalized position (for the full `plant`,
-not just the active dofs).
+Port `position` and `desired_position` accepts the current generalized position
+(for the full `plant`, not just the active dofs).
 
 Port `desired_cartesian_velocities` accepts desired cartesian velocities, typed
 as systems::BusValue where key is the name of the frame to track and the value
@@ -204,7 +205,7 @@ class DifferentialInverseKinematicsSystem final
   double K_VX() const { return K_VX_; }
 
   /** Gets the clamping limit applied to inferred desired cartesian velocities.
-  */
+   */
   const SpatialVelocity<double>& Vd_TG_limit() const { return Vd_TG_limit_; }
 
   /** Returns the input port for the joint positions. */
@@ -231,6 +232,10 @@ class DifferentialInverseKinematicsSystem final
   const systems::InputPort<double>&
   get_input_port_desired_cartesian_velocities() const {
     return this->get_input_port(input_port_index_desired_cartesian_velocities_);
+  }
+
+  const systems::InputPort<double>& get_input_port_desired_position() const {
+    return this->get_input_port(input_port_index_desired_position_);
   }
 
   /** Returns the output port for the generalized velocity command that realizes
@@ -268,6 +273,7 @@ class DifferentialInverseKinematicsSystem final
   systems::InputPortIndex input_port_index_nominal_posture_;
   systems::InputPortIndex input_port_index_desired_cartesian_poses_;
   systems::InputPortIndex input_port_index_desired_cartesian_velocities_;
+  systems::InputPortIndex input_port_index_desired_position_;
   systems::OutputPortIndex output_port_index_commanded_velocity_;
   systems::CacheIndex plant_context_cache_index_;
   systems::CacheIndex cartesian_desires_cache_index_;
@@ -321,6 +327,10 @@ struct DifferentialInverseKinematicsSystem::CallbackDetails {
   /** The jacobian relating spatial velocities to generalized velocities, i.e.,
   V_TGs (rows) with respect to v_active (cols). */
   const Eigen::MatrixXd& Jv_TGs;
+
+  /** The desired posture of the active DoFs. If std::nullopt, then we don't
+   * have a desired posture. */
+  std::optional<Eigen::VectorXd> q_active_desired{};
 
   const FrameIndex task_frame_index;
 };

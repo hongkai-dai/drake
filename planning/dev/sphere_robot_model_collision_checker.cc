@@ -786,12 +786,20 @@ RobotClearance SphereRobotModelCollisionChecker::DoCalcContextRobotClearance(
 
       // Only compute the Jacobian if row(s) will be returned.
       Matrix3X<double> sphere_jacobian(3, GetZeroConfiguration().size());
+      const Frame<double>* measured_in_frame{};
+      if (has_environment_row) {
+        measured_in_frame = &frame_W;
+      }
+      if (has_self_row) {
+        measured_in_frame =
+            &plant().get_body(minimum_self_body_index).body_frame();
+      }
 
       if (has_environment_row || has_self_row) {
         // Get the translation-only Jacobian for the current point.
         plant().CalcJacobianTranslationalVelocity(
             plant_context, JacobianWrtVariable::kQDot, current_frame,
-            body_frame_sphere.Origin().head<3>(), frame_W, frame_W,
+            body_frame_sphere.Origin().head<3>(), *measured_in_frame, frame_W,
             &sphere_jacobian);
       }
 

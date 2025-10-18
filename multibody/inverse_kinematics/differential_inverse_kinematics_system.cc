@@ -14,6 +14,7 @@
 #include "drake/multibody/inverse_kinematics/differential_inverse_kinematics.h"
 #include "drake/multibody/parsing/scoped_names.h"
 #include "drake/solvers/osqp_solver.h"
+#include "drake/solvers/ipopt_solver.h"
 #include "drake/systems/framework/bus_value.h"
 
 namespace drake {
@@ -33,6 +34,7 @@ using solvers::Binding;
 using solvers::EvaluatorBase;
 using solvers::MathematicalProgram;
 using solvers::MathematicalProgramResult;
+using solvers::IpoptSolver;
 using solvers::OsqpSolver;
 using solvers::SolverOptions;
 using solvers::VectorXDecisionVariable;
@@ -451,7 +453,7 @@ DifferentialInverseKinematicsSystem::JointCenteringCost::AddToProgram(
 namespace {
 
 void LogConstraintViolations(const MathematicalProgram& prog,
-                             const MathematicalProgramResult& result) {
+                             const MathematicalProgramResult& result, const Eigen::VectorXd& q_current) {
   std::vector<std::string> infeasible_constraint_names =
       result.GetInfeasibleConstraintNames(prog, std::nullopt);
   if (infeasible_constraint_names.empty()) {
@@ -461,7 +463,9 @@ void LogConstraintViolations(const MathematicalProgram& prog,
       "QP failed to solve, returning zero velocity; the violated constraints "
       "were {}",
       fmt::join(infeasible_constraint_names, ", "));
-
+  log()->warn(
+    "q = {}", fmt_eigen(q_current.transpose())
+  );
   // Debugging information for all constraints.
   if (log()->should_log(spdlog::level::debug)) {
     for (const auto& binding : prog.GetAllConstraints()) {
@@ -481,7 +485,7 @@ void LogConstraintViolations(const MathematicalProgram& prog,
 }
 
 VectorXd TrySolveQPAndFallbackToZero(const MathematicalProgram& prog,
-                                     const VectorXDecisionVariable& v_next) {
+                                     const VectorXDecisionVariable& v_next, const Eigen::VectorXd& q_current) {
   // For speed, we avoid using ChooseBestSolver every time (we know it's a QP)
   // and we hard-code to OSQP which is faster (though less accurate) than the
   // other QP solvers in Drake.
@@ -492,7 +496,10 @@ VectorXd TrySolveQPAndFallbackToZero(const MathematicalProgram& prog,
   if (result.is_success()) {
     return result.GetSolution(v_next);
   }
-  LogConstraintViolations(prog, result);
+  // When the problem is infeasible, the OSQP doesn't find a solution that minimizes the infeasibility, hence the reported infeasible constraints is not meaningful with OSQP solution. We solve the problem again with IPOPT which minimizes the infeasibility.
+  IpoptSolver ipopt_solver;
+  result = ipopt_solver.Solve(prog);
+  LogConstraintViolations(prog, result, q_current);
   return VectorXd::Zero(v_next.size());
 }
 
@@ -725,7 +732,7 @@ void DifferentialInverseKinematicsSystem::CalcCommandedVelocity(
   };
   recipe_->AddToProgram(&details);
 
-  const VectorXd commanded_velocity = TrySolveQPAndFallbackToZero(prog, v_next);
+  const VectorXd commanded_velocity = TrySolveQPAndFallbackToZero(prog, v_next, collision_checker_->plant().GetPositions(plant_context));
   output->set_value(commanded_velocity);
 }
 

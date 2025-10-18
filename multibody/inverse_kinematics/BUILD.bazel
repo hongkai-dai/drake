@@ -99,6 +99,7 @@ drake_cc_library(
         "//planning:collision_checker",
         "//planning:dof_mask",
         "//planning:joint_limits",
+        "//solvers:ipopt_solver",
         "//solvers:osqp_solver",
         "//systems/framework:bus_value",
     ],

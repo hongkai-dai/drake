@@ -395,6 +395,9 @@ void DefineDifferentialIkSystem(py::module m) {
       "CartesianVelocityLimitConstraint",
       cls_doc.CartesianVelocityLimitConstraint, &cls);
 
+  BindIngredient<Class::ClosedLoopChainConstraint>(
+      "ClosedLoopChainConstraint", cls_doc.ClosedLoopChainConstraint, &cls);
+
   {
     using NestedClass = Class::CollisionConstraint;
     constexpr auto& nested_cls_doc = cls_doc.CollisionConstraint;

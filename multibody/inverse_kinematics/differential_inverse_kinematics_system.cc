@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "multibody/inverse_kinematics/differential_inverse_kinematics_system.h"
 #include <fmt/ranges.h>
 
 #include "drake/common/eigen_types.h"
@@ -766,6 +767,47 @@ void DifferentialInverseKinematicsSystem::CalcCommandedVelocity(
 
   const VectorXd commanded_velocity = TrySolveQPAndFallbackToZero(prog, v_next);
   output->set_value(commanded_velocity);
+}
+
+DifferentialInverseKinematicsSystem::ClosedLoopChainConstraint::
+    ClosedLoopChainConstraint(const Config& config) {
+  SetConfig(config);
+}
+
+DifferentialInverseKinematicsSystem::ClosedLoopChainConstraint::
+    ~ClosedLoopChainConstraint() = default;
+
+void DifferentialInverseKinematicsSystem::ClosedLoopChainConstraint::SetConfig(
+    const Config& config) {
+  config_ = config;
+}
+
+std::vector<Binding<EvaluatorBase>>
+DifferentialInverseKinematicsSystem::ClosedLoopChainConstraint::AddToProgram(
+    CallbackDetails* details) const {
+  DRAKE_DEMAND(details != nullptr);
+  MathematicalProgram& prog = details->mathematical_program;
+  const VectorXDecisionVariable& v_next = details->v_next;
+  const MultibodyPlant<double>& plant = details->collision_checker.plant();
+  const Frame<double>& frame_A =
+      GetScopedFrameByName(plant, config_.frame_A_name);
+  const Frame<double>& frame_B =
+      GetScopedFrameByName(plant, config_.frame_B_name);
+  const Context<double>& plant_context = details->plant_context;
+  Eigen::Vector3d p_BP;
+  plant.CalcPointsPositions(plant_context, frame_A, config_.p_AP, frame_B,
+                            &p_BP);
+  Eigen::Matrix3Xd Jv_BP(3, plant.num_velocities());
+  plant.CalcJacobianTranslationalVelocity(
+      plant_context, JacobianWrtVariable::kV, frame_A, config_.p_AP, frame_B,
+      frame_B, &Jv_BP);
+  Eigen::Matrix3Xd Jv_BP_active(details->active_dof.count(), 3);
+  details->active_dof.GetColumnsFromMatrix(Jv_BP, &Jv_BP_active);
+  const double dt = details->time_step;
+  auto binding = prog.AddLinearEqualityConstraint(Jv_BP_active * dt,
+                                                  config_.p_BQ - p_BP, v_next);
+  binding.evaluator()->set_description("Closed loop chain constraint");
+  return std::vector<Binding<EvaluatorBase>>{std::move(binding)};
 }
 
 }  // namespace multibody

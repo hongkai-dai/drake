@@ -1242,6 +1242,75 @@ which matches the SpatialVelocity order.)""";
 R"""(Replaces the config set in the constructor.)""";
           } SetConfig;
         } CartesianVelocityLimitConstraint;
+        // Symbol: drake::multibody::DifferentialInverseKinematicsSystem::ClosedLoopChainConstraint
+        struct /* ClosedLoopChainConstraint */ {
+          // Source: drake/multibody/inverse_kinematics/differential_inverse_kinematics_system.h
+          const char* doc =
+R"""(If we have a closed kinematic chain, where point P on frame A should
+coincide with point Q on frame B, we can add a constraint p_BP - p_BQ
++ J_v_BP * v_next * Δt = 0.)""";
+          // Symbol: drake::multibody::DifferentialInverseKinematicsSystem::ClosedLoopChainConstraint::AddToProgram
+          struct /* AddToProgram */ {
+            // Source: drake/multibody/inverse_kinematics/differential_inverse_kinematics_system.h
+            const char* doc = R"""()""";
+          } AddToProgram;
+          // Symbol: drake::multibody::DifferentialInverseKinematicsSystem::ClosedLoopChainConstraint::ClosedLoopChainConstraint
+          struct /* ctor */ {
+            // Source: drake/multibody/inverse_kinematics/differential_inverse_kinematics_system.h
+            const char* doc = R"""()""";
+          } ctor;
+          // Symbol: drake::multibody::DifferentialInverseKinematicsSystem::ClosedLoopChainConstraint::Config
+          struct /* Config */ {
+            // Source: drake/multibody/inverse_kinematics/differential_inverse_kinematics_system.h
+            const char* doc = R"""()""";
+            // Symbol: drake::multibody::DifferentialInverseKinematicsSystem::ClosedLoopChainConstraint::Config::Serialize
+            struct /* Serialize */ {
+              // Source: drake/multibody/inverse_kinematics/differential_inverse_kinematics_system.h
+              const char* doc =
+R"""(Passes this object to an Archive. Refer to yaml_serialization "YAML
+Serialization" for background.)""";
+            } Serialize;
+            // Symbol: drake::multibody::DifferentialInverseKinematicsSystem::ClosedLoopChainConstraint::Config::frame_A_name
+            struct /* frame_A_name */ {
+              // Source: drake/multibody/inverse_kinematics/differential_inverse_kinematics_system.h
+              const char* doc = R"""()""";
+            } frame_A_name;
+            // Symbol: drake::multibody::DifferentialInverseKinematicsSystem::ClosedLoopChainConstraint::Config::frame_B_name
+            struct /* frame_B_name */ {
+              // Source: drake/multibody/inverse_kinematics/differential_inverse_kinematics_system.h
+              const char* doc = R"""()""";
+            } frame_B_name;
+            // Symbol: drake::multibody::DifferentialInverseKinematicsSystem::ClosedLoopChainConstraint::Config::p_AP
+            struct /* p_AP */ {
+              // Source: drake/multibody/inverse_kinematics/differential_inverse_kinematics_system.h
+              const char* doc = R"""()""";
+            } p_AP;
+            // Symbol: drake::multibody::DifferentialInverseKinematicsSystem::ClosedLoopChainConstraint::Config::p_BQ
+            struct /* p_BQ */ {
+              // Source: drake/multibody/inverse_kinematics/differential_inverse_kinematics_system.h
+              const char* doc = R"""()""";
+            } p_BQ;
+            auto Serialize__fields() const {
+              return std::array{
+                std::make_pair("frame_A_name", frame_A_name.doc),
+                std::make_pair("frame_B_name", frame_B_name.doc),
+                std::make_pair("p_AP", p_AP.doc),
+                std::make_pair("p_BQ", p_BQ.doc),
+              };
+            }
+          } Config;
+          // Symbol: drake::multibody::DifferentialInverseKinematicsSystem::ClosedLoopChainConstraint::GetConfig
+          struct /* GetConfig */ {
+            // Source: drake/multibody/inverse_kinematics/differential_inverse_kinematics_system.h
+            const char* doc = R"""(Returns the current config.)""";
+          } GetConfig;
+          // Symbol: drake::multibody::DifferentialInverseKinematicsSystem::ClosedLoopChainConstraint::SetConfig
+          struct /* SetConfig */ {
+            // Source: drake/multibody/inverse_kinematics/differential_inverse_kinematics_system.h
+            const char* doc =
+R"""(Replaces the config set in the constructor.)""";
+          } SetConfig;
+        } ClosedLoopChainConstraint;
         // Symbol: drake::multibody::DifferentialInverseKinematicsSystem::CollisionConstraint
         struct /* CollisionConstraint */ {
           // Source: drake/multibody/inverse_kinematics/differential_inverse_kinematics_system.h

@@ -138,6 +138,7 @@ class DifferentialInverseKinematicsSystem final
   class JointCenteringCost;
   class JointVelocityLimitConstraint;
   class LeastSquaresCost;
+  class ClosedLoopChainConstraint;
 
   /** (Advanced) Constructs the DifferentialInverseKinematicsSystem with a
   user-provided recipe for the mathematical program formulation.
@@ -820,6 +821,49 @@ class DifferentialInverseKinematicsSystem::JointVelocityLimitConstraint final
  private:
   Config config_;
   planning::JointLimits joint_limits_;
+};
+
+/**
+ * If we have a closed kinematic chain, where point P on frame A should
+ * coincide with point Q on frame B, we can add a constraint
+ * p_BP - p_BQ + J_v_BP * v_next * Δt = 0.
+ */
+class DifferentialInverseKinematicsSystem::ClosedLoopChainConstraint final
+    : public Ingredient {
+ public:
+  DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(ClosedLoopChainConstraint);
+
+  struct Config {
+    /** Passes this object to an Archive.
+    Refer to @ref yaml_serialization "YAML Serialization" for background. */
+    template <typename Archive>
+    void Serialize(Archive* a) {
+      a->Visit(DRAKE_NVP(frame_A_name));
+      a->Visit(DRAKE_NVP(p_AP));
+      a->Visit(DRAKE_NVP(frame_B_name));
+      a->Visit(DRAKE_NVP(p_BQ));
+    }
+
+    std::string frame_A_name;
+    Eigen::Vector3d p_AP;
+    std::string frame_B_name;
+    Eigen::Vector3d p_BQ;
+  };
+
+  explicit ClosedLoopChainConstraint(const Config& config);
+  ~ClosedLoopChainConstraint() final;
+
+  /** Returns the current config. */
+  const Config& GetConfig() const { return config_; }
+
+  /** Replaces the config set in the constructor. */
+  void SetConfig(const Config& config);
+
+  std::vector<solvers::Binding<solvers::EvaluatorBase>> AddToProgram(
+      CallbackDetails* details) const final;
+
+ private:
+  Config config_;
 };
 
 }  // namespace multibody

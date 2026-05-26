@@ -14,6 +14,7 @@ drake_cc_package_library(
     testonly = 1,
     visibility = ["//visibility:public"],
     deps = [
+        ":make_kinematic_chain",
         ":multibody_plant_remodeling",
         ":rigid_body_on_compliant_ground",
     ],
@@ -30,6 +31,17 @@ drake_cc_library(
         "//multibody/plant:compliant_contact_manager_tester",
         "//systems/analysis:simulator",
         "@googletest//:gtest_for_library",
+    ],
+)
+
+drake_cc_library(
+    name = "make_kinematic_chain",
+    testonly = 1,
+    srcs = ["make_kinematic_chain.cc"],
+    hdrs = ["make_kinematic_chain.h"],
+    deps = [
+        "//common:essential",
+        "//multibody/plant",
     ],
 )
 
